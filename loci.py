@@ -200,14 +200,14 @@ class Loci:
                 s_vec[i] = 0
         return s_vec
 
-    def run_rr(self, lp_sol, N, loci_scores, budget, gam):
+    def run_rr(self, lp_sol, N, loci_scores, budget, gam, eps=1e-5):
         """Carry out the RR rounding procedure"""
         n = len(loci_scores)
         
         if N <= 0:
-            print("loci.RR(): N<=0, not running RR")
-            print("    --> returning floor-solution of sol_LP")
-            return [math.floor(x) for x in lp_sol[0:n]]
+            print("loci.RR(): N<=0, returning floor_eps solution")
+            return [math.floor(x+eps) for x in lp_sol[:n]]
+        
         rr_sol = None
         best_score = 0
         for j in range(N):
@@ -233,11 +233,11 @@ class Loci:
                 rr_sol = np.concatenate((ell_rand_n,ell_rand_aux),
                                         axis=None)
                 best_score = score
+                
         if rr_sol is None:
-            print("loci.run_rr(): no feasible solution found in L_N")
-            print("    --> returning floor-solution of sol_LP")
-            return [math.floor(x) for x in lp_sol[0:n]]
-
+            print("loci.run_rr(): no good solution in L_N")
+            print("    --> returning floor_eps solution of sol_LP")
+            return [math.floor(x+eps) for x in lp_sol[:n]]
 
         return rr_sol[:n]
 
