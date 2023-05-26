@@ -1,0 +1,11 @@
+name	group
+ENCFF056EAW	group_a
+ENCFF097EXD	group_a
+ENCFF219SJO	group_a
+ENCFF310VHO	group_a
+ENCFF331WZQ	group_a
+ENCFF352HQI	group_b
+ENCFF420QMN	group_b
+ENCFF440WVI	group_b
+ENCFF456PVX	group_b
+ENCFF580MBF	group_b

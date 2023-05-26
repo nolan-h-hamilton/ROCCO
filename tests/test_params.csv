@@ -1,0 +1,3 @@
+chromosome,input_path,budget,gamma,tau,c1,c2,c3
+chr21,tests/tracks_chr21,NULL,NULL,NULL,NULL,NULL,NULL
+chr22,tests/tracks_chr22,NULL,NULL,NULL,NULL,NULL,NULL
