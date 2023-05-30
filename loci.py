@@ -205,7 +205,6 @@ class Loci:
         n = len(loci_scores)
         
         if N <= 0:
-            print("loci.RR(): N<=0, returning floor_eps solution")
             return [math.floor(x+eps) for x in lp_sol[:n]]
         
         rr_sol = None
@@ -227,7 +226,8 @@ class Loci:
 
             ell_rand_n = np.array(ell_rand_n)
             ell_rand_aux = np.array(ell_rand_aux)
-            score = -loci_scores@ell_rand_n + gam*np.sum(ell_rand_aux)
+            score = (-loci_scores@ell_rand_n
+                       + gam*np.sum(np.abs(np.diff(ell_rand_n,1))))
             is_feas = (np.sum(ell_rand_n) <= math.floor(n*budget))
             if is_feas and score < best_score:
                 rr_sol = np.concatenate((ell_rand_n,ell_rand_aux),
@@ -235,8 +235,7 @@ class Loci:
                 best_score = score
                 
         if rr_sol is None:
-            print("loci.run_rr(): no good solution in L_N")
-            print("    --> returning floor_eps solution of sol_LP")
+            print("loci.run_rr(): returning floor solution")
             return [math.floor(x+eps) for x in lp_sol[:n]]
 
         return rr_sol[:n]
