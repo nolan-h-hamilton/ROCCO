@@ -158,20 +158,6 @@ def divide_by_chrom(bigwig_file, sizes,names=None):
         run(["mv", chrom + '_' + bigwig_file +'.wig',
                         "tracks_{}".format(chrom)])
 
-        
-def pepatac_script(scriptname, dload='wget'):
-    # download necessary PEPATAC tools using wget
-    if not os.path.exists(scriptname):
-        print("\nCannot find {} in working directory...downloading\
-        via wget".format(scriptname))
-        # link to PEPATAC repo
-        cmd = "https://raw.githubusercontent.com/databio/pepatac/master/tools/{}".format(scriptname)
-        download_success = run([dload,cmd]).returncode
-        if download_success != 0:
-            raise Exception("Lacking dependencies...unable to download \
-              via wget")
-    
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i','--bamdir',
@@ -208,10 +194,6 @@ def main():
         args['bamdir'] = args['bamdir'][0:-1]
         
     args['sizes'] = tmp_sizes_file(args['sizes'])
-
-    pepatac_script('bamSitesToWig.py')
-    pepatac_script('cutsToWig.pl')
-    pepatac_script('smoothWig.pl')
 
     # create links to bam/index files if they are not in cwd
     initial_files = os.listdir()
@@ -263,7 +245,7 @@ def main():
 
     for bf in bamfiles:
         print('{}: running bamSitesToWig.py'.format(bf))
-        run(['python3','bamSitesToWig.py','-i',
+        run(['python3','pepatac/bamSitesToWig.py','-i',
                           bf,'-c',
                           args['sizes'], '-w',
                           bf + '.bw',
