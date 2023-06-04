@@ -4,17 +4,15 @@
 
 [![Tests](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml/badge.svg)](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml)
   
-ROCCO determines accessible chromatin by utilizing **multiple samples'** enrichment signals *and* spatial features thereof. The model underlying ROCCO is a constrained optimization problem that can be solved efficiently to predict open chromatin regions. 
-
+ROCCO determines accessible chromatin by utilizing multiple samples' enrichment signals *and* spatial features thereof. The model underlying ROCCO is a constrained optimization problem that can be solved efficiently for large genomic regions and sample sizes to predict consensus regions of open chromatin.
+  
 **Clone/download this repository to use ROCCO.**
   ```
   git clone https://github.com/nolan-h-hamilton/ROCCO.git
   ```
 
-*For a walkthrough using publicly available data with visualized results, see the step-by-step demonstrations in [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb) or [heart_da_demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo_files/heart_da_demo.ipynb)*
-
 ## Environment Details
-ROCCO has been developed and tested to run on ATAC-seq alignments in a standard unix bioinformatics environment with Python3.
+ROCCO has been developed and tested to run on ATAC-seq alignments in a standard unix bioinformatics environment with Python3.7+
 
 A ROCCO-specific conda environment can be created using 
 [rocco_conda.yml](https://github.com/nolan-h-hamilton/ROCCO/blob/main/docs/CONDA/rocco_conda.yml):
@@ -36,6 +34,14 @@ Run `python3 prep_bams.py --help` for a full list of parameters.
 
 See a [flowchart](https://github.com/nolan-h-hamilton/ROCCO/blob/main/docs/bamsig_flowchart.png) for a visual demonstration of the data preprocessing step. Readers may also reference the [tests](https://github.com/nolan-h-hamilton/ROCCO/blob/main/tests) directory which contains toy data used in the testing workflow that is structured conformably for ROCCO.
 
+## Getting Started
+
+### Jupyter Notebook Demos
+  Some lightweight demonstrations using publicly available data.
+  1. **Basic Usage**. [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb). Includes visualized results in UCSC genoome browser.
+  1. **Differential Accessibility**. [heart_da_demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo_files/heart_da_demo.ipynb). A sample ROCCO-->[DESeq2](https://github.com/mikelove/DESeq2) pipeline for differential analysis.
+
+  
 ## Main Scripts
 ### `ROCCO.py`
 `ROCCO.py` calls `ROCCO_chrom.py` for each chromosome specified in a CSV file--see [`params.csv`](https://github.com/nolan-h-hamilton/ROCCO/blob/main/params.csv)  or [`demo_params.csv`](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo_files/demo_params.csv) for syntax. *For any `NULL` entries in this file, the corresponding genome-wide parameter value, set with the CLI arguments in the table below, will be used*. The default values for these parameters yield good general performance, but users seeking more/less conservative or topologically simple predictions can modify as necessary. 
