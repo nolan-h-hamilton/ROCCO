@@ -208,37 +208,28 @@ class Loci:
             return [math.floor(x+eps) for x in lp_sol[:n]]
         
         rr_sol = None
-        best_score = 0
+        best_score = 1e6
         for j in range(N):
             ell_rand_n = []
-            ell_rand_aux = []
-            for i, ell_i in enumerate(lp_sol):
+            for i, ell_i in enumerate(lp_sol[:n]):
                 if random.random() <= ell_i:
-                    if i >= n:
-                        ell_rand_aux.append(1)
-                    else:
-                        ell_rand_n.append(1)
+                    ell_rand_n.append(1)
                 else:
-                    if i >= n:
-                        ell_rand_aux.append(0)
-                    else:
-                        ell_rand_n.append(0)
+                    ell_rand_n.append(0)
 
             ell_rand_n = np.array(ell_rand_n)
-            ell_rand_aux = np.array(ell_rand_aux)
             score = (-loci_scores@ell_rand_n
                        + gam*np.sum(np.abs(np.diff(ell_rand_n,1))))
             is_feas = (np.sum(ell_rand_n) <= math.floor(n*budget))
             if is_feas and score < best_score:
-                rr_sol = np.concatenate((ell_rand_n,ell_rand_aux),
-                                        axis=None)
+                rr_sol = ell_rand_n
                 best_score = score
                 
         if rr_sol is None:
             print("loci.run_rr(): returning floor solution")
             return [math.floor(x+eps) for x in lp_sol[:n]]
 
-        return rr_sol[:n]
+        return rr_sol
 
 
     def rocco_lp(self, budget=.035, tau=1, gam=1,
