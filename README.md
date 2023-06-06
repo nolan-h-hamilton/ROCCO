@@ -4,12 +4,16 @@
 
 [![Tests](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml/badge.svg)](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml)
   
-ROCCO determines accessible chromatin by utilizing multiple samples' enrichment signals *and* spatial features thereof. The model underlying ROCCO is a constrained optimization problem that can be solved efficiently for large genomic regions and sample sizes to predict consensus regions of open chromatin.
+Underlying ROCCO is a constrained optimization problem that can be solved efficiently to **predict consensus regions of open chromatin**.
   
-**Clone/download this repository to use ROCCO.**
-  ```
-  git clone https://github.com/nolan-h-hamilton/ROCCO.git
-  ```
+**Features**
+  
+1. Explicitly accounts for both **enrichment and spatial characteristics** of open chromatin signals, the latter of which is an informative but often ignored aspect of ATAC-seq data;
+1. Leverages data from multiple samples of varying quality **without imposing arbitrary thresholds** on a minimum number of samples declaring peaks;
+1. Is efficient for **large numbers of samples** with an asymptotic time complexity independent of sample/replicate count;
+1. **Does not require training data or a heuristically determined set of initial candidate regions**, which are hard to define given the lack of a priori sets of open chromatin regions;
+1. Employs a **mathematically tractable model** permitting guarantees of performance and efficiency.
+
 
 ## Environment Details
 ROCCO has been developed and tested to run on ATAC-seq alignments in a standard unix bioinformatics environment with Python3.7+
@@ -35,7 +39,10 @@ Run `python3 prep_bams.py --help` for a full list of parameters.
 See a [flowchart](https://github.com/nolan-h-hamilton/ROCCO/blob/main/docs/bamsig_flowchart.png) for a visual demonstration of the data preprocessing step. Readers may also reference the [tests](https://github.com/nolan-h-hamilton/ROCCO/blob/main/tests) directory which contains toy data used in the testing workflow that is structured conformably for ROCCO.
 
 ## Getting Started
-
+Clone/download this repository to use ROCCO
+  ```
+  git clone https://github.com/nolan-h-hamilton/ROCCO.git
+  ```
 ### Jupyter Notebook Demos
   Some lightweight demonstrations using publicly available data.
   1. **Basic Usage**. [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb). Includes visualized results in UCSC genoome browser.
