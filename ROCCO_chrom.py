@@ -305,7 +305,7 @@ def main():
     InitLoci.combine_selected()
 
     if not os.path.exists(args['outdir']):
-        os.mkdir('./' + args['outdir'])
+        os.mkdir(args['outdir'])
 
     fname = args['outdir'] + '/' + "ROCCO_out_{}_{}_{}_{}_{}_{}_{}.bed".format(
         args['chrom'],
