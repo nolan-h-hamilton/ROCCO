@@ -126,7 +126,7 @@ cmatrix_cols.remove('name')
 samp_names = list(samps['name'])
 assert os.path.exists('tests/test_countmat.tsv')
 assert cmatrix_cols == samp_names
-#clean()
+clean()
 
 # if we made it here, all cases passed
 print('test_rocco.py: all cases passed.')
