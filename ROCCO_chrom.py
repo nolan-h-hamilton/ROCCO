@@ -1,7 +1,7 @@
 """
-ROCCO_chrom.py
-
-Apply ROCCO algorithm to a particular chromosome `--chrom`. This is the workhorse for ROCCO.py
+Run ROCCO ('Algorithm 2' in paper) on a particular chromosome `--chrom`.
+This script is the workhorse for ROCCO.py which generates results for
+every chromosome and collates results.
 
 
 Usage:
@@ -23,9 +23,9 @@ Options:
 -b BUDGET: Budget parameter (default: 0.035)
 -g GAMMA: Gamma parameter (default: 1.0)
 -t TAU: Tau parameter (default: 0.0)
---c1 C1: enrichment weight (default: 1.0)
---c2 C2: dispersion weight (default: 1.0)
---c3 C3: shift weight (default: 1.0)
+--c1 C1: enrichment weight in mathcal(S)(i) (default: 1.0)
+--c2 C2: dispersion weight in mathcal(S)(i) (default: 1.0)
+--c3 C3: shift weight in mathcal(S)(i) (default: 1.0)
 --solver SOLVER: Solver for optimization (default: ECOS)
 --bed_format BED_FORMAT: BED format (3 for BED3, 6 for BED6) (default: 6)
 --identifiers IDENTIFIERS: File containing sample identifiers to include in the experiment. One line for each ID.
@@ -208,7 +208,7 @@ def emp_cdf(val, arr) -> float:
     return np.searchsorted(arr, val) / len(arr)
 
 
-def sig_selected(loci_obj):
+def sig_selected(loci_obj) -> np.ndarray:
     """Return vector of scores from all selected, unmerged loci"""
     sig_ref = []
     for loc in loci_obj:
@@ -217,7 +217,7 @@ def sig_selected(loci_obj):
     return np.array(sig_ref)
 
 
-def tags(fname):
+def tags(fname) -> list:
     """Get sample ID tags from newline-separated file"""
     tags_ = []
     for line in open(fname, mode='r', encoding='utf-8'):
@@ -225,7 +225,7 @@ def tags(fname):
     return tags_
 
 
-def log(text, verbose=True):
+def log(text, verbose=True) -> None:
     """only print if in verbose mode"""
     if verbose:
         print(str(text))
@@ -278,9 +278,12 @@ def main():
     log("ROCCO_chrom: inferred args", args['verbose'])
     log(args, args['verbose'])
 
+    # collect wig files for each replicate/sample for `--chrom`
     wig_files = [args['wig_path'] + '/' + fname
                  for fname in os.listdir(args['wig_path'])
                  if 'wig' in fname.split('.')[-1]]
+
+    # select a subset of the wig files if `--identifiers` is defined
     if args['identifiers'] is not None:
         new_wig_files = []
         for tag in tags(args['identifiers']):
@@ -289,6 +292,7 @@ def main():
                     new_wig_files.append(wfname)
         wig_files = new_wig_files
 
+    # create a dataframe of signal values for `K` replicates and `n` loci
     signal_matrix = collect_wigs(wig_files,
                                  start=args['start'],
                                  end=args['end'],
@@ -304,7 +308,6 @@ def main():
         InitLoci.append_locus(NewLoc)
 
     log("ROCCO_chrom: solving for optimal solution", args['verbose'])
-
     if not args['integral']:
         InitLoci.rocco_lp(budget=args['budget'],
                           gam=args['gamma'],
@@ -315,12 +318,8 @@ def main():
                           verbose_=args['verbose'],
                           solver=args['solver'],
                           N=args['rr_iter'])
-
     if args['integral']:
         # Optimize with integer constraints
-        # integer optimization may be very slow using the open-source
-        # default solver, ECOS_BB, consider using the MOSEK solver
-        # for problems with integer constraints
         InitLoci.rocco_ip(budget=args['budget'],
                           gam=args['gamma'],
                           tau=args['tau'],
@@ -354,7 +353,7 @@ def main():
         for loc in InitLoci:
             assert loc.size > 0
             if loc.accessible == 1:
-                # score is used for coloring in ucsc genome browser
+                # the score can be used for coloring in ucsc genome browser
                 loc_score = int(500 * emp_cdf(np.sum(loc.sig_data) / loc.size,
                                               sorted_sel_sig) + 500)
                 loc_name = args['chrom'] + '_' + str(loc_count)

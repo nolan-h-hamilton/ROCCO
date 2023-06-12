@@ -7,7 +7,6 @@ Note: this script will delete any existing bai/bed/tsv files in `tests` dir.
 import os
 import subprocess
 import pysam
-import warnings
 import pandas as pd
 
 def index_bamfiles():
@@ -30,7 +29,7 @@ def clean():
             print('removing tests/{}'.format(fname))
             os.remove('tests/' + fname)
 
-            
+
 # move to ROCCO main directory
 if os.getcwd().split('/')[-1] != 'ROCCO':
     os.chdir('..')
@@ -55,7 +54,7 @@ with subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=1, universal_newlines
     for line in proc_one.stdout:
         print(line, end='')
     proc_one.wait()
-    
+
 assert proc_one.returncode == 0, 'job failed: {}'.format(cmd)
 assert os.path.exists('tests/test_out1.bed'), 'bed file not created'
 with open('tests/test_out1.bed', mode='r', encoding="utf-8") as f:
@@ -77,7 +76,7 @@ with subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=1, universal_newlines
     for line in proc_two.stdout:
         print(line, end='')
     proc_two.wait()
-    
+
 assert proc_two.returncode == 0, 'job failed: {}'.format(cmd)
 assert os.path.exists('tests/test_group_a_out.bed'), 'bed file not created'
 with open('tests/test_group_a_out.bed', mode='r', encoding="utf-8") as f:
@@ -99,7 +98,7 @@ with subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=1, universal_newlines
     for line in proc_three.stdout:
         print(line, end='')
     proc_three.wait()
-    
+
 assert proc_three.returncode == 0, 'job failed: {}'.format(cmd)
 assert os.path.exists('tests/test_par_out.bed'), 'bed file not created'
 with open('tests/test_par_out.bed', mode='r', encoding="utf-8") as f:
@@ -127,7 +126,7 @@ cmatrix_cols.remove('name')
 samp_names = list(samps['name'])
 assert os.path.exists('tests/test_countmat.tsv')
 assert cmatrix_cols == samp_names
-clean()
+#clean()
 
 # if we made it here, all cases passed
 print('test_rocco.py: all cases passed.')

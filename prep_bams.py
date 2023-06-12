@@ -1,5 +1,22 @@
 """
 Obtain ROCCO conformable input from BAM files
+
+This script is a ROCCO-specific wrapper for the PEPATAC (github.com/databio/pepatac)
+tool `bamSitesToWig.py`. BAM files for each sample/replicate in `bamdir` are used to
+create smooth, fixed-step bigwig signal tracks. These signal tracks are split by
+chromosome, converted to human-readable .wig format, and then placed into directories
+à la (github.com/nolan-h-hamilton/ROCCO/blob/main/docs/bamsig_flowchart.png).
+
+The resulting `tracks_chr[]` directories can then be supplied to ROCCO_chrom.py
+via `--wig_path` to construct the signal matrix mathbf{S}_{chr[]} defined in the
+paper.
+
+Notes:
+    - Other tools exist for creating similarly formatted signal tracks, but have not been\
+        tested.
+
+    - More `--cores` --> faster processing. However, setting `--cores` > 1 on Mac OS\
+        seems to cause problems with bamSitesToWig.py
 """
 
 import os
@@ -9,7 +26,16 @@ import pysam
 import pybedtools
 
 
-def _is_link(fname):
+def _is_link(fname) -> bool:
+    """
+    Determine if file `fname` is a symbolic link
+
+    Args:
+        fname (str): the file path
+
+    Returns:
+        bool: `True` if the file `fname` is a link
+    """
     if os.path.islink(fname):
         return True
     if os.stat(fname).st_nlink > 1:
@@ -17,13 +43,31 @@ def _is_link(fname):
     return False
 
 
-def sizes_file(assembly='hg38'):
+def sizes_file(assembly='hg38', exclude_list=['EBV', 'M', 'MT']) -> str:
+    """
+    If `assembly` is the name of an assembly and not a filepath,
+    this function will return a chromosome sizes file `<assembly>.sizes`
+    using pybedtools. If `assembly` is a filepath, this function assumes that
+    `assembly` is a valid chromosome sizes file and returns `assembly.
+
+    Args:
+        assembly (str, optional): the name of a chromosome sizes file\
+            OR, name of an assembly available w/ pybedtools.chromsizes()\
+            Defaults to 'hg38'.
+        exclude_list (list, optional): list of chromosome names to exclude\
+            Defaults to `['EBV', 'M', 'MT]`
+
+    Returns:
+        str: file path to a chromosome sizes file
+
+    Notes: excludes any chromosome names with an underscore
+    """
     if not os.path.exists(assembly):
         fname = assembly + '.sizes'
         assembly_dict = pybedtools.chromsizes(assembly)
         keys = [x for x in assembly_dict.keys()
                 if '_' not in x
-                and x[3:] not in ['M', 'MT']]
+                and x[3:] not in exclude_list]
         keys = sorted(keys, key=lambda x: int(val)
                       if (val := x[3:]).isnumeric() else ord(val))
         with open(fname, "w", encoding='utf-8') as assembly_file:
@@ -35,17 +79,17 @@ def sizes_file(assembly='hg38'):
     return assembly
 
 
-def get_chroms(sizes):
-    """Gathers a list of chromosomes present in the given sizes file
+def get_chroms(sizes) -> list:
+    """Gathers a list of chromosome NAMES present in sizes file `sizes`
 
     Args:
         sizes (str) : a chromosome sizes filepath
 
     Returns:
-        a list of chromosome names.
+        list: a list of chromosome names.
 
     Raises:
-        FileNotFoundError: If `sizes` does not exist in the cwd.
+        FileNotFoundError: If file `sizes` is not available
     """
 
     chroms = []
@@ -57,7 +101,7 @@ def get_chroms(sizes):
     return chroms
 
 
-def create_chrom_dirs(sizes, names=None):
+def create_chrom_dirs(sizes) -> None:
     """Create directories for each chromosome's signal files
 
     Args:
@@ -70,7 +114,7 @@ def create_chrom_dirs(sizes, names=None):
             os.mkdir("tracks_{}".format(chrom))
 
 
-def divide_by_chrom(bigwig_file, sizes, names=None):
+def divide_by_chrom(bigwig_file, sizes) -> None:
     """Split genome-wide bigwig file into chromosome-specific wig files
 
     Divides larger bigwig by chromosome and converts to wiggle format.
@@ -80,6 +124,9 @@ def divide_by_chrom(bigwig_file, sizes, names=None):
     Args:
         bigwig_file (str) : path to a bigwig file.
         sizes (str) : a chromosome sizes filepath.
+
+    Notes: after completion, `tracks_` directories should be structured as in\
+        https://github.com/nolan-h-hamilton/ROCCO/blob/main/docs/bamsig_flowchart.png
     """
 
     chroms = get_chroms(sizes)
@@ -100,7 +147,7 @@ def main():
     parser.add_argument('-s', '--sizes',
                         default='hg38',
                         help="A path to a chromosome sizes file. OR\
-                        an assembly name")
+                        an assembly name. See: `sizes_file()`")
     parser.add_argument('-L', '--interval_length',
                         default=50,
                         help="wiggle track fixed interval length")
@@ -114,7 +161,7 @@ def main():
     parser.add_argument('--index',
                         action="store_true",
                         default=False,
-                        help="invoke to create index files for each BAM")
+                        help="invoke to create index files for each BAM via pysam")
     parser.add_argument('--retain', action="store_true",
                         default=False,
                         help="invoke to preserve created or hard-linked\
@@ -165,7 +212,7 @@ def main():
     # create directory for each chromosome
     create_chrom_dirs(args['sizes'])
 
-    # index/sort bam files
+    # index/sort bam files as needed
     print('running with {} cores'.format(
         args['cores']))
     for bamfile in os.listdir():
