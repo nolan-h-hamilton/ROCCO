@@ -1,8 +1,37 @@
 """
-Construct $mathbf{S}_{chr}$, score loci, and solve the optimization problem
-underlying ROCCO. This script looks in `--wig_path` for smooth signal tracks
-for each replicate.
+ROCCO_chrom.py
+
+Apply ROCCO algorithm to a particular chromosome `--chrom`. This is the workhorse for ROCCO.py
+
+
+Usage:
+python ROCCO_chrom.py [--chrom CHROM] [--start START] [--end END] [--locus_size LOCUS_SIZE]
+                      [--wig_path WIG_PATH] [-N RR_ITER] [--verbose] [--integral]
+                      [-b BUDGET] [-g GAMMA] [-t TAU] [--c1 C1] [--c2 C2] [--c3 C3]
+                      [--solver SOLVER] [--bed_format BED_FORMAT] [--identifiers IDENTIFIERS]
+                      [--outdir OUTDIR]
+
+Options:
+--chrom CHROM: Chromosome name (e.g., `--chrom chr1`)
+--start START: Starting nucleotide position (default: inferred from wig files)
+--end END: Ending nucleotide position (default: inferred from wig files)
+--locus_size LOCUS_SIZE: Interval/locus size (default: inferred from wig files)
+--wig_path WIG_PATH: Path to directory containing wig files (signal tracks) (default: current directory)
+-N RR_ITER: Number of randomized rounding iterations (default: 50)
+--verbose: specify verbose output
+--integral: Use integer optimization (slow)
+-b BUDGET: Budget parameter (default: 0.035)
+-g GAMMA: Gamma parameter (default: 1.0)
+-t TAU: Tau parameter (default: 0.0)
+--c1 C1: enrichment weight (default: 1.0)
+--c2 C2: dispersion weight (default: 1.0)
+--c3 C3: shift weight (default: 1.0)
+--solver SOLVER: Solver for optimization (default: ECOS)
+--bed_format BED_FORMAT: BED format (3 for BED3, 6 for BED6) (default: 6)
+--identifiers IDENTIFIERS: File containing sample identifiers to include in the experiment. One line for each ID.
+--outdir OUTDIR: Output directory to store chromosome-specific BED file in (default: current directory)
 """
+
 import os
 import argparse
 import warnings
@@ -13,7 +42,7 @@ from locus import Locus
 from loci import Loci
 
 
-def get_locus_size(wig_path):
+def get_locus_size(wig_path) -> int:
     """Infers interval size from replicates` wig files
 
     Args:
@@ -90,8 +119,8 @@ def read_wig(wig_file, start=0, end=10**10, locus_size=50):
     This function prepares signal data for to fit in a constant-sized
     Kxn matrix. If a wig file begins at a position < `start`, it will
     be padded with zeros. Likewise if a wig file ends at a position >
-    `end`, the extra values will be discarded. Gaps between start/end
-    are replaced with a zero-entry.
+    `end`, the extra values are ignored. Gaps between start/end are 
+    replaced with a zero-entry.
 
     Args:
         wig_file (str): path to wiggle formatted signal track
@@ -153,7 +182,7 @@ def read_wig(wig_file, start=0, end=10**10, locus_size=50):
     return loci, signal
 
 
-def collect_wigs(wig_files, start=0, end=10**10, locus_size=50):
+def collect_wigs(wig_files, start=0, end=10**10, locus_size=50) -> pd.DataFrame:
     """creates a Kxn dataframe of signals derived from wig files"""
     loci = [x for x in range(start, end + locus_size, locus_size)]
     all_wigs = pd.DataFrame(
@@ -163,7 +192,7 @@ def collect_wigs(wig_files, start=0, end=10**10, locus_size=50):
     return all_wigs
 
 
-def emp_cdf(val, arr):
+def emp_cdf(val, arr) -> float:
     """Get empirical cdf of `val` in `arr`
 
     Note: Assumes `arr` is sorted!
@@ -171,7 +200,7 @@ def emp_cdf(val, arr):
 
     Args:
         val (float): a numeric element in `arr`
-        arr (array): a SORTED array of peak scores
+        arr (array): a SORTED array of peak values
 
     Returns:
         (float) estimate for percentile of `val` in `arr`
