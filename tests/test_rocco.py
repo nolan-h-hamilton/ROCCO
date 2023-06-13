@@ -9,6 +9,9 @@ import subprocess
 import pysam
 import pandas as pd
 
+# fail if generated bed/tsv files less than `min_bytes` in size
+min_bytes = 10
+
 def index_bamfiles():
     for file_ in os.listdir('tests'):
         if (
@@ -30,12 +33,12 @@ def clean():
             os.remove('tests/' + fname)
 
 
-# move to ROCCO main directory
+
 if os.getcwd().split('/')[-1] != 'ROCCO':
     os.chdir('..')
 assert os.getcwd().split('/')[-1] == 'ROCCO', 'run script from ROCCO/tests'
 
-# remove ANY bed or tsv files with prefix 'test_'
+# remove any bed or tsv files with prefix 'test_'
 clean()
 
 # create index files for each BAM file
@@ -57,6 +60,7 @@ with subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=1, universal_newlines
 
 assert proc_one.returncode == 0, 'job failed: {}'.format(cmd)
 assert os.path.exists('tests/test_out1.bed'), 'bed file not created'
+assert os.stat('tests/test_out1.bed').st_size >= min_bytes, f'created bed file <{min_bytes} bytes'
 with open('tests/test_out1.bed', mode='r', encoding="utf-8") as f:
     bed_content = f.read()
     assert 'chr21' in bed_content, "couldn't find chr21 results in bed"
@@ -79,6 +83,7 @@ with subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=1, universal_newlines
 
 assert proc_two.returncode == 0, 'job failed: {}'.format(cmd)
 assert os.path.exists('tests/test_group_a_out.bed'), 'bed file not created'
+assert os.stat('tests/test_group_a_out.bed').st_size >= min_bytes, f'created bed file <{min_bytes} bytes'
 with open('tests/test_group_a_out.bed', mode='r', encoding="utf-8") as f:
     bed_content = f.read()
     assert 'chr21' in bed_content, "couldn't find chr21 results in bed"
@@ -101,6 +106,7 @@ with subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=1, universal_newlines
 
 assert proc_three.returncode == 0, 'job failed: {}'.format(cmd)
 assert os.path.exists('tests/test_par_out.bed'), 'bed file not created'
+assert os.stat('tests/test_par_out.bed').st_size >= min_bytes, f'created bed file < {min_bytes} bytes'
 with open('tests/test_par_out.bed', mode='r', encoding="utf-8") as f:
     bed_content = f.read()
     assert 'chr21' in bed_content, "couldn't find chr21 results in bed"
@@ -125,9 +131,10 @@ cmatrix_cols = list(cmatrix.columns)
 cmatrix_cols.remove('name')
 samp_names = list(samps['name'])
 assert os.path.exists('tests/test_countmat.tsv')
+assert os.stat('tests/test_countmat.tsv').st_size >= min_bytes, f'created tsv file < {min_bytes} bytes'
 assert cmatrix_cols == samp_names
 clean()
 
-# if we made it here, all cases passed
+
 print('test_rocco.py: all cases passed.')
 
