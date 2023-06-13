@@ -51,7 +51,11 @@ Clone/download this repository to use ROCCO
   
 ## Main Scripts
 ### `ROCCO.py`
-`ROCCO.py` calls `ROCCO_chrom.py` for each chromosome specified in a CSV file--see [`params.csv`](https://github.com/nolan-h-hamilton/ROCCO/blob/main/params.csv)  or [`demo_params.csv`](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo_files/demo_params.csv) for syntax. *For any `NULL` entries in this file, the corresponding genome-wide parameter value, set with the CLI arguments in the table below, will be used*. The default values for these parameters yield good general performance, but users seeking more/less conservative or topologically simple predictions can modify as necessary. The budget parameter for each chromosome can be inferred as a function
+`ROCCO.py` calls `ROCCO_chrom.py` for each chromosome specified in a CSV file--see [`params.csv`](https://github.com/nolan-h-hamilton/ROCCO/blob/main/params.csv)  or [`demo_params.csv`](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo_files/demo_params.csv) for syntax. For any `NULL` entries in this file, the corresponding genome-wide parameter value, set with the CLI arguments in the table below, will be used.
+  
+  The default values for these parameters yield good general performance, but users seeking more/less conservative or topologically simple predictions can modify as necessary.
+  
+The budget parameter for each chromosome can be inferred as a function
 of read density---see `est_budgets.py`.
 | **Parameter**                                 	| **Description**                                                                                                                                                                                                                                                                                            	| **Default**                                                                    	|
 |-----------------------------------------------	|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------	|--------------------------------------------------------------------------------	|
