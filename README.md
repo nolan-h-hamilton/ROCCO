@@ -10,7 +10,7 @@ Underlying ROCCO is a constrained optimization problem that can be solved effici
 
 1. Explicitly accounts for both **enrichment and spatial characteristics** of open chromatin signals, the latter of which is an informative but often ignored aspect of ATAC-seq data;
 1. Leverages data from multiple samples of varying quality **without imposing arbitrary thresholds** on a minimum number of samples declaring peaks;
-1. Is efficient for **large numbers of samples** with an asymptotic time complexity independent of sample/replicate count;
+1. Is efficient for **large numbers of samples** with an asymptotic time complexity independent of sample count;
 1. **Does not require training data or a heuristically determined set of initial candidate regions**, which are hard to define given the lack of a priori sets of open chromatin regions;
 1. Employs a **mathematically tractable model** permitting guarantees of performance and efficiency.
 
@@ -26,11 +26,11 @@ conda env create -n rocco --file docs/CONDA/rocco_conda.yml
 The created environment can then be loaded via: `conda activate rocco`.
 
 ## Input
-- A set of BAM files -- one for each sample/replicate
+- A BAM file for each sample
 
-$\mathbf{S} \in \mathbb{R}^{K\times n}$ as defined in the paper can be created by running:
+The signal matrix, $\mathbf{S}_{chr} \in \mathbb{R}^{K\times n}$, as defined in the paper is created from the BAM files by running:
 ```
-python3 prep_bams.py -i <directory_containing_bam_files, def=.> --cores <num_cores, def=1> -L <step_size, def=50>
+python3 prep_bams.py -i <bam_dir, def=.> --cores <num_cores, def=1> -L <step_size, def=50>
 ```
 A [flowchart](https://github.com/nolan-h-hamilton/ROCCO/blob/main/docs/bamsig_flowchart.png) provides a visual demonstration of this preprocessing step. Run `python3 prep_bams.py --help` for a full list of parameters.
 
@@ -47,9 +47,9 @@ Clone/download this repository to use ROCCO
 
 ## Main Scripts
 ### `ROCCO.py`
-`ROCCO.py` calls `ROCCO_chrom.py` for each chromosome specified in a CSV file--see [`params.csv`](https://github.com/nolan-h-hamilton/ROCCO/blob/main/params.csv)  or [`demo_params.csv`](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo_files/demo_params.csv) for syntax. For any `NULL` entries in this file, the corresponding genome-wide parameter value given in the table below will be used.
+`ROCCO.py` calls `ROCCO_chrom.py` for each chromosome specified in a CSV file--see [`params.csv`](https://github.com/nolan-h-hamilton/ROCCO/blob/main/params.csv)  or [`demo_params.csv`](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo_files/demo_params.csv) for syntax. For any `NULL` entries in this file, the corresponding parameter value given in the table below is used.
 
-Optionally, the budget parameter for each chromosome can be inferred as a function
+Note, the budget parameter for each chromosome can be inferred as a function
 of read density---see `est_budgets.py`.
 
 | **Parameter**                                 	| **Description**                                                                                                                                                                                                                                                                                            	| **Default**                                                                    	|
