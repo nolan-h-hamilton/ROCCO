@@ -30,17 +30,17 @@ class LociIterator:
     def __next__(self):
         if not self.current:
             raise StopIteration
-        
+
         item = copy.copy(self.current)
         self.current = self.current.right
         return item
-        
+
 class Loci:
     """A collection of locus objects, doubly-linked"""
     def __init__(self, head=None, tail=None):
         self.head = head
         self.tail = tail
-        
+
     def __iter__(self):
         return LociIterator(self.head)
 
@@ -62,7 +62,7 @@ class Loci:
             locus.right = None
             locus.left = tail_cpy
             tail_cpy.right=locus
- 
+
     def combine(self,head_,tail_):
         """Combine contiguous accessible regions
 
@@ -73,7 +73,7 @@ class Loci:
         the new locus's signal vector as the sum
         of signal vectors among loci in the contiguous
         sequence.
-        
+
         Args:
             head_ (Locus): first locus object in sequence of contiguous
               selected loci
@@ -86,11 +86,11 @@ class Loci:
         size_ = 0
         sig_matrix = []
         subloc = Loci()
-        
+
         accessible_= 0
         if head_.accessible == 1:
             accessible_ = 1
-            
+
         while head_ is not None and head_.position <= tail_.position:
             size_ += head_.size
             sig_matrix.append(head_.sig_data)
@@ -98,7 +98,7 @@ class Loci:
             head_ = head_.right
 
         sig_matrix = np.array([np.array(sig) for sig in sig_matrix]).transpose()
-        
+
         # new signal data is a $K \times 1$ vector
         # obtained as the sum signal at each locus
         # comprising the contiguous sequence.
@@ -108,7 +108,7 @@ class Loci:
         new_loc = Locus(position=cpy.position,left=cpy.left,right=head_,
                         size=size_, parent=None, subloci=subloc,
                         sig_data=sig_data_,accessible=accessible_)
-        
+
         if head_ is None:
             self.tail = new_loc
         else:
@@ -123,13 +123,13 @@ class Loci:
         while s_head_ is not None and s_head_.position <= tail_.position:
             s_head_.parent=new_loc
             s_head_ = s_head_.right
- 
+
     def as_list(self) -> list:
         """Get a list representation of the Loci object
 
         Returns:
             A list representation of the Loci object: i.e.,
-              a list with Locus elements ordered as in the 
+              a list with Locus elements ordered as in the
               Loci object.
         """
         head_ = self.head
@@ -138,7 +138,7 @@ class Loci:
             list_repr.append(copy.copy(head_))
             head_ = head_.right
         return list_repr
- 
+
     def combine_selected(self):
         """Find ajacent accessible regions and combine them
 
@@ -149,10 +149,10 @@ class Loci:
         while head_ is not None:
             to_combine = []
             head_cpy = head_
-            while head_cpy.accessible > 0 and head_cpy is not None:
+            while head_cpy is not None and head_cpy.accessible > 0 :
                 to_combine.append(head_cpy)
                 head_cpy = head_cpy.right
-            if len(to_combine) > 0:
+            if len(to_combine) > 1:
                 self.combine(to_combine[0], to_combine[-1])
             head_ = head_cpy
             if head_ is not None:
@@ -160,7 +160,7 @@ class Loci:
 
     def get_sig_mat(self):
         """Build mathbf{S}_{chr} as defined in the paper
-        
+
         Each locus's sig_data propety is a K times 1 column
         vector, so mathbf{S}_{chr} is a K times n matrix.
         """
@@ -170,7 +170,7 @@ class Loci:
             sig_mat.append(head_.sig_data)
             head_ = head_.right
         return np.array(sig_mat)
-    
+
     def g3_vec(self, metric_vec):
         """Compute a list of g_3 values for each locus
 
@@ -186,7 +186,7 @@ class Loci:
             else:
                 vel = max(abs(metric_vec[i] - metric_vec[i+1]),
                       abs(metric_vec[i] - metric_vec[i-1]))
-    
+
             vel /= metric_vec[i]+1
             v_vec.append(vel)
         return np.array(v_vec)
@@ -198,7 +198,7 @@ class Loci:
         mad_vec = stats.median_abs_deviation(sig_mat,axis=1) # g_2
         vel_vec = self.g3_vec(med_vec) # g_3
         s_vec = c1*med_vec - c2*mad_vec + c3*vel_vec
-        
+
         for i, val in enumerate(s_vec):
             if med_vec[i] <= tau:
                 s_vec[i] = 0
@@ -207,13 +207,13 @@ class Loci:
     def run_rr(self, lp_sol, N, loci_scores, budget, gam, eps=1e-5) -> np.ndarray:
         """
         Carry out the RR rounding procedure to find a good integral solution.
-        
+
         Note: if `N<=0`, the `floor_eps` protocol is applied
         in which any decision variable satisfying `l_i + eps < 1`
         is rounded down to zero.
-        
+
         Args:
-            lp_sol (list): The LP solution
+            lp_sol (numpy.ndarray): The LP solution
             N (int): Number of RR solutions to evaluate
             loci_scores (list): mathcal{S} for each locus
             budget (float): budget
@@ -225,10 +225,10 @@ class Loci:
 
     """
         n = len(loci_scores)
-        
+
         if N <= 0:
             return np.array([math.floor(x+eps) for x in lp_sol[:n]])
-        
+
         rr_sol = None
         best_score = 1e6
         for j in range(N):
@@ -246,7 +246,7 @@ class Loci:
             if is_feas and score < best_score:
                 rr_sol = ell_rand_n
                 best_score = score
-                
+
         if rr_sol is None:
             print("loci.run_rr(): returning floor solution")
             return np.array([math.floor(x+eps) for x in lp_sol[:n]])
@@ -288,7 +288,7 @@ class Loci:
                              constraints)
         if solver == "ECOS":
             problem.solve(solver=cp.ECOS,verbose=verbose_,max_iters=10000)
-            
+
         if solver == "MOSEK":
             try:
                 problem.solve(cp.MOSEK, verbose=verbose_)
@@ -309,10 +309,9 @@ class Loci:
             head_.accessible = sol_rr[i]
             head_ = head_.right
             i += 1
-            
+
         return problem
 
-    
     def rocco_ip(self, budget=.10, tau=1, gam=1,
                  c1=1, c2=1, c3=1,
                  verbose_=False,
@@ -323,7 +322,7 @@ class Loci:
         more precise, but slow--It is recommended to use a commerical 
         grade solver, e.g., MOSEK if solving this unrelaxed version
         of the problem
-        
+
         Parameters and return value same as `Loci.rocco_lp()`
         """
 
@@ -358,5 +357,5 @@ class Loci:
             head_ = head_.right
             i += 1
 
-            
+
         return problem
