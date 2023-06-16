@@ -227,7 +227,7 @@ class Loci:
         n = len(loci_scores)
 
         if N <= 0:
-            return np.array([math.floor(x+eps) for x in lp_sol[:n]])
+            return np.floor(lp_sol[:n] + eps)
 
         rr_sol = None
         best_score = 1e6
@@ -249,7 +249,7 @@ class Loci:
 
         if rr_sol is None:
             print("loci.run_rr(): returning floor solution")
-            return np.array([math.floor(x+eps) for x in lp_sol[:n]])
+            return np.floor(lp_sol[:n] + eps)
 
         return np.array(rr_sol)
 

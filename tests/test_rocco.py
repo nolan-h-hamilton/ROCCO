@@ -7,10 +7,14 @@ Note: this script will delete any existing bai/bed/tsv files in `tests` dir.
 import os
 import subprocess
 import pysam
+import pybedtools
 import pandas as pd
 
 # fail if generated bed/tsv files less than `min_bytes` in size
-min_bytes = 10
+min_bytes = 50
+# fail if jaccard similarity between output in case I and III is less than
+# `sim_min`
+sim_min = .95
 
 def index_bamfiles():
     for file_ in os.listdir('tests'):
@@ -111,6 +115,9 @@ with open('tests/test_par_out.bed', mode='r', encoding="utf-8") as f:
     bed_content = f.read()
     assert 'chr21' in bed_content, "couldn't find chr21 results in bed"
     assert 'chr22' in bed_content, "couldn't find chr22 results in bed"
+par_out = pybedtools.BedTool('tests/test_par_out.bed')
+assert par_out.jaccard('tests/test_out1.bed')['jaccard'] >= sim_min
+
 
 print('\ncase III(b): creating count_matrix')
 
