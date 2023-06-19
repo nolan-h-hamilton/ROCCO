@@ -98,6 +98,7 @@ import os
 import argparse
 import subprocess
 import tempfile
+import rocco_aux
 
 
 def get_params(param_file: str, budget: float, gamma: float, tau: float,
@@ -109,7 +110,8 @@ def get_params(param_file: str, budget: float, gamma: float, tau: float,
     by the CLI-specified default (see `args`).
 
     Args:
-        sizes_file (str) : a chromosome sizes filepath.
+        param_file (str) : a CSV file with a row containing parameter vals\
+            to use for each chromosome.
 
     Returns:
         chrom_params: a list of lists, with each element containing
@@ -166,37 +168,6 @@ def call_rocco(chrom, wig_path, budget, gamma, tau, c1, c2, c3, solver,
         cli_args.remove('--identifiers')
         cli_args.remove(identifiers)
     return ' '.join(cli_args)
-
-
-def sort_combine_bed(outfile: str, dir_: str = '.') -> bool:
-    """
-    Sorts and combines chromosome-specific bed files. Creates a new
-    bed file `outfile` to store the combined results.
-
-    Parameters:
-        outfile (str): The output file name where the sorted and combined bed file will be written.
-        dir_ (str, optional): The directory containing the chromosome-specific bed files. 
-          Default is the current directory ('.').
-    
-    Returns:
-        `True` if combined file created successfully, `False` otherwise
-    """
-    if dir_[-1] == '/':
-        dir_ = dir_[:-1]
-    filenames = [f_ for f_ in os.listdir(dir_)
-                 if f_.split('.')[-1] == 'bed' and 'ROCCO_out' in f_]
-    filenames = sorted(filenames,
-                       key=lambda x: int(val) if (val := x.split('_')[2][3:]).isnumeric() else ord(val))
-    filenames = [dir_ + '/' + fname for fname in filenames]
-    with open(outfile, mode='w', encoding='utf-8') as outfile_:
-        for fname in filenames:
-            cat_process = subprocess.Popen(('cat', fname),
-                                           stdout=outfile_.fileno())
-            cat_process.wait()
-            if cat_process.returncode > 0:
-                return False
-    return True
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -260,7 +231,7 @@ def main():
     else:
         print("running min({}, num. chroms) jobs in parallel".format(
                 args['jobs']))
-
+    args['outdir'] = rocco_aux.trim_path(args['outdir'])
     if not os.path.exists(args['outdir']):
         os.mkdir(args['outdir'])
 
@@ -301,7 +272,7 @@ def main():
 
     if args['combine'] is not None:
         print('combining output files --> {}'.format(args['combine']))
-        sort_combine_bed(args['combine'], dir_=args['outdir'])
+        rocco_aux.sort_combine_bed(args['combine'], dir_=args['outdir'])
 
 
 if __name__ == "__main__":

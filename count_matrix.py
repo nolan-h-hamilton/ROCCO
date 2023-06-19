@@ -10,9 +10,8 @@ def is_alignment(filepath):
     try:
         head("-n 1", filepath)
         return True
-    except SamtoolsError as ex:
+    except SamtoolsError:
         return False
-    
 
 def proc_bed(bedfile, header=False):
     i = 0
@@ -22,41 +21,41 @@ def proc_bed(bedfile, header=False):
             if header and i == 0:
                 i += 1
                 continue
-                
+
             line = line.strip()
             line = line.split('\t')
             if len(line) == 6:
                 return BedTool(bedfile)
-            
+
             if len(line) > 6:
                 new_line = "\t".join(line[0:5]) + '\n'
                 bed_string += new_line
                 continue
-            
+
             new_line = "\t".join(line[0:3])
             if len(line) == 3:
                 # create name for peak: chr_start_end
                 name = '_'.join([line[0],line[1],line[2]])
+                # assign 1000 for score and . for strand
                 new_line += "\t{}\t{}\t{}".format(name,'1000','.')
-                
+
             elif len(line) == 4:
                 newline += "\t{}".format(line[3])
                 new_line += "\t{}\t{}".format('1000','.')
-                
+
             elif len(line) == 5:
                 newline += "\t{}".format(line[3])
-                newline += "\t{}".format(line[4])                
+                newline += "\t{}".format(line[4])
                 new_line += "\t{}".format('.')
-                
+
             new_line += '\n'
             bed_string += new_line
-            
+
     return BedTool(bed_string, from_string=True)
 
 
 def peak_count_matrix(bedfile, bams=None, outfile=None,  bdir='.'):
     """Runs `multicov` for a specified `bedfile` and BAMs"""
-    
     bamfiles = []
     if bdir.split('/')[-1] == '/':
         bdir = bdir[0:-1]
@@ -80,11 +79,11 @@ def peak_count_matrix(bedfile, bams=None, outfile=None,  bdir='.'):
 
         bamfiles = IDs
     else:
-        print('no metadata was provided...exiting')
-        return None      
+        print('no sample metadata was provided...exiting')
+        return None
     bed = proc_bed(bedfile)
     bed.multi_bam_coverage(bams=bamfiles,
-                               output=outfile) 
+                               output=outfile)
 
     cols = ['chrom','start','end','name','score','strand']
     for bf in init_IDs:
@@ -108,6 +107,6 @@ def main():
     args = vars(parser.parse_args())
     peak_count_matrix(args['peakfile'], args['bamfiles'],
                       args['outfile'],bdir=args['bamdir'])
-    
+
 if __name__ == "__main__":
     main()
