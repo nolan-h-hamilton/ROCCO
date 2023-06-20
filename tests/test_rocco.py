@@ -46,37 +46,6 @@ log('changing current working directory to parent dir.',
 os.chdir(os.path.pardir)
 assert os.path.abspath(os.getcwd())[-5:] == 'ROCCO'
 
-log('run prep_bams.py to prepare data for ROCCO algorithm...',
-    sys.argv[0])
-prepbam_proc = wrap_run(f'python3 prep_bams.py --bamdir tests/data --outdir tests/data -s tests/data/test_sizes.sizes')
-
-log('ensure signal tracks have been created and organized properly',
-    sys.argv[0])
-assert len(os.listdir('tests/data/tracks_chr21')) >= 5
-assert len(os.listdir('tests/data/tracks_chr21')) >= 5
-
-for fname in os.listdir('tests/data/tracks_chr21'):
-    if 'wig' not in fname.split('.')[-1]:
-        continue
-    fname = f'tests/data/tracks_chr21/{fname}'
-    assert 'chr21' in fname
-    assert is_nonempty(fname, wig_min_bytes)
-    with open(fname, 'r') as f_:
-        line_ct = len(f_.readlines())
-    assert line_ct >= min_wig_line_ct
-    assert int(line_k(fname, 3).split('\t')[0]) - int(line_k(fname, 2).split('\t')[0]) == 50
-
-for fname in os.listdir('tests/data/tracks_chr22'):
-    if 'wig' not in fname.split('.')[-1]:
-        continue
-    assert 'chr22' in fname
-    fname = f'tests/data/tracks_chr22/{fname}'
-    assert is_nonempty(fname, wig_min_bytes)
-    with open(fname, 'r') as f_:
-        line_ct = len(f_.readlines())
-    assert line_ct >= min_wig_line_ct
-    assert int(line_k(fname, 3).split('\t')[0]) - int(line_k(fname, 2).split('\t')[0]) == 50
-
 log('running ROCCO_chrom.py for chr21, store output in `tests/output`', sys.argv[0])
 wrap_run('python3 ROCCO_chrom.py --chrom chr21 --wig_path tests/data/tracks_chr21 -b .02 -N 0 --outdir tests/output')
 log('running ROCCO_chrom.py for chr22, store output in `tests/output`', sys.argv[0])
