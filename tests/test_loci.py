@@ -5,6 +5,9 @@ from loci import Loci
 import numpy as np
 import pandas as pd
 
+def log(txt, script):
+    print(f'{script}: {txt}')
+
 signal_matrix = np.array([[0,0,0,0,0,2,10,2,0,0], [0,0,0,0,0,1,9,1,0,0],[0,0,0,0,0,3,11,3,0,0]])
 signal_matrix = pd.DataFrame(signal_matrix)
 signal_matrix.columns = [i*50 for i in range(0,10)]
@@ -41,4 +44,4 @@ for loc_obj in loci_object:
         i += 1
 assert i == 8, "combined loci object should have length 8"
 
-print('test_loci.py: pass')
+log('all cases passed', sys.argv[0])
