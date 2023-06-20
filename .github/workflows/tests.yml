@@ -31,8 +31,8 @@ jobs:
         sudo apt-get install -y bedtools
         sudo apt-get install -y samtools
 
-    - name: run test_rocco.py + test_loci.py scripts
+    - name: run test_rocco.py and test_loci.py
       working-directory: ./tests
       run: |
+        python test_rocco.py
         python test_loci.py
-	python test_rocco.py
