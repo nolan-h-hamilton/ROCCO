@@ -2,6 +2,7 @@ import os
 import subprocess
 import pandas as pd
 import pybedtools
+import pysam
 from collections import OrderedDict
 
 def trim_path(fname: str):
@@ -102,3 +103,15 @@ def parse_size_file(size_file, exclude_list=['EBV', 'M', 'MT']):
                  for key, val in OrderedDict(zip(df.iloc[:, 0], df.iloc[:, 1])).items()
                     if key not in exclude_list}
     return size_dict
+
+def is_alignment(filepath):
+    if 'bai' == filepath.split('.')[-1]:
+        return False
+    if 'bam' == filepath.split('.')[-1]:
+        try:
+            pysam.head("-n 1", filepath)
+            return True
+        except pysam.SamtoolsError:
+            return False
+    return False
+

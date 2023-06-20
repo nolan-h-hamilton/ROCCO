@@ -2,16 +2,7 @@ import os
 import argparse
 import pandas as pd
 from pybedtools import BedTool
-from pysam import head, SamtoolsError
-
-def is_alignment(filepath):
-    if 'bai' == filepath.split('.')[-1]:
-        return False
-    try:
-        head("-n 1", filepath)
-        return True
-    except SamtoolsError:
-        return False
+import rocco_aux
 
 def proc_bed(bedfile, header=False):
     i = 0
@@ -57,8 +48,7 @@ def proc_bed(bedfile, header=False):
 def peak_count_matrix(bedfile, bams=None, outfile=None,  bdir='.'):
     """Runs `multicov` for a specified `bedfile` and BAMs"""
     bamfiles = []
-    if bdir.split('/')[-1] == '/':
-        bdir = bdir[0:-1]
+    bdir = rocco_aux.trim_path(bdir)
 
     if bams is not None:
         bam_df = pd.read_csv(bams,
@@ -74,9 +64,8 @@ def peak_count_matrix(bedfile, bams=None, outfile=None,  bdir='.'):
                 for f_ in os.listdir(bdir):
                     f_ = f_.strip()
                     f_ = bdir + '/' + f_
-                    if ID in f_ and  is_alignment(f_):
+                    if ID in f_ and  rocco_aux.is_alignment(f_):
                         IDs[i] = f_
-
         bamfiles = IDs
     else:
         print('no sample metadata was provided...exiting')
@@ -106,7 +95,7 @@ def main():
     parser.add_argument('-o','--outfile', default='ROCCO_peak_counts.tsv')
     args = vars(parser.parse_args())
     peak_count_matrix(args['peakfile'], args['bamfiles'],
-                      args['outfile'],bdir=args['bamdir'])
+                      args['outfile'], bdir=args['bamdir'])
 
 if __name__ == "__main__":
     main()
