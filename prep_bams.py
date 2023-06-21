@@ -8,15 +8,50 @@ chromosome, converted to human-readable .wig format, and then placed into direct
 à la (github.com/nolan-h-hamilton/ROCCO/blob/main/docs/bamsig_flowchart.png).
 
 The resulting `tracks_chr[]` directories can then be supplied to ROCCO_chrom.py
-via `--wig_path` to construct the signal matrix mathbf{S}_{chr[]} defined in the
-paper.
+via `--wig_path` to construct the signal matrix $\mathbf{S}_{chr}$.
+
+```
+usage: prep_bams.py [-h] [-i BAMDIR] [-o OUTDIR] [-s SIZES]
+                    [-L INTERVAL_LENGTH] [-c CORES] [--index INDEX]
+                    [--bstw_path BSTW_PATH]
+
+options:
+  -h, --help            show this help message and exit
+  -i BAMDIR, --bamdir BAMDIR
+                        path to directory containing BAM files
+  -o OUTDIR, --outdir OUTDIR
+                        output directory
+  -s SIZES, --sizes SIZES
+                        A path to a chromosome sizes file. OR an assembly name
+  -L INTERVAL_LENGTH, --interval_length INTERVAL_LENGTH
+                        wiggle track fixed interval length
+  -c CORES, --cores CORES
+                        Number of cores to process BAM files with. Altering
+                        this parameter to use >1 core can speed things up
+                        considerably but may cause issues on Mac OS
+  --index INDEX         deprecated--included for backwards compatibility
+  --bstw_path BSTW_PATH
+                        path to bamSitesToWig.py script, included in
+                        ROCCO/pepatac by default
+
+```
+
+Example:
+
+    Run on toy/test data in `tests/data`:
+    ```
+    python3 prep_bams.py --bamdir tests/data -s tests/data/test_sizes.sizes
+    ```
 
 Notes:
-    - Other tools exist for creating similarly formatted signal tracks, but have not been\
-        tested.
+    - If using computing environment with a workload manager, e.g., SLURM, consider manually
+        creating `bamSitesToWig.py` jobs for each sample. This is typically much faster.
 
-    - More `--cores` --> faster processing. However, setting `--cores` > 1 on Mac OS\
+    - More `--cores` --> faster processing. However, setting `--cores > 1` on Mac OS\
         seems to cause problems with bamSitesToWig.py
+
+    - Several alternative tools exist for creating signal tracks in the desired format,\
+        but have not yet been tested.
 """
 
 import os
