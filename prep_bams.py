@@ -1,7 +1,7 @@
 """
 Obtain ROCCO conformable input from BAM files
 
-This script is essentially a ROCCO-specific wrapper for the PEPATAC (github.com/databio/pepatac)
+This script is a ROCCO-specific wrapper for the PEPATAC (github.com/databio/pepatac)
 tool `bamSitesToWig.py`. BAM files for each sample/replicate in `bamdir` are used to
 create smooth, fixed-step bigwig signal tracks. These signal tracks are split by
 chromosome, converted to human-readable .wig format, and then placed into directories
