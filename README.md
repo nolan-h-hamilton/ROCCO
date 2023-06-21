@@ -39,8 +39,8 @@ Clone/download this repository to use ROCCO
   git clone https://github.com/nolan-h-hamilton/ROCCO.git
   ```
 ### Jupyter Notebook Demos
-  Some lightweight demonstrations using publicly available data.
-  1. **Basic Usage**. [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb). Includes visualized results in UCSC genoome browser.
+  Some lightweight demonstrations using publicly available data. 
+  1. **Quick Start Demo**. [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb). Includes visualized results in UCSC genoome browser.
   1. **Differential Accessibility**. [heart_da_demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo_files/heart_da_demo.ipynb). A sample ROCCO-->[DESeq2](https://github.com/mikelove/DESeq2) pipeline for differential analysis.
 
 ### Auxiliary Scripts

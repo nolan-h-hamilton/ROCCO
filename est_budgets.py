@@ -1,13 +1,9 @@
 """
-Estimate budgets for each chromosome using data from `--bamdir`
-
-This script estimates budgets for each chromosome based on read density
+Estimates budgets for each chromosome based on avg. read density
 across multiple BAM files in `--bamdir`. Output (stdout) is formatted for
 easy use as a parameter CSV file for ROCCO.py (`--param_file`).
 
-There are some inherent limitations of this methodology, but the results can
-serve as a reasonable starting point for users wishing to apply chrom-
-osome-specific budgets.
+The results may serve as a good starting point for users wishing to apply chromosome-specific budgets.
 
 Usage:
     python est_budgets.py [-d <bamdir>] [-s <sizes>] [-a <min_value>] [-b <max_value>] [--read_length <read_length>]
@@ -50,18 +46,20 @@ def est_rdlen(bamfile: str, chromosome: str, total_reads: int, sample_frac: floa
 
 
 def rd_dens(bamfile: str, size_file: str = "hg38.sizes", a: float = 0.0, b: float = 0.05, rdlen: int = -1) -> Dict[str, float]:
-    """Calculate read density for a single BAM file and apply min-max normalization
+    """
+    Calculate read density for a single BAM file and apply min-max normalization
       to compute a budget for each chromosome.
 
     Args:
-        bamfile: Path to the BAM file.
-        size_file: path to a chromosome sizes file
-        a: Minimum allowed budget for a particular chromosome
-        b: Maximum allowed budget for a particular chromosome.
-        rdlen: read length, estimated by default
+        bamfile (str): Path to the BAM file.
+        size_file (str): path to a chromosome sizes file
+        a (float): Minimum allowed budget for a particular chromosome
+        b (float): Maximum allowed budget for a particular chromosome.
+        rdlen (int): Read length. If unspecified this value is estimated
+            with `est_budgets.est_rdlen()`
 
     Returns:
-        A dictionary of estimated budgets for each chromosome.
+        dict: A dictionary of estimated budgets for each chromosome.
     """
     size_dict = rocco_aux.parse_size_file(size_file)
     aln = pysam.AlignmentFile(bamfile)
@@ -89,16 +87,19 @@ def rd_dens(bamfile: str, size_file: str = "hg38.sizes", a: float = 0.0, b: floa
 
 
 def avg_rd(bamdir: str, size_file: str = "hg38.sizes", a: float = 0.0, b: float = 0.05, rdlen:int = -1) -> Dict[str, float]:
-    """Calculate the average read density across multiple BAM files.
+    """
+    Calculate the average read density across multiple BAM files.
 
     Args:
-        bamdir: Path to the directory containing BAM files.
-        a: Minimum value for read density normalization.
-        b: Maximum value for read density normalization.
-        rdlen: read length, estimated by default
+        bamfile (str): Path to the BAM file.
+        size_file (str): path to a chromosome sizes file
+        a (float): Minimum allowed budget for a particular chromosome
+        b (float): Maximum allowed budget for a particular chromosome.
+        rdlen (int): Read length. If unspecified this value is estimated
+            with `est_budgets.est_rdlen()`
 
     Returns:
-        Dictionary with estimated budgets for each chromosome.
+        dict: Dictionary with estimated budgets for each chromosome.
     """
     bamdir = rocco_aux.trim_path(bamdir)
     bamfiles = [f'{bamdir}/{x}' for x in os.listdir(bamdir)
