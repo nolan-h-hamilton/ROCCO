@@ -18,7 +18,19 @@ jobs:
       - uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-      - run: pip install pdoc
+      # ADJUST THIS: install all dependencies (including pdoc)
+      - run: pip install numpy
+      - run: pip install scipy
+      - run: pip install cvxpy
+      - run: pip install pandas
+      - run: pip install pararead
+      - run: pip install logmuse
+      - run: pip install pysam
+      - run: pip install pybedtools
+      - run: sudo apt-get install -y bedtools
+      - run: sudo apt-get install -y samtools
+      # ADJUST THIS: build your documentation into docs/.
+      # We use a custom build script for pdoc itself, ideally you just run `pdoc -o docs/ ...` here.
       - run: pdoc loci.py rocco_aux.py locus.py ROCCO_chrom.py ROCCO.py prep_bams.py --math -d google -o pdocs/
       - uses: actions/upload-pages-artifact@v1
         with:
