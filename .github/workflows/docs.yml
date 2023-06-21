@@ -27,6 +27,7 @@ jobs:
       - run: pip install logmuse
       - run: pip install pysam
       - run: pip install pybedtools
+      - run: pip install pdoc
       - run: sudo apt-get install -y bedtools
       - run: sudo apt-get install -y samtools
       # ADJUST THIS: build your documentation into docs/.
