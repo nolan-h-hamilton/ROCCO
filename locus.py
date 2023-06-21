@@ -1,21 +1,29 @@
-"""
-Locus object
-
-Args:
-    position: nucleotide position of the locus.
-    left (Locus): points to previous adjacent locus
-    right (Locus): points to subsequent adjacent locus
-    size (int): size (nt) of locus.
-    parent (Locus): parent locus of the current locus\
-        defined for initial loci after Loci.combine()
-    subloci (list): list of subloci contained within the current locus\
-        defined for merged loci after Loci.combine()
-    sig_data (list): list of replicate's signal values at the locus
-    accessible (float): A value between [0,1] measuring accessibility\
-        restricted to 0,1 in a complete (integral) solution.
-
-"""
 class Locus:
+    r"""
+    `Locus` objects are the $n \approx \frac{|\mathscr{L}|}{L}$ nodes
+    dividing genomic region $\mathscr{L}$ into segments of $L$ nucleotides.
+
+    Attributes:
+        position (int): Nucleotide position of Locus `self`.
+        left (Locus): Points to the previous adjacent locus.
+        right (Locus): Points to the subsequent adjacent locus.
+        size (int): Size (in nucleotides) of the Locus `self`.
+            Corresponds to $L$ before merging.
+        parent (Locus): Parent locus of the Locus `self`.
+            Only defined for Locus objects merged by `Loci.combine()`.
+        subloci (list): List of subloci comprising Locus objet `self`.
+            Only defined for Locus objects that were created from merged
+            loci with `Loci.combine()`.
+        sig_data (np.ndarray): $K \times 1$ vector of replicates' signal
+            values at Locus `self`. Corresponds to $\mathbf{s}_i$.
+        accessible (float): a value between 0 and 1. Corresponds to
+            $\ell_i$.
+
+    Note:
+        After optimization, ROCCO merges contiguous, accessible Locus objects.
+            Meaning `Locus.size` may be larger than the initial locus size, and
+            is in this way inconsistent with the definition of $L$ in the paper.
+    """
     def __init__(self, position=None,left=None,right=None,
                  size=None, parent=None, subloci=None,
                  sig_data=None, accessible=None):
@@ -31,14 +39,4 @@ class Locus:
         else:
             self.accessible = accessible
 
-
-    def __str__(self):
-        """
-        Returns a string representation of the locus
-
-        Returns:
-            a string repr. of a dictionary with a key for each\
-                field of the Locus object
-        """
-        return str(self.__dict__)
 

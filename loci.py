@@ -1,15 +1,10 @@
-"""
-A Loci object is a doubly-linked list of Locus objects with some functions
-and attributes useful for running ROCCO.
+r"""
+Loci object: ROCCO creates a Locus object (see `locus.py`) for each
+$\ell_i, \forall i = 1 \ldots n$. These Locus objects are then linked
+together as a Loci object, defined in this code.
 
-ROCCO creates a Locus object for each entry in the input
-`.wig` files and links them together using a Loci object. 
-
-ROCCO_chrom.py defines the signal data for the i-th Locus object
-as a list comprised of the signal values at the i-th entries of the
-input `.wig` files. In this sense, the Loci object for a given set of
-samples corresponds to the signal matrix mathbf{S}_{mathscr{L}} defined
-in the paper.
+The necessary functionality to construct the signal matrix,
+$\mathbf{S}_{chr}$, is implemented by way of the Loci object.
 """
 import copy
 import math
@@ -21,6 +16,18 @@ from locus import Locus
 
 
 class LociIterator:
+    """
+    Iterator for traversing the Loci object
+
+    Args:
+        head (Locus): first Locus object in the Loci object
+
+    Returns:
+        LociIterator: an iterator object
+
+    Raises:
+        StopIteration: raised if end of genomic region is reached during iteration
+    """
     def __init__(self, head):
         self.current = head
 
@@ -36,7 +43,7 @@ class LociIterator:
         return item
 
 class Loci:
-    """A collection of locus objects, doubly-linked"""
+
     def __init__(self, head=None, tail=None):
         self.head = head
         self.tail = tail
@@ -44,13 +51,27 @@ class Loci:
     def __iter__(self):
         return LociIterator(self.head)
 
-    def is_empty(self):
+    def is_empty(self) -> bool:
+        """
+        Check if the Loci object is empty
+
+        Returns:
+            bool: True if Loci object is empty--False otherwise.
+        """
         if self.head is None and self.tail is None:
             return True
         return False
 
     def append_locus(self,locus):
-        """Add locus as the new tail of the Loci object"""
+        """
+        Append a new locus as the tail of the Loci object.
+
+        Args:
+            locus (Locus): The locus to be appended.
+
+        Returns:
+            None
+        """
         if  self.is_empty():
             self.head = locus
             self.tail = locus
@@ -67,7 +88,7 @@ class Loci:
         """Combine contiguous accessible regions
 
         This function takes the starting and ending node
-        for a sequence of contiguous loci (i.e., a sequence 
+        for a sequence of contiguous loci (i.e., a sequence
         such that all loci satisfy `Locus.accessible = 1`) and
         merges them into a single locus object. It defines
         the new locus's signal vector as the sum
@@ -79,7 +100,6 @@ class Loci:
               selected loci
             tail_ (Locus): last locus object in sequence of contiguous
               selected loci
-
         """
         cpy = head_
         accessible_ = 0
@@ -98,10 +118,6 @@ class Loci:
             head_ = head_.right
 
         sig_matrix = np.array([np.array(sig) for sig in sig_matrix]).transpose()
-
-        # new signal data is a $K \times 1$ vector
-        # obtained as the sum signal at each locus
-        # comprising the contiguous sequence.
         sig_data_ = np.sum(sig_matrix,axis=1)
 
         # create new locus
@@ -125,12 +141,12 @@ class Loci:
             s_head_ = s_head_.right
 
     def as_list(self) -> list:
-        """Get a list representation of the Loci object
+        """
+        Get a list representation of the Loci object.
 
         Returns:
-            A list representation of the Loci object: i.e.,
-              a list with Locus elements ordered as in the
-              Loci object.
+            list: list representation of the Loci object, where the Locus elements
+                are ordered as in the Loci object.
         """
         head_ = self.head
         list_repr = []
@@ -140,10 +156,19 @@ class Loci:
         return list_repr
 
     def combine_selected(self):
-        """Find ajacent accessible regions and combine them
+        r"""
+        Find adjacent accessible regions and combine them into a single locus
 
-        This function identifies contiguous selected regions
-        and calls `combine()` to merge them.
+        This function identifies sequences of locus objects, $\ell_i$, satisfying
+        $\ell_i$`.accessible > 0` and combines them into a single locus via `Loci.combine()`.
+
+
+        Notes:
+            - `Loci.combine()` defines signal data for the created locus as the vector sum of
+                signal data for each Locus object comprising the contiguous accessible region.
+
+        Returns:
+            None
         """
         head_ = self.head
         while head_ is not None:
@@ -158,11 +183,15 @@ class Loci:
             if head_ is not None:
                 head_ = head_.right
 
-    def get_sig_mat(self):
-        """Build mathbf{S}_{chr} as defined in the paper
+    def get_sig_mat(self) -> np.ndarray:
+        r"""
+        Builds the signal matrix $\mathbf{S}_{chr}$ as defined in the paper.
 
-        Each locus's sig_data propety is a K times 1 column
-        vector, so mathbf{S}_{chr} is a K times n matrix.
+        Each Locus object's `sig_data` attribute is a $K \times 1$ column
+        vector, so $\mathbf{S}_{chr}$ is a $K \times n$ matrix.
+
+        Returns:
+            None
         """
         sig_mat = []
         head_ = self.head
@@ -171,11 +200,16 @@ class Loci:
             head_ = head_.right
         return np.array(sig_mat)
 
-    def g3_vec(self, metric_vec):
-        """Compute a list of g_3 values for each locus
+    def g3_vec(self, metric_vec) -> np.ndarray:
+        r"""
+        Compute locus score term $g_3$ for each locus.
+
+        Args:
+            metric_vec (np.ndarray): (by default) a $1 \times n$ vector of
+                median signal values at each locus.
 
         Returns:
-            a locus-ordered $1 \times n$ numpy array of $g_3$ values
+            np.ndarray: A vector $g_3(i), \forall i=1 \ldots n$
         """
         v_vec = []
         for i,Loc in enumerate(metric_vec):
@@ -191,8 +225,22 @@ class Loci:
             v_vec.append(vel)
         return np.array(v_vec)
 
-    def score_loci(self,tau=1,c1=1,c2=1,c3=1):
-        """Compute scores at each locus using mathcal{S}(i)"""
+    def score_loci(self, tau: float = 0.0, c1: float = 1.0, c2: float = 1.0, c3: float = 1.0) -> np.ndarray:
+        r"""
+        compute locus score vector, i.e., $\mathcal{S}(i), \forall i = 1 \ldots n$
+        given the $K \times n$ signal matrix $\mathbf{S}_{chr}$.
+
+        Args:
+            tau (float): median signal threshold (see $\tau$ in paper)
+            c1 (float): weight for the first term in  $\mathcal{S}(i)$,
+                (median signal) $g_1$
+            c2 (float): weight for second term in $\mathcal{S}(i)$,
+                (MAD dispersion) $g_2$
+            c3 (float): weight for third term in  $\mathcal{S}(i)$, $g_3$
+
+        Returns:
+            np.ndarray: the $n$-dimensional score vector $\mathcal{S}(i), \forall i = 1 \ldots n$
+        """
         sig_mat = self.get_sig_mat()
         med_vec = np.median(sig_mat,axis=1) # g_1
         mad_vec = stats.median_abs_deviation(sig_mat,axis=1) # g_2
@@ -205,28 +253,28 @@ class Loci:
         return s_vec
 
     def run_rr(self, lp_sol, N, loci_scores, budget, gam, eps=1e-5) -> np.ndarray:
-        """
-        Carry out the RR rounding procedure to find a good integral solution.
-
-        Note: if `N<=0`, the `floor_eps` protocol is applied
-        in which any decision variable satisfying `l_i + eps < 1`
-        is rounded down to zero.
+        r"""
+        Carry out the $\texttt{RR}$ rounding procedure to return a
+        'good' integral solution with reference to the LP solution
 
         Args:
             lp_sol (numpy.ndarray): The LP solution
-            N (int): Number of RR solutions to evaluate
+            N (int): Number of RR solutions to evaluate. If $N \leq 0$, the
+                $\texttt{floor\_eps}$ rounding protocol is applied in which
+                any decision variable satisfying $\ell_i + \epsilon < 1$
+                (`lp_sol[i] + eps < 1`) is rounded down to zero.
             loci_scores (list): mathcal{S} for each locus
-            budget (float): budget
+            budget (float): budget parameter
             gam (float): gamma
-            eps (float, optional): epsilon value for "floor" rounding (Default: eps=1e-5)
+            eps (float): epsilon value for "floor" rounding (Default: eps=1e-5)
 
     Returns:
-        list: an integral vector of decision variables for each locus.
-
+        np.ndarray: the integral $\texttt{RR}$ solution, OR $\texttt{floor\_eps}$ sol if $N \leq 0$.
     """
         n = len(loci_scores)
 
         if N <= 0:
+            print("loci.run_rr(): N <= 0 --> returning floor_eps solution")
             return np.floor(lp_sol[:n] + eps)
 
         rr_sol = None
@@ -248,26 +296,30 @@ class Loci:
                 best_score = score
 
         if rr_sol is None:
-            print("loci.run_rr(): returning floor solution")
+            print("loci.run_rr(): no good solution found via RR --> returning floor solution")
             return np.floor(lp_sol[:n] + eps)
 
         return np.array(rr_sol)
 
 
-    def rocco_lp(self, budget=.035, tau=1, gam=1, c1=1, c2=1, c3=1,
-                 verbose_=False, solver="ECOS", N=50) -> cp.Problem:
-        """
-        Solve LP as defined in the paper and assign accessibility
-        prediction tag `0,1` to each locus.
+    def rocco_lp(self, budget: float = .035, tau: float = 0, gam: float = 1, c1: float = 1,
+             c2: float = 1, c3: float = 1, verbose_: bool = False, solver: str = "ECOS",
+             N: int = 50) -> cp.Problem:
+        r"""
+        Solve relaxed problem as an LP and assign binary accessibility
+        prediction to each locus using the $\texttt{RR}$ or $\texttt{floor\_eps}$
+        procedure.
 
         Args:
             budget (float): budget constraint
-            tau (float): tau in mathcal{S}(i)
-            gam (float): gamma in LP
-            c1 (float): c1 value in mathcal{S}(i)
-            c2 (float): c2 value in mathcal{S}(i)
-            c3 (float): c3 value in mathcal{S}(i)
-            N (int): RR procedure iters. `N<=0` --> floor_eps procedure applied
+            tau (float): tau in $\mathcal{S}(i)$
+            gam (float): gamma
+            c1 (float): c1 value in $\mathcal{S}(i)$
+            c2 (float): c2 value in $\mathcal{S}(i)$
+            c3 (float): c3 value in $\mathcal{S}(i)$
+            N (int): RR procedure iterations. If N <= 0,
+                \texttt{floor\_eps} procedure is applied...
+                See `Loci.run_rr()`
             verbose_ (bool): Verbosity flag for the solver
             solver (str): the solver to use: either "ECOS" or "MOSEK"
 
@@ -312,24 +364,34 @@ class Loci:
 
         return problem
 
-    def rocco_ip(self, budget=.10, tau=1, gam=1,
-                 c1=1, c2=1, c3=1,
-                 verbose_=False,
-                 solver='ECOS_BB'):
-        """
-        Solve integer program (unrelaxed version) as defined in paper.
+    def rocco_ip(self, budget: float = .035, tau: float = 0, gam: float = 1, c1: float = 1,
+             c2: float = 1, c3: float = 1, verbose_: bool = False, solver: str = "ECOS_BB") -> cp.Problem:
+        r"""
+        Solve the unrelaxed optimization problem as an integer program.
 
-        more precise, but slow--It is recommended to use a commerical 
-        grade solver, e.g., MOSEK if solving this unrelaxed version
-        of the problem
+        Args:
+            budget (float): budget constraint
+            tau (float): tau in $\mathcal{S}(i)$
+            gam (float): gamma
+            c1 (float): c1 value in $\mathcal{S}(i)$
+            c2 (float): c2 value in $\mathcal{S}(i)$
+            c3 (float): c3 value in $\mathcal{S}(i)$
+            verbose_ (bool): Verbosity flag for the solver
+            solver (str): the solver to use: either "ECOS" or "MOSEK"
 
-        Parameters and return value same as `Loci.rocco_lp()`
-        """
+        Returns:
+            cp.Problem: a CVXPY problem object
 
-        loci_scores = self.score_loci(tau, c1, c2, c3) # S_i, i=1...n
+        Notes:
+            - There is no efficiency guarantee for this version of
+                the problem. Solving may be intractable in some
+                cases. MOSEK, or another commerical-grade
+                integer optimization package is recommended.
+    """
+        loci_scores = self.score_loci(tau, c1, c2, c3)
         n = len(loci_scores)
         # define problem in CVXPY
-        ell = cp.Variable((n,1),integer=True) # decision variables-integers
+        ell = cp.Variable((n,1),integer=True)
         constraints = [ell <= 1,
                           ell >= 0,
                           cp.sum(ell) <= math.floor(budget*n)]
@@ -337,8 +399,8 @@ class Loci:
                              constraints)
 
         if solver == "ECOS" or solver =="ECOS_BB":
-            problem.solve(cp.ECOS_BB, verbose=verbose_,max_iters=100,
-                          feastol=1e-4, abstol=1e-4,reltol=1e-4)
+            problem.solve(cp.ECOS_BB, verbose=verbose_,max_iters=500,
+                          feastol=1e-5, abstol=1e-5,reltol=1e-5)
         if solver == "MOSEK":
             try:
                 problem.solve(cp.MOSEK, verbose=verbose_)

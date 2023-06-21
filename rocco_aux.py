@@ -5,25 +5,32 @@ import pybedtools
 import pysam
 from collections import OrderedDict
 
-def trim_path(fname: str):
-    """Remove trailing `/`s from directory paths"""
+def trim_path(fname: str) -> str:
+    """
+    Remove trailing `/`s from directory/file paths
+
+    Args:
+        fname (str): name
+
+    Returns:
+        str: trimmed name
+    """
     while len(fname) > 1 and fname[-1] == '/':
         fname = fname[:-1]
     return fname
 
-def sort_combine_bed(outfile: str, dir_: str = '.', exclude_: list = []) -> bool:
+
+def sort_combine_bed(outfile: str, dir_: str = '.', exclude_list: list = ['EBV', 'M', 'MT']):
     """
     Sorts and combines chromosome-specific bed files. Creates a new
     bed file `outfile` to store the combined results.
 
     Parameters:
         outfile (str): The output file name where the sorted and combined bed file will be written.
-        dir_ (str, optional): The directory containing the chromosome-specific bed files.
-          Default is the current directory ('.').
-        exclude_ (list, optional): list of filenames to exclude from result
+        dir_ (str): The directory containing the chromosome-specific bed files.
+            Default is the current directory ('.').
+        exclude_list (list): list of chromosomes to exclude. (default: ['EBV', 'M', 'MT'])
 
-    Returns:
-        `True` if combined file created successfully, `False` otherwise
 
     Notes:
         - this function assumes the bed files are named with the\
@@ -33,7 +40,7 @@ def sort_combine_bed(outfile: str, dir_: str = '.', exclude_: list = []) -> bool
 
     filenames = [f_ for f_ in os.listdir(dir_)
                  if f_.split('.')[-1] == 'bed' and 'ROCCO_out' in f_
-                 and f_ not in exclude_]
+                 and f_ not in exclude_list]
 
     name_template = []
     try:
@@ -50,15 +57,13 @@ def sort_combine_bed(outfile: str, dir_: str = '.', exclude_: list = []) -> bool
             cat_process = subprocess.Popen(('cat', fname),
                                            stdout=outfile_.fileno())
             cat_process.wait()
-            if cat_process.returncode > 0:
-                return False
-    return True
 
-def get_size_file(assembly='hg38', exclude_list=['EBV', 'M', 'MT']) -> dict:
+
+def get_size_file(assembly='hg38', exclude_list=['EBV', 'M', 'MT']) -> str:
     """
     If `assembly` is the name of an assembly included in the pybedtools
-    genome collection, this function will return a chromosome sizes file
-    `<assembly>.sizes`
+    genome registry, this function will create a chromosome sizes file
+    and return a path to it: `<assembly>.sizes`
 
     Args:
         assembly (str): genome assembly name
@@ -89,14 +94,15 @@ def get_size_file(assembly='hg38', exclude_list=['EBV', 'M', 'MT']) -> dict:
                     name, assembly_dict[name][1]))
     return fname
 
-def parse_size_file(size_file, exclude_list=['EBV', 'M', 'MT']):
+
+def parse_size_file(size_file, exclude_list=['EBV', 'M', 'MT']) -> dict:
     """Parse a size file and return a dictionary {chr: size}.
 
     Args:
-        size_file: Path to the size file.
-
+        size_file (str): Path to the size file.
+        exclude_list (list): list of chromosomes to exclude. (default: ['EBV', 'M', 'MT'])
     Returns:
-        A dictionary where chromosome names are keys and their sizes are values.
+        dict: a dictionary where chromosome names are keys and their sizes are values.
     """
     df = pd.read_csv(size_file, sep='\t', header=None)
     size_dict = {key: val
@@ -104,9 +110,17 @@ def parse_size_file(size_file, exclude_list=['EBV', 'M', 'MT']):
                     if key not in exclude_list}
     return size_dict
 
-def is_alignment(filepath):
-    if 'bai' == filepath.split('.')[-1]:
-        return False
+
+def is_alignment(filepath) -> bool:
+    """
+    Check if a file is an alignment file.
+
+    Args:
+        filepath (str): The path to the file.
+
+    Returns:
+        bool: True if the file is an alignment file, False otherwise.
+    """
     if 'bam' == filepath.split('.')[-1]:
         try:
             pysam.head("-n 1", filepath)

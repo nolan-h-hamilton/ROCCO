@@ -3,7 +3,7 @@ Run ROCCO ('Algorithm 2' in paper) on a particular chromosome `--chrom`.
 This script is the workhorse for ROCCO.py which generates results for
 every chromosome and collates results.
 
-
+```
 Usage:
 python ROCCO_chrom.py [--chrom CHROM] [--start START] [--end END] [--locus_size LOCUS_SIZE]
                       [--wig_path WIG_PATH] [-N RR_ITER] [--verbose] [--integral]
@@ -30,6 +30,14 @@ Options:
 --bed_format BED_FORMAT: BED format (3 for BED3, 6 for BED6) (default: 6)
 --identifiers IDENTIFIERS: File containing sample identifiers to include in the experiment. One line for each ID.
 --outdir OUTDIR: Output directory to store chromosome-specific BED file in (default: current directory)
+```
+
+Example:
+    Run on toy/test data in `tests/data`:
+    ```
+    python3 ROCCO_chrom.py --chrom chr22 --wig_path tests/data/tracks_chr22 -b .02
+    ```
+
 """
 
 import os
@@ -43,14 +51,16 @@ from loci import Loci
 
 
 def get_locus_size(wig_path) -> int:
-    """Infers interval size from replicates` wig files
+    """
+    Infers step size from replicates` wig files.
 
     Args:
-        wig_path (str) : path to directory containing wig files
+        wig_path (str) : path to *directory* containing wig files
 
 
     Returns:
-        an integer locus/interval size used in the wig files
+        int: an integer locus/step size used in the wig files
+
     """
     i = 0
     pos1 = 0
@@ -69,16 +79,17 @@ def get_locus_size(wig_path) -> int:
                 i += 1
     return pos2 - pos1
 
-
 def get_start_end(wig_path):
-    """Infers starting and ending nucleotide position common to the wigs
+    """
+    Infers starting and ending nucleotide position common to the
+    multiple signal tracks
 
     To infer a reasonable genomic region over which to run ROCCO,
     this function returns the median starting point and endpoints
     among the multiple replicates' signal files in `wig_path`.
 
     Args:
-        wig_path (str) : path to directory containing wig files
+        wig_path (str) : path to *directory* containing wig files
 
     Returns:
         start (int): median starting position
@@ -114,13 +125,14 @@ def get_start_end(wig_path):
 
 
 def read_wig(wig_file, start=0, end=10**10, locus_size=50):
-    """Processes a wig file for inclusion in the signal matrix S_chr
+    r"""
+    Processes a wig file for inclusion in the signal matrix $\mathbf{S}_{chr}$
 
     This function prepares signal data for to fit in a constant-sized
-    Kxn matrix. If a wig file begins at a position < `start`, it will
-    be padded with zeros. Likewise if a wig file ends at a position >
-    `end`, the extra values are ignored. Gaps between start/end are 
-    replaced with a zero-entry.
+    $K \times n$ matrix. If a wig file begins at a position < `start`,
+    it will be padded with zeros. Likewise if a wig file ends at a
+    position > `end`, the extra values are ignored. Gaps between `start`
+    and `end` are replaced with a zero-entry.
 
     Args:
         wig_file (str): path to wiggle formatted signal track
@@ -129,8 +141,8 @@ def read_wig(wig_file, start=0, end=10**10, locus_size=50):
         end (int): inferred or manually-specified ending nucleotide
           position
         locus_size (int): interval/locus size. Each wig file will have
-          signal values at every start + i*`locus_size` nucleotide pos.
-          for i = 1,2,...
+          signal values at every `start + i*locus_size` nucleotide pos.
+          for i = 0,1,2,...
 
     Returns:
         loci: list of starting nucleotide positions for each locus
@@ -183,7 +195,19 @@ def read_wig(wig_file, start=0, end=10**10, locus_size=50):
 
 
 def collect_wigs(wig_files, start=0, end=10**10, locus_size=50) -> pd.DataFrame:
-    """creates a Kxn dataframe of signals derived from wig files"""
+    r"""
+    creates a $K \times n$ dataframe of signals derived from wig files
+
+    Args:
+        wig_files (list): list of wig filepaths
+        start (int): starting nucleotide position of wig files
+        end (int): ending nucleotide position of wig files
+        locus_size (int): initial size (in nucleotides) of Locus objects.
+            Corresponds to $L$ in paper.
+
+    Returns:
+        pd.DataFrame: $K \times n$ dataframe of individuals' signals.
+    """
     loci = [x for x in range(start, end + locus_size, locus_size)]
     all_wigs = pd.DataFrame(
         np.array([read_wig(x, start, end, locus_size)[1]
@@ -193,10 +217,14 @@ def collect_wigs(wig_files, start=0, end=10**10, locus_size=50) -> pd.DataFrame:
 
 
 def emp_cdf(val, arr) -> float:
-    """Get empirical cdf of `val` in `arr`
+    """
+    Get empirical cdf of `val` in `arr`
 
-    Note: Assumes `arr` is sorted!
+    Used to compute 0-1000 scaled score for BED6 files
+    and visualization in genome browser.
 
+    Note:
+        Assumes `arr` is sorted!
 
     Args:
         val (float): a numeric element in `arr`
@@ -208,8 +236,17 @@ def emp_cdf(val, arr) -> float:
     return np.searchsorted(arr, val) / len(arr)
 
 
-def sig_selected(loci_obj) -> np.ndarray:
-    """Return vector of scores from all selected, unmerged loci"""
+def sig_selected(loci_obj: Loci) -> np.ndarray:
+    """
+    Get enrichment signals from all selected loci
+
+    Args:
+        loci_obj (Loci): Loci object after optimization
+
+    Returns:
+        np.ndarray: vector of enrichment signals from all selected
+            (but still unmerged) loci
+    """
     sig_ref = []
     for loc in loci_obj:
         if loc.accessible == 1:
@@ -218,7 +255,15 @@ def sig_selected(loci_obj) -> np.ndarray:
 
 
 def tags(fname) -> list:
-    """Get sample ID tags from newline-separated file"""
+    """
+    Get sample IDs from file specified with command-line argument `--identifiers`
+
+    Args:
+        fname (str): path to file containing a subset of sample IDs--one line for each ID
+
+    Returns:
+        list: list of sample IDs in `fname`
+    """
     tags_ = []
     for line in open(fname, mode='r', encoding='utf-8'):
         tags_.append(line.strip())
@@ -226,7 +271,9 @@ def tags(fname) -> list:
 
 
 def log(text, verbose=True) -> None:
-    """only print if in verbose mode"""
+    """
+    Only print `text` if `verbose=True`.
+    """
     if verbose:
         print(str(text))
 
@@ -304,7 +351,7 @@ def main():
         size_ = args['locus_size']
         NewLoc = Locus(position=args['start'] + i * size_,
                        size=size_,
-                       sig_data=signal_matrix[loc])
+                       sig_data=np.array(signal_matrix[loc]))
         InitLoci.append_locus(NewLoc)
 
     log("ROCCO_chrom: solving for optimal solution", args['verbose'])
