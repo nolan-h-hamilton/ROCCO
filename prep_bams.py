@@ -5,7 +5,7 @@ This script is a ROCCO-specific wrapper for the PEPATAC (github.com/databio/pepa
 tool `bamSitesToWig.py`. BAM files for each sample/replicate in `bamdir` are used to
 create smooth, fixed-step bigwig signal tracks. These signal tracks are split by
 chromosome, converted to human-readable .wig format, and then placed into directories
-à la (github.com/nolan-h-hamilton/ROCCO/blob/main/docs/bamsig_flowchart.png).
+à la [this flowchart](https://github.com/nolan-h-hamilton/ROCCO/blob/main/docs/bamsig_flowchart.png).
 
 The resulting `tracks_chr[]` directories can then be supplied to ROCCO_chrom.py
 via `--wig_path` to construct the signal matrix $\mathbf{S}_{chr}$.
@@ -29,7 +29,7 @@ options:
                         Number of cores to process BAM files with. Altering
                         this parameter to use >1 core can speed things up
                         considerably but may cause issues on Mac OS
-  --index INDEX         deprecated--included for backwards compatibility
+  --index INDEX         deprecated--included for backwards compatibility.
   --bstw_path BSTW_PATH
                         path to bamSitesToWig.py script, included in
                         ROCCO/pepatac by default
@@ -44,7 +44,7 @@ Example:
     ```
 
 Notes:
-    - If using computing environment with a workload manager, e.g., SLURM, consider manually
+    - If using a computing environment with a workload manager, e.g., SLURM, consider manually
         creating `bamSitesToWig.py` jobs for each sample. This is typically much faster.
 
     - More `--cores` --> faster processing. However, setting `--cores > 1` on Mac OS\

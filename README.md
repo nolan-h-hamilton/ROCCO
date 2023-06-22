@@ -25,13 +25,15 @@ conda env create -n rocco --file docs/CONDA/rocco_conda.yml
 The created environment can then be loaded via: `conda activate rocco`.
 
 ## Input
-- A BAM file for each sample
+- a BAM file for each sample/replicate.
 
-The signal matrix, $\mathbf{S}_{chr} \in \mathbb{R}^{K\times n}$, as defined in the paper is created from the BAM files by running:
+The preprocessing script [`prep_bams.py`](https://nolan-h-hamilton.github.io/ROCCO/prep_bams.html) offers a convenient means to construct signal tracks from these alignment files to generate the input signal matrix $\mathbf{S}_{chr}$ used by ROCCO:
+
 ```
-python3 prep_bams.py -i <bam_dir, def=.> --cores <num_cores, def=1> -L <step_size, def=50>
+prep_bams.py [-h] [-i BAMDIR] [-o OUTDIR] [-s SIZES] [-L INTERVAL_LENGTH] [-c CORES]
 ```
-A [flowchart](https://github.com/nolan-h-hamilton/ROCCO/blob/main/docs/bamsig_flowchart.png) provides a visual demonstration of this preprocessing step. Run `python3 prep_bams.py --help` for a full list of parameters.
+
+See the [API reference](https://nolan-h-hamilton.github.io/ROCCO/prep_bams.html) or [Quick Start Demo](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb) for further details and usage examples.
 
 ## Getting Started
 Clone/download this repository to use ROCCO
@@ -40,13 +42,21 @@ Clone/download this repository to use ROCCO
   ```
 ### Jupyter Notebook Demos
   Some lightweight demonstrations using publicly available data. 
-  1. **Quick Start Demo**. [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb). Includes visualized results in UCSC genoome browser.
+  1. **Quick Start Demo**. [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb). Includes visualized results in UCSC genome browser.
   1. **Differential Accessibility**. [heart_da_demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo_files/heart_da_demo.ipynb). A sample ROCCO-->[DESeq2](https://github.com/mikelove/DESeq2) pipeline for differential analysis.
 
 ### Auxiliary Scripts
 Used for pre/post-processing. Use cases included in the demo notebooks and/or the scripts' module docstrings.
-1. `est_budgets.py`: used to determine chromosome-specific budgets as a function of read density
-1. `count_matrix.py`: used to create a count matrix for ROCCO peak results
-   
-### ROCCO API Reference
-Source code documentation is available [here](https://nolan-h-hamilton.github.io/ROCCO/).
+1. [`est_budgets.py`](https://nolan-h-hamilton.github.io/ROCCO/est_budgets.html): used to determine chromosome-specific budgets as a function of read density
+1. `count_matrix.py`: can used to create a DESEQ-conformable count matrix from ROCCO peak results for
+  differential analysis.
+
+## ROCCO API Reference
+https://nolan-h-hamilton.github.io/ROCCO
+
+## Citation
+```
+ROCCO: A Robust Method for Detection of Open Chromatin via Convex Optimization
+Nolan H. Hamilton, Terrence S. Furey
+bioRxiv 2023.05.24.542132; doi: https://doi.org/10.1101/2023.05.24.542132
+```
