@@ -158,6 +158,9 @@ def peak_count_matrix(bedfile, metadata, bamdir='.'):
 
 
 def get_coverage(peak_file, bamfile):
+    """
+    Called by pool.map() to retrieve coverage at each peak position
+    """
     names = []
     depths = []
     bed = proc_bed(peak_file)
@@ -169,8 +172,6 @@ def get_coverage(peak_file, bamfile):
         depths.append(float(line[6]))
     assert len(names) == bed.count()
     return bamfile,dict(zip(names,depths))
-
-
 
 
 def main():
