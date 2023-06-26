@@ -21,7 +21,7 @@ jobs:
       # ADJUST THIS: install all dependencies (including pdoc)
       - run: pip install --upgrade pip
       - run: pip install numpy
-      - run: pip install scipy
+      - run: pip install scipy==1.10.0
       - run: pip install cvxpy
       - run: pip install pandas
       - run: pip install pararead
