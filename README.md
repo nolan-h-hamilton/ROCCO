@@ -48,7 +48,7 @@ Clone/download this repository to use ROCCO
 ### Auxiliary Scripts
 Used for pre/post-processing. Use cases included in the demo notebooks and/or the scripts' module docstrings.
 1. [`est_budgets.py`](https://nolan-h-hamilton.github.io/ROCCO/est_budgets.html): used to determine chromosome-specific budgets as a function of read density
-1. `count_matrix.py`: can used to create a DESEQ-conformable count matrix from ROCCO peak results for
+1. [`count_matrix.py`]((https://nolan-h-hamilton.github.io/ROCCO/count_matrix.html)): can used to create a DESEQ-conformable count matrix from ROCCO peak results for
   differential analysis.
 
 ## ROCCO API Reference

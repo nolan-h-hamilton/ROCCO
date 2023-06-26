@@ -5,7 +5,7 @@ identified w/ ROCCO). Each `(i,j)` entry represents the number of
 of reads mapping to the region in column `j` and sample in row `i`.
 
 Usage:
-    count_matrix.py [-h] [-i PEAKFILE] [-m METADATA] [--bamdir BAMDIR] [-o OUTFILE]
+    `count_matrix.py [-h] [-i PEAKFILE] [-m METADATA] [--bamdir BAMDIR] [-o OUTFILE]`
 
 Arguments:
     peakfile (str): (`-i`) BED-formatted peak file
