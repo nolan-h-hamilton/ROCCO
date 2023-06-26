@@ -32,7 +32,7 @@ jobs:
       - run: sudo apt-get install -y samtools
       # ADJUST THIS: build your documentation into docs/.
       # We use a custom build script for pdoc itself, ideally you just run `pdoc -o docs/ ...` here.
-      - run: pdoc locus.py loci.py ROCCO_chrom.py ROCCO.py rocco_aux.py count_matrix.py count_matrix.py est_budgets.py prep_bams.py --math -d google -o pdocs/ --logo "https://user-images.githubusercontent.com/57746191/240662475-170478f1-5820-4056-b315-3c8dee3603d9.png"
+      - run: pdoc locus.py loci.py ROCCO_chrom.py ROCCO.py rocco_aux.py count_matrix.py est_budgets.py prep_bams.py --math -d google -o pdocs/ --logo "https://user-images.githubusercontent.com/57746191/240662475-170478f1-5820-4056-b315-3c8dee3603d9.png"
       - uses: actions/upload-pages-artifact@v1
         with:
           path: pdocs/
