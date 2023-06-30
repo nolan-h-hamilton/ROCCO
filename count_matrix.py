@@ -11,9 +11,9 @@ Arguments:
     peakfile (str): (`-i`) BED-formatted peak file
     metadata (str, optional): (`-m`) path to sample metadata file. Assumed
             structure is a TSV file with a row for each sample
-            and columns `name` and `group`. If this argument is
+            and the leftmost column `name`. *If this argument is
             not specified, this script will use all samples with
-            BAM files in `bamdir` to construct the count matrix.
+            BAM files in `bamdir` to construct the count matrix*.
     bamdir (str): path to directory containing samples' BAM alignments.
     outfile (str): filename of generated count matrix
 """
@@ -99,11 +99,11 @@ def peak_count_matrix(bedfile, metadata, bamdir='.'):
 
     Args:
         bedfile (str): path to peak data file (bed formatted)
-        metadata (str): path to sample metadata file. Assumed
+        metadata (str, optional): (`-m`) path to sample metadata file. Assumed
             structure is a TSV file with a row for each sample
-            and columns `name` and `group`. The names are sample
-            -specific IDs. The groups specify which group the
-            sample belongs to.
+            and the leftmost column `name`. *If this argument is
+            not specified, this script will use all samples with
+            BAM files in `bamdir` to construct the count matrix*.
         bamdir (str): path to the directory containing samples'
             BAM files. Defaults to current working directory.
     """
@@ -180,7 +180,7 @@ def main():
     parser.add_argument('-m', '--metadata', default=None,
                         help="sample metadata file. leftmost column should list sample\
                           identifiers for which there exists an alignment file named \
-                          accordingly in the directory `--")
+                          accordingly in the directory `--bamdir`")
     parser.add_argument('--bamdir', type=str, default='.')
     parser.add_argument('-o','--outfile', default='ROCCO_out_countmat.tsv')
     args = vars(parser.parse_args())

@@ -8,10 +8,10 @@ Underlying ROCCO is a constrained optimization problem that can be solved effici
 
 **Features**
 
-1. Explicitly accounts for both **enrichment and spatial characteristics** of open chromatin signals, the latter of which is an informative but often ignored aspect of ATAC-seq data;
-1. Leverages data from multiple samples of varying quality **without imposing arbitrary thresholds** on a minimum number of samples declaring peaks;
+1. Explicitly accounts for both **enrichment and spatial characteristics** of open chromatin signals;
+1. Leverages data from multiple samples **without imposing arbitrary thresholds** on a minimum number of supporting samples;
 1. Is efficient for **large numbers of samples** with an asymptotic time complexity independent of sample count;
-1. **Does not require training data or a heuristically determined set of initial candidate regions**, which are hard to define given the lack of a priori sets of open chromatin regions;
+1. **Does not require training data**, which is hard to define given the lack of a priori sets of open chromatin regions;
 1. Employs a **mathematically tractable model** permitting guarantees of performance and efficiency.
 
 ## Environment Details
@@ -30,7 +30,9 @@ The created environment can then be loaded via: `conda activate rocco`.
 The preprocessing script [`prep_bams.py`](https://nolan-h-hamilton.github.io/ROCCO/prep_bams.html) offers a convenient means to construct signal tracks from these alignment files to generate the input signal matrix $\mathbf{S}_{chr}$ used by ROCCO:
 
 ```
-prep_bams.py [-h] [-i BAMDIR] [-o OUTDIR] [-s SIZES] [-L INTERVAL_LENGTH] [-c CORES]
+prep_bams.py [-h] [-i BAMDIR] [-o OUTDIR] [-s SIZES]
+	[-L INTERVAL_LENGTH] [-c CORES] [--multi]
+	[--index INDEX] [--bstw_path BSTW_PATH]
 ```
 
 See the [API reference](https://nolan-h-hamilton.github.io/ROCCO/prep_bams.html) or [Quick Start Demo](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb) for further details and usage examples.
