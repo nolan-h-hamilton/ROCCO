@@ -30,7 +30,9 @@ The created environment can then be loaded via: `conda activate rocco`.
 The preprocessing script [`prep_bams.py`](https://nolan-h-hamilton.github.io/ROCCO/prep_bams.html) offers a convenient means to construct signal tracks from these alignment files to generate the input signal matrix $\mathbf{S}_{chr}$ used by ROCCO:
 
 ```
-prep_bams.py [-h] [-i BAMDIR] [-o OUTDIR] [-s SIZES] [-L INTERVAL_LENGTH] [-c CORES]
+prep_bams.py [-h] [-i BAMDIR] [-o OUTDIR] [-s SIZES]
+                    [-L INTERVAL_LENGTH] [-c CORES] [--multi]
+					[--index INDEX] [--bstw_path BSTW_PATH]
 ```
 
 See the [API reference](https://nolan-h-hamilton.github.io/ROCCO/prep_bams.html) or [Quick Start Demo](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb) for further details and usage examples.
