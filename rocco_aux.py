@@ -4,6 +4,7 @@ import pandas as pd
 import pybedtools
 import pysam
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 
 def trim_path(fname: str) -> str:
     """
@@ -129,3 +130,33 @@ def is_alignment(filepath) -> bool:
             return False
     return False
 
+def run_par(cmd_file, verbose=False):
+    """
+    Runs shell commands in `cmd_file` in parallel
+
+    Args:
+        cmd_file (str): file containing newline-separated commands
+        verbose (bool): whether to print subprocess output to stdout
+    """
+    assert os.path.exists(cmd_file), f'supplied `cmd_file` could not be found'
+
+    with open(cmd_file, 'r') as file:
+        commands = file.readlines()
+
+    commands = [cmd.strip() for cmd in commands][::-1]
+
+    def run_command(command):
+        if not verbose:
+            process = subprocess.Popen(command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            process.communicate()
+            return command, process.returncode
+        if verbose:
+            process = subprocess.Popen(command, shell=True, stderr=subprocess.DEVNULL)
+            process.communicate()
+            return command, process.returncode
+
+    with ThreadPoolExecutor(max_workers = 1 + (os.cpu_count() // 2)) as executor:
+        futures = [executor.submit(run_command, cmd) for cmd in commands]
+        results = [future.result() for future in futures]
+    for command, returncode in results[::-1]:
+        print(f"cmd: {command}\nretval: {returncode}\n")

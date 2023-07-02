@@ -52,31 +52,7 @@ import subprocess
 import pysam
 import rocco_aux
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
 
-
-def run_par(cmd_file):
-    """
-    Runs PEPATAC `bamSitesToWig.py` jobs in parallel
-
-    Args:
-        cmd_file (str): file containing newline-separated commands
-    """
-    with open(cmd_file, 'r') as file:
-        commands = file.readlines()
-    
-    commands = [cmd.strip() for cmd in commands]
-    
-    def run_command(command):
-        process = subprocess.Popen(command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        process.communicate()
-        return command, process.returncode
-    
-    with ThreadPoolExecutor() as executor:
-        futures = [executor.submit(run_command, cmd) for cmd in commands]
-        results = [future.result() for future in futures]
-    for command, returncode in results:
-        print(f"cmd: {command}\nretval: {returncode}\n")
 
 def main():
     parser = argparse.ArgumentParser(description='Description of your program.')
@@ -115,7 +91,7 @@ def main():
     if not args['multi']:
         print('prep_bams.py(): consider running with `--multi` for\
         parallel execution of bamSitesToWig.py jobs')
-        
+
     if not os.path.exists(args['sizes']):
         args['sizes'] = rocco_aux.get_size_file(args['sizes'])
 
@@ -149,13 +125,13 @@ def main():
             else:
                 tf.write(' '.join(bstw_cmd))
                 tf.write('\n')
-                
+
             bigwig_file = args['outdir'] + '/' + aln.filename.decode().split('/')[-1] + '.bw'
             bigwig_files.append(bigwig_file)
     tf.close()
-    if args['multi']: 
-        run_par(tf.name)
-    
+    if args['multi']:
+        rocco_aux.run_par(tf.name)
+
     chroms = list(rocco_aux.parse_size_file(args['sizes']).keys())
     os.chdir(args['outdir'])
     for chrom in chroms:
