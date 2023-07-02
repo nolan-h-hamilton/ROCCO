@@ -56,10 +56,9 @@ chr21_bed = BedTool('tests/output/ROCCO_out_chr21_0.02_1.0_0.0_1.0_1.0_1.0.bed')
 assert os.path.exists('tests/output/ROCCO_out_chr22_0.02_1.0_0.0_1.0_1.0_1.0.bed')
 chr22_bed = BedTool('tests/output/ROCCO_out_chr22_0.02_1.0_0.0_1.0_1.0_1.0.bed')
 merged_bed = chr21_bed.cat(chr22_bed)
-wrap_run('rm tests/output/*.bed')
 
 log('running ROCCO.py using tests/test_params.csv, store output in `tests/output` and combine', sys.argv[0])
-wrap_run('python3 ROCCO.py -p tests/test_params.csv --outdir tests/output --combine tests/combined.bed -N 0')
+wrap_run('python3 ROCCO.py -p tests/test_params.csv --outdir tests/output/combined --combine tests/combined.bed -N 0 --multi')
 assert os.path.exists('tests/combined.bed')
 combined_bed = BedTool('tests/combined.bed')
 
