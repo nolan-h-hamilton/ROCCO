@@ -143,7 +143,7 @@ def run_par(cmd_file, verbose=False):
     with open(cmd_file, 'r') as file:
         commands = file.readlines()
 
-    commands = [cmd.strip() for cmd in commands]
+    commands = [cmd.strip() for cmd in commands][::-1]
 
     def run_command(command):
         if not verbose:
@@ -155,8 +155,8 @@ def run_par(cmd_file, verbose=False):
             process.communicate()
             return command, process.returncode
 
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers = 1 + (os.cpu_count() // 2)) as executor:
         futures = [executor.submit(run_command, cmd) for cmd in commands]
         results = [future.result() for future in futures]
-    for command, returncode in results:
+    for command, returncode in results[::-1]:
         print(f"cmd: {command}\nretval: {returncode}\n")
