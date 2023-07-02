@@ -42,16 +42,14 @@ Clone/download this repository to use ROCCO
   ```
   git clone https://github.com/nolan-h-hamilton/ROCCO.git
   ```
-### Jupyter Notebook Demos
-  Some lightweight demonstrations using publicly available data. 
-  1. **Quick Start Demo**. [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb). Includes visualized results in UCSC genome browser.
-  1. **Differential Accessibility**. [heart_da_demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo_files/heart_da_demo.ipynb). A sample ROCCO-->[DESeq2](https://github.com/mikelove/DESeq2) pipeline for differential analysis.
+### Quick Start Demo
+A lightweight demonstration using publicly available data: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb).
 
 ### Auxiliary Scripts
-Used for pre/post-processing. Use cases included in the demo notebooks and/or the scripts' module docstrings.
+Used for pre/post-processing. Use cases included in the demo notebooks and/or [API reference](https://nolan-h-hamilton.github.io/ROCCO)
 1. [`est_budgets.py`](https://nolan-h-hamilton.github.io/ROCCO/est_budgets.html): used to determine chromosome-specific budgets as a function of read density
-1. [`count_matrix.py`](https://nolan-h-hamilton.github.io/ROCCO/count_matrix.html): can used to create a DESEQ-conformable count matrix from ROCCO peak results for
-  differential analysis.
+1. [`count_matrix.py`](https://nolan-h-hamilton.github.io/ROCCO/count_matrix.html): can used to create a DESEQ2-conformable count matrix from ROCCO peak results for
+  differential analysis. Creates parallel bedtools jobs for each sample to improve efficiency.
 
 ## ROCCO API Reference
 https://nolan-h-hamilton.github.io/ROCCO
