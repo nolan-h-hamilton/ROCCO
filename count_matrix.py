@@ -9,11 +9,11 @@ Usage:
 
 Arguments:
     peakfile (str): (`-i`) BED-formatted peak file
-    metadata (str, optional): (`-m`) path to sample metadata file. Assumed
-            structure is a TSV file with a row for each sample
-            and the leftmost column `name`. *If this argument is
-            not specified, this script will use all samples with
-            BAM files in `bamdir` to construct the count matrix*.
+    metadata (str, optional):  (`-m`) path to sample metadata file. Assumed
+            structure is a TSV file with a row for each sample with the
+            leftmost column specifying the sample identifier. *If this argument
+            is not invoked, this script will consider all samples with BAM files
+            in `bamdir` to construct the count matrix*.
     bamdir (str): path to directory containing samples' BAM alignments.
     outfile (str): filename of generated count matrix
 """
@@ -101,9 +101,10 @@ def peak_count_matrix(bedfile, metadata, bamdir='.'):
         bedfile (str): path to peak data file (bed formatted)
         metadata (str, optional): (`-m`) path to sample metadata file. Assumed
             structure is a TSV file with a row for each sample
-            and the leftmost column `name`. *If this argument is
-            not specified, this script will use all samples with
-            BAM files in `bamdir` to construct the count matrix*.
+            and the leftmost column specifying the sample identifier.
+            *If this argument is not specified, this script will use
+            all samples with BAM files in `bamdir` to construct the
+            count matrix*.
         bamdir (str): path to the directory containing samples'
             BAM files. Defaults to current working directory.
     """
@@ -135,8 +136,12 @@ def peak_count_matrix(bedfile, metadata, bamdir='.'):
             for fname in os.listdir(bdir):
                 fname = f'{bdir}/{fname}'
                 if ID in fname and rocco_aux.is_alignment(fname):
+                    if fname in IDs:
+                        continue
                     IDs[i] = fname
     bamfiles = IDs
+    assert len(set(bamfiles)) == len(bamfiles), (f'\n{init_IDs}\n{IDs}\nsample names\
+        should uniquely identify their corresponding bam file')
 
     # create multiple parallel bedtools calls
     num_processes = multiprocessing.cpu_count() - 1
@@ -149,6 +154,7 @@ def peak_count_matrix(bedfile, metadata, bamdir='.'):
         for id_ in IDs:
             for res in result:
                 if id_ in res[0]:
+                    print(f'peak_count_matrix(): adding counts for {id_}')
                     sorted_result.append(res[1])
         count_df = pd.DataFrame(sorted_result)
 
