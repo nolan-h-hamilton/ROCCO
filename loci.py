@@ -14,6 +14,9 @@ import cvxpy as cp
 from scipy import stats
 from locus import Locus
 
+# https://docs.mosek.com/latest/pythonapi/parameters.html
+MOSEK_OPTS = {'MSK_IPAR_NUM_THREADS': 1,
+              'MSK_DPAR_INTPNT_TOL_REL_GAP': .005}
 
 class LociIterator:
     """
@@ -329,8 +332,8 @@ class Loci:
         loci_scores = self.score_loci(tau, c1, c2, c3) # S_i, i=1...n
         n = len(loci_scores)
         # define problem in CVXPY
-        ell = cp.Variable((n,1)) # decision variables
-        z = cp.Variable((n-1,1)) # auxiliary variables
+        ell = cp.Variable(n)
+        z = cp.Variable(n-1)
         constraints = [ell <= 1,
                           ell >= 0,
                           cp.sum(ell) <= math.floor(budget*n),
@@ -339,11 +342,11 @@ class Loci:
         problem = cp.Problem(cp.Minimize(-loci_scores@ell + gam*cp.sum(z)),
                              constraints)
         if solver == "ECOS":
-            problem.solve(solver=cp.ECOS,verbose=verbose_,max_iters=10000)
+            problem.solve(solver=cp.ECOS,verbose=verbose_)
 
         if solver == "MOSEK":
             try:
-                problem.solve(cp.MOSEK, verbose=verbose_)
+                problem.solve(cp.MOSEK, mosek_params=MOSEK_OPTS, verbose=verbose_)
             except Exception as ex:
                 print("Ensure a valid `MOSEK` license file is\
                 available in your home directory and that the\
@@ -351,8 +354,7 @@ class Loci:
                 via 'pip install mosek'")
                 raise ex
 
-        lp_sol = np.hstack([[x.value[0] for x in problem.variables()[0]],
-                            [x.value[0] for x in problem.variables()[1]]])
+        lp_sol = problem.variables()[0].value
         sol_rr  = self.run_rr(lp_sol, N, loci_scores, budget, gam)
 
         head_ = self.head
@@ -385,13 +387,13 @@ class Loci:
         Notes:
             - There is no efficiency guarantee for this version of
                 the problem. Solving may be intractable in some
-                cases. MOSEK, or another commerical-grade
+                cases. MOSEK or another commerical-grade
                 integer optimization package is recommended.
     """
         loci_scores = self.score_loci(tau, c1, c2, c3)
         n = len(loci_scores)
         # define problem in CVXPY
-        ell = cp.Variable((n,1),integer=True)
+        ell = cp.Variable(n,integer=True)
         constraints = [ell <= 1,
                           ell >= 0,
                           cp.sum(ell) <= math.floor(budget*n)]
@@ -399,11 +401,10 @@ class Loci:
                              constraints)
 
         if solver == "ECOS" or solver =="ECOS_BB":
-            problem.solve(cp.ECOS_BB, verbose=verbose_,max_iters=500,
-                          feastol=1e-5, abstol=1e-5,reltol=1e-5)
+            problem.solve(cp.ECOS_BB, verbose=verbose_, reltol=.005)
         if solver == "MOSEK":
             try:
-                problem.solve(cp.MOSEK, verbose=verbose_)
+                problem.solve(cp.MOSEK, mosek_params=MOSEK_OPTS, verbose=verbose_)
             except Exception as ex:
                 print("Ensure a valid `MOSEK` license file is\
                 available in your home directory and that the\
@@ -412,7 +413,8 @@ class Loci:
                 raise ex
 
         head_ = self.head
-        ip_sol = [x.value[0] for x in problem.variables()[0]]
+        ip_sol = problem.variables()[0].value
+                 
         i = 0
         while head_ is not None:
             head_.accessible = round(ip_sol[i])
