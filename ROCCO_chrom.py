@@ -41,6 +41,7 @@ Example:
 """
 
 import os
+import gc
 import argparse
 import warnings
 import subprocess
@@ -211,7 +212,7 @@ def collect_wigs(wig_files, start=0, end=10**10, locus_size=50) -> pd.DataFrame:
     loci = [x for x in range(start, end + locus_size, locus_size)]
     all_wigs = pd.DataFrame(
         np.array([read_wig(x, start, end, locus_size)[1]
-                  for x in wig_files]),
+                  for x in wig_files],dtype=np.float32),
         columns=loci, index=None)
     return all_wigs
 
@@ -289,14 +290,15 @@ def main():
     parser.add_argument('--wig_path', type=str, default=os.getcwd())
     parser.add_argument('-N', '--rr_iter', type=int, default=50)
     parser.add_argument('--verbose', default=False, action="store_true")
-    parser.add_argument('--integral', type=bool, default=False)
+    parser.add_argument('--integral', type=bool, default=False, help='not currently in-use')
     parser.add_argument('-b', '--budget', type=float, default=.035)
     parser.add_argument('-g', '--gamma', type=float, default=1.0)
     parser.add_argument('-t', '--tau', type=float, default=0.0)
     parser.add_argument('--c1', type=float, default=1.0)
     parser.add_argument('--c2', type=float, default=1.0)
     parser.add_argument('--c3', type=float, default=1.0)
-    parser.add_argument('--solver', default="ECOS")
+    parser.add_argument('--solver', default="ECOS", help='solver software\
+        used to solve LP. Both "ECOS" and "PDLP" are free/open-source')
     parser.add_argument('--bed_format', type=int, default=6,
                         help="`3` for BED3 format and `6` for BED6 format")
     parser.add_argument('--identifiers', default=None,
@@ -351,30 +353,21 @@ def main():
         size_ = args['locus_size']
         NewLoc = Locus(position=args['start'] + i * size_,
                        size=size_,
-                       sig_data=np.array(signal_matrix[loc]))
+                       sig_data=np.array(signal_matrix[loc],dtype=np.float32))
         InitLoci.append_locus(NewLoc)
+    del signal_matrix
+    gc.collect()
 
     log("ROCCO_chrom: solving for optimal solution", args['verbose'])
-    if not args['integral']:
-        InitLoci.rocco_lp(budget=args['budget'],
-                          gam=args['gamma'],
-                          tau=args['tau'],
-                          c1=args['c1'],
-                          c2=args['c2'],
-                          c3=args['c3'],
-                          verbose_=args['verbose'],
-                          solver=args['solver'],
-                          N=args['rr_iter'])
-    if args['integral']:
-        # Optimize with integer constraints
-        InitLoci.rocco_ip(budget=args['budget'],
-                          gam=args['gamma'],
-                          tau=args['tau'],
-                          c1=args['c1'],
-                          c2=args['c2'],
-                          c3=args['c3'],
-                          verbose_=args['verbose'],
-                          solver=args['solver'])
+    InitLoci.rocco_lp(budget=args['budget'],
+                        gam=args['gamma'],
+                        tau=args['tau'],
+                        c1=args['c1'],
+                        c2=args['c2'],
+                        c3=args['c3'],
+                        verbose_=args['verbose'],
+                        solver=args['solver'],
+                        N=args['rr_iter'])
 
     log("ROCCO_chrom: merging adjacent selections", args['verbose'])
     InitLoci.combine_selected()

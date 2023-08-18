@@ -14,10 +14,6 @@ import cvxpy as cp
 from scipy import stats
 from locus import Locus
 
-# https://docs.mosek.com/latest/pythonapi/parameters.html
-MOSEK_OPTS = {'MSK_IPAR_NUM_THREADS': 1,
-              'MSK_DPAR_INTPNT_TOL_REL_GAP': .005}
-
 class LociIterator:
     """
     Iterator for traversing the Loci object
@@ -304,7 +300,6 @@ class Loci:
 
         return np.array(rr_sol)
 
-
     def rocco_lp(self, budget: float = .035, tau: float = 0, gam: float = 1, c1: float = 1,
              c2: float = 1, c3: float = 1, verbose_: bool = False, solver: str = "ECOS",
              N: int = 50) -> cp.Problem:
@@ -342,9 +337,17 @@ class Loci:
         problem = cp.Problem(cp.Minimize(-loci_scores@ell + gam*cp.sum(z)),
                              constraints)
         if solver == "ECOS":
-            problem.solve(solver=cp.ECOS,verbose=verbose_)
+            problem.solve(solver=cp.ECOS, verbose=verbose_)
+
+        if solver == "PDLP":
+            problem.solve(solver=cp.PDLP, verbose=verbose_)
 
         if solver == "MOSEK":
+            # https://docs.mosek.com/latest/pythonapi/parameters.html
+            MOSEK_OPTS = {'MSK_IPAR_NUM_THREADS': 1,
+                        'MSK_DPAR_INTPNT_TOL_REL_GAP': .005,
+                        'MSK_IPAR_PRESOLVE_LINDEP_ABS_WORK_TRH':10,
+                        'MSK_IPAR_INTPNT_SOLVE_FORM':2} # solve dual
             try:
                 problem.solve(cp.MOSEK, mosek_params=MOSEK_OPTS, verbose=verbose_)
             except Exception as ex:
@@ -363,63 +366,5 @@ class Loci:
             head_.accessible = sol_rr[i]
             head_ = head_.right
             i += 1
-
-        return problem
-
-    def rocco_ip(self, budget: float = .035, tau: float = 0, gam: float = 1, c1: float = 1,
-             c2: float = 1, c3: float = 1, verbose_: bool = False, solver: str = "ECOS_BB") -> cp.Problem:
-        r"""
-        Solve the unrelaxed optimization problem as an integer program.
-
-        Args:
-            budget (float): budget constraint
-            tau (float): tau in $\mathcal{S}(i)$
-            gam (float): gamma
-            c1 (float): c1 value in $\mathcal{S}(i)$
-            c2 (float): c2 value in $\mathcal{S}(i)$
-            c3 (float): c3 value in $\mathcal{S}(i)$
-            verbose_ (bool): Verbosity flag for the solver
-            solver (str): the solver to use: either "ECOS" or "MOSEK"
-
-        Returns:
-            cp.Problem: a CVXPY problem object
-
-        Notes:
-            - There is no efficiency guarantee for this version of
-                the problem. Solving may be intractable in some
-                cases. MOSEK or another commerical-grade
-                integer optimization package is recommended.
-    """
-        loci_scores = self.score_loci(tau, c1, c2, c3)
-        n = len(loci_scores)
-        # define problem in CVXPY
-        ell = cp.Variable(n,integer=True)
-        constraints = [ell <= 1,
-                          ell >= 0,
-                          cp.sum(ell) <= math.floor(budget*n)]
-        problem = cp.Problem(cp.Minimize(-loci_scores@ell + gam*cp.sum(cp.abs(cp.diff(ell,1)))),
-                             constraints)
-
-        if solver == "ECOS" or solver =="ECOS_BB":
-            problem.solve(cp.ECOS_BB, verbose=verbose_, reltol=.005)
-        if solver == "MOSEK":
-            try:
-                problem.solve(cp.MOSEK, mosek_params=MOSEK_OPTS, verbose=verbose_)
-            except Exception as ex:
-                print("Ensure a valid `MOSEK` license file is\
-                available in your home directory and that the\
-                mosek-python interface is installed, e.g.,\
-                via 'pip install mosek'")
-                raise ex
-
-        head_ = self.head
-        ip_sol = problem.variables()[0].value
-                 
-        i = 0
-        while head_ is not None:
-            head_.accessible = round(ip_sol[i])
-            head_ = head_.right
-            i += 1
-
 
         return problem
