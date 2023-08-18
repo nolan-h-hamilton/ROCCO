@@ -8,48 +8,36 @@ Underlying ROCCO is a constrained optimization problem that can be solved effici
 
 **Features**
 
-1. Explicitly accounts for both **enrichment and spatial characteristics** of open chromatin signals;
-1. Leverages data from multiple samples **without imposing arbitrary thresholds** on a minimum number of supporting samples;
+1. Explicitly accounts for both **enrichment and spatial characteristics** of open chromatin signals to capture the full extent of peaks;
+1. **No arbitrary thresholds** on the minimum number of supporting samples/replicates;
 1. Is efficient for **large numbers of samples** with an asymptotic time complexity independent of sample count;
-1. **Does not require training data**, which is hard to define given the lack of a priori sets of open chromatin regions;
+1. **Does not require training data** or initial candidate peak regions which are hard to define given the lack of a priori sets of open chromatin regions;
 1. Employs a **mathematically tractable model** permitting guarantees of performance and efficiency.
 
-## Environment Details
-ROCCO has been developed and tested to run on ATAC-seq alignments in a standard unix bioinformatics environment with Python3.7+
-
-A ROCCO-specific conda environment with all dependencies installed can be created using
-[rocco_conda.yml](https://github.com/nolan-h-hamilton/ROCCO/blob/main/docs/CONDA/rocco_conda.yml):
-```
-conda env create -n rocco --file docs/CONDA/rocco_conda.yml
-```
-The created environment can then be loaded via: `conda activate rocco`.
-
-## Input
-- a BAM file for each sample/replicate.
-
-The preprocessing script [`prep_bams.py`](https://nolan-h-hamilton.github.io/ROCCO/prep_bams.html) offers a convenient means to construct signal tracks from these alignment files to generate the input signal matrix $\mathbf{S}_{chr}$ used by ROCCO:
-
-```
-prep_bams.py [-h] [-i BAMDIR] [-o OUTDIR] [-s SIZES]
-	[-L INTERVAL_LENGTH] [-c CORES] [--multi]
-	[--index INDEX] [--bstw_path BSTW_PATH]
-```
-
-See the [API reference](https://nolan-h-hamilton.github.io/ROCCO/prep_bams.html) or [Quick Start Demo](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb) for further details and usage examples.
-
 ## Getting Started
-Clone/download this repository to use ROCCO
+### Download/Installation
+
+**Clone/download this repository**
+
   ```
   git clone https://github.com/nolan-h-hamilton/ROCCO.git
   ```
-### Quick Start Demo
-A lightweight demonstration using publicly available data: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb).
 
-### Auxiliary Scripts
-Used for pre/post-processing. Use cases included in the demo notebooks and/or [API reference](https://nolan-h-hamilton.github.io/ROCCO)
-1. [`est_budgets.py`](https://nolan-h-hamilton.github.io/ROCCO/est_budgets.html): used to determine chromosome-specific budgets as a function of read density
-1. [`count_matrix.py`](https://nolan-h-hamilton.github.io/ROCCO/count_matrix.html): can used to create a DESEQ2-conformable count matrix from ROCCO peak results for
-  differential analysis. Creates parallel bedtools jobs for each sample to improve efficiency.
+**Install Dependencies with Conda**
+
+A ROCCO-specific conda environment with all dependencies installed can be created using
+[rocco_conda.yml](https://github.com/nolan-h-hamilton/ROCCO/blob/main/docs/CONDA/rocco_conda.yml):
+
+```
+conda env create -n rocco --file docs/CONDA/rocco_conda.yml
+```
+
+The created environment can then be loaded via: `conda activate rocco`.
+
+#### Quick Start Demo
+To see ROCCO in action, refer to the Jupyter notebook: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb).
+
+This demonstration offers an *interactive* overview of the ROCCO pipeline that can be executed by running the commands in each cell. Output from a previous session is included if you do not wish to run the pipeline yourself.
 
 ## ROCCO API Reference
 https://nolan-h-hamilton.github.io/ROCCO
