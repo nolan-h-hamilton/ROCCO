@@ -1,4 +1,4 @@
-name: website
+name: API
 
 # build the documentation whenever there are new commits on main
 on:
