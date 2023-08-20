@@ -319,7 +319,7 @@ class Loci:
                 \texttt{floor\_eps} procedure is applied...
                 See `Loci.run_rr()`
             verbose_ (bool): Verbosity flag for the solver
-            solver (str): the solver to use: either "ECOS" or "MOSEK"
+            solver (str): Defaults to `ECOS`.
 
         Returns:
             cp.Problem: a CVXPY problem object
@@ -336,6 +336,9 @@ class Loci:
                           z >= -1*cp.diff(ell,1)]
         problem = cp.Problem(cp.Minimize(-loci_scores@ell + gam*cp.sum(z)),
                              constraints)
+        
+        # Refer to `Solve method options` at
+        # https://www.cvxpy.org/tutorial/advanced/index.html
         if solver == "ECOS":
             problem.solve(solver=cp.ECOS, verbose=verbose_)
 
