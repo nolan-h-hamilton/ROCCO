@@ -6,7 +6,9 @@ on:
     branches:
       - main
       - dev
-
+    paths:
+      - '**.py'
+      
 permissions:
   contents: read
 

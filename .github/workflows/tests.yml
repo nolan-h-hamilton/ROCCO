@@ -5,7 +5,9 @@ on:
     paths:
       - '**.py'
       - '**.yml'
-
+    paths:
+      - '**.py'
+      
 jobs:
   build:
     runs-on: ubuntu-latest
