@@ -3,7 +3,7 @@ import os
 import argparse
 import rocco_aux
 import ROCCO_chrom
-import ROCCO
+import ROCCO_gwide
 import prep_bams
 import est_budgets
 
@@ -12,7 +12,7 @@ def subcommand_chrom(args):
     return True
 
 def subcommand_gwide(args):
-    ROCCO.main(args)
+    ROCCO_gwide.main(args)
     return True
 
 def subcommand_prep(args):
@@ -123,7 +123,7 @@ def main():
     # 'budgets' subcommand parameters
     parser_subcommand_budgets = subparsers.add_parser("budgets",
                             help="estimate budget parameter using read densities")
-    parser_subcommand_budgets.add_argument('-d', '--bamdir', type=str, help='Path to the directory containing .bam and .bai files')
+    parser_subcommand_budgets.add_argument('-i', '--bamdir', type=str, help='Path to the directory containing .bam and .bai files')
     parser_subcommand_budgets.add_argument('-s', '--sizes', type=str, help='chromosome sizes file')
     parser_subcommand_budgets.add_argument('-a', type=float, default=0.0, help='Minimum allowed budget. This bound is ignored if\
         `--desired_avg` is non-negative.')
@@ -131,7 +131,7 @@ def main():
         `--desired_avg` is non-negative.')
     parser_subcommand_budgets.add_argument('--desired_avg', type=float, default=-1.0, help='Scaled read densities (i.e., budgets) will\
         average to this value if non-negative. Defaults to -1.')
-    parser_subcommand_budgets.add_argument('--index', default=False, action='store_true', help='`invoke if BAM files are not yet indexed')
+    parser_subcommand_budgets.add_argument('--index', default=False, action='store_true', help='invoke `--index` if BAM files are not yet indexed')
 
     # 'get_sizes' subcommand parameters
     parser_subcommand_get_sizes = subparsers.add_parser("get_sizes", help="retrieve .sizes file for reference genome")
