@@ -7,7 +7,7 @@ The results offer a fair starting point for users wishing to use chromosome-spec
 some modification may be necessary depending on preferences.
 
 Usage:
-    est_budgets.py [-h] [-d BAMDIR] [-s SIZES] [-a A] [-b B] [--desired_avg DESIRED_AVG]
+    est_budgets.py [-h] [-i BAMDIR] [-s SIZES] [-a A] [-b B] [--desired_avg DESIRED_AVG]
 
 Arguments:
     bamdir (str): Path to the directory containing BAM files.
@@ -18,6 +18,7 @@ Arguments:
         this bound is ignored if `desired_avg` is non-negative.
     desired_avg (float): scaled read densities will average to this value
         if it is modified to be non-negative.
+    index (bool): invoke `--index` if BAM files in `--bamdir` are not indexed
         
 Examples:
     ```
@@ -183,7 +184,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Compute chromosome-specific budget parameters based on observed read densities.\
         Uses min-max normalization (default) on the read density vals to yield budgets in interval [a,b] OR scales the values by a\
         constant such that their mean is `desired_avg`.')
-    parser.add_argument('-d', '--bamdir', type=str, help='Path to the directory containing .bam and .bai files')
+    parser.add_argument('-i', '--bamdir', type=str, help='Path to the directory containing .bam and .bai files')
     parser.add_argument('-s', '--sizes', type=str, help='chromosome sizes file')
     parser.add_argument('-a', type=float, default=0.0, help='Minimum allowed budget. This bound is ignored if\
         `--desired_avg` is non-negative.')

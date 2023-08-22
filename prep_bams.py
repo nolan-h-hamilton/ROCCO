@@ -138,8 +138,8 @@ if __name__ == '__main__':
                         may cause issues on Mac OS")
     parser.add_argument('--multi',
                          default=True,
-                         help='`True` to run `bamSitesToWig` jobs\
-                         simultaneously.')
+                         help='Set to `False` to run `bamSitesToWig` jobs\
+                         sequentially.')
     parser.add_argument('--index',
                         type=int,
                         default=1,
