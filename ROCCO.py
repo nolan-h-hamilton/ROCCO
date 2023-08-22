@@ -187,11 +187,15 @@ def main(args):
                          args['verbose'], str(args['rr_iter']),
                          identifiers=args['identifiers'], outdir=args['outdir'])
         if not args['multi']:
-            seq_process = subprocess.run(cmd.split(' '),
+            try:
+                seq_process = subprocess.run(cmd.split(' '),
                                          capture_output=True, text=True, check=True)
-            print(seq_process.stdout)
+                print(seq_process.stdout)
+            except Exception as ex:
+                print(ex)
+                print(seq_process.stderr)
+                raise ex
         tmp.write(str(cmd + '\n'))
-
 
     tmp.flush()
     if args['multi']:

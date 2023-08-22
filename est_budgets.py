@@ -116,14 +116,14 @@ def rd_dens(bamfile: str, size_file: str, a: float = 0.0, b: float = 0.05, desir
 
     for key in chr_reads.keys():
         chr_reads[key] /= size_dict[key]
-    
+
     # scale mean to determine budgets if desired_avg >= 0
     current_avg = np.mean(list(chr_reads.values()))
     if desired_avg >= 0:
         for key in chr_reads.keys():
             chr_reads[key] *= desired_avg/current_avg
         return chr_reads
-    
+
     # (default) apply min-max normalization to scale read densities in [a,b] if desired_avg < 0 
     min_val = min(chr_reads.values())
     max_val = max(chr_reads.values())
@@ -161,7 +161,15 @@ def avg_rd(bamdir: str, size_file: str, a: float = 0.0, b: float = 0.05, desired
     return final_dict
 
 
-def main():
+def main(args):
+
+    dict_output = avg_rd(args.bamdir, args.sizes,  a=args.a, b=args.b, desired_avg=args.desired_avg)
+    print('chromosome,input_path,budget,gamma,tau,c1,c2,c3')
+    for key, val in dict_output.items():
+        print(f'{key},tracks_{key},{round(val, 3)},NULL,NULL,NULL,NULL,NULL')
+
+
+if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Compute chromosome-specific budget parameters based on observed read densities.\
         Uses min-max normalization (default) on the read density vals to yield budgets in interval [a,b] OR scales the values by a\
         constant such that their mean is `desired_avg`.')
@@ -174,12 +182,5 @@ def main():
     parser.add_argument('--desired_avg', type=float, default=-1.0, help='Scaled read densities (i.e., budgets) will\
         average to this value if non-negative. Defaults to -1.')
     args = parser.parse_args()
-    
-    dict_output = avg_rd(args.bamdir, args.sizes,  a=args.a, b=args.b, desired_avg=args.desired_avg)
-    print('chromosome,input_path,budget,gamma,tau,c1,c2,c3')
-    for key, val in dict_output.items():
-        print(f'{key},tracks_{key},{round(val, 3)},NULL,NULL,NULL,NULL,NULL')
 
-
-if __name__ == '__main__':
-     main()
+    main(args)
