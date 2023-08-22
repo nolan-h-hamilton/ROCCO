@@ -169,7 +169,41 @@ def call_rocco(chrom, wig_path, budget, gamma, tau, c1, c2, c3, solver,
         cli_args.remove(identifiers)
     return ' '.join(cli_args)
 
-def main():
+def main(args):
+    chrom_args = get_params(args['param_file'], args['budget'],
+                            args['gamma'], args['tau'], args['c1'],
+                            args['c2'], args['c3'])
+
+    args['outdir'] = rocco_aux.trim_path(args['outdir'])
+    if not os.path.exists(args['outdir']):
+        os.mkdir(args['outdir'])
+
+    tmp = tempfile.NamedTemporaryFile(mode="w+")
+    for i, arglist in enumerate(chrom_args):
+        arglist = [str(x) for x in arglist]
+        cmd = call_rocco(arglist[0], arglist[1], arglist[2], arglist[3],
+                         arglist[4], arglist[5], arglist[6], arglist[7],
+                         args['solver'], str(args['bed_format']),
+                         args['verbose'], str(args['rr_iter']),
+                         identifiers=args['identifiers'], outdir=args['outdir'])
+        if not args['multi']:
+            seq_process = subprocess.run(cmd.split(' '),
+                                         capture_output=True, text=True, check=True)
+            print(seq_process.stdout)
+        tmp.write(str(cmd + '\n'))
+
+
+    tmp.flush()
+    if args['multi']:
+        rocco_aux.run_par(tmp.name, verbose=args['verbose'])
+    tmp.close()
+
+    if args['combine'] is not None:
+        print('combining output files --> {}'.format(args['combine']))
+        rocco_aux.sort_combine_bed(args['combine'], dir_=args['outdir'])
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--param_file',
                         default='params.csv',
@@ -219,39 +253,4 @@ def main():
         simultaneously to improve speed. increases peak memory expense.')
     parser.add_argument('--verbose', default=False, action="store_true")
     args = vars(parser.parse_args())
-
-    chrom_args = get_params(args['param_file'], args['budget'],
-                            args['gamma'], args['tau'], args['c1'],
-                            args['c2'], args['c3'])
-
-    args['outdir'] = rocco_aux.trim_path(args['outdir'])
-    if not os.path.exists(args['outdir']):
-        os.mkdir(args['outdir'])
-
-    tmp = tempfile.NamedTemporaryFile(mode="w+")
-    for i, arglist in enumerate(chrom_args):
-        arglist = [str(x) for x in arglist]
-        cmd = call_rocco(arglist[0], arglist[1], arglist[2], arglist[3],
-                         arglist[4], arglist[5], arglist[6], arglist[7],
-                         args['solver'], str(args['bed_format']),
-                         args['verbose'], str(args['rr_iter']),
-                         identifiers=args['identifiers'], outdir=args['outdir'])
-        if not args['multi']:
-            seq_process = subprocess.run(cmd.split(' '),
-                                         capture_output=True, text=True, check=True)
-            print(seq_process.stdout)
-        tmp.write(str(cmd + '\n'))
-
-
-    tmp.flush()
-    if args['multi']:
-        rocco_aux.run_par(tmp.name, verbose=args['verbose'])
-    tmp.close()
-
-    if args['combine'] is not None:
-        print('combining output files --> {}'.format(args['combine']))
-        rocco_aux.sort_combine_bed(args['combine'], dir_=args['outdir'])
-
-
-if __name__ == "__main__":
-    main()
+    main(args)
