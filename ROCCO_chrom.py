@@ -279,36 +279,7 @@ def log(text, verbose=True) -> None:
         print(str(text))
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--chrom', help="e.g., --chrom chr1")
-    parser.add_argument('--start', type=int, default=-1)
-    parser.add_argument('--end', type=int, default=-1)
-    parser.add_argument('--locus_size', type=int, default=-1,
-                        help="this must match the constant step-size \
-                        in the wiggle files used as input")
-    parser.add_argument('--wig_path', type=str, default=os.getcwd())
-    parser.add_argument('-N', '--rr_iter', type=int, default=50)
-    parser.add_argument('--verbose', default=False, action="store_true")
-    parser.add_argument('--integral', type=bool, default=False, help='not currently in-use')
-    parser.add_argument('-b', '--budget', type=float, default=.035)
-    parser.add_argument('-g', '--gamma', type=float, default=1.0)
-    parser.add_argument('-t', '--tau', type=float, default=0.0)
-    parser.add_argument('--c1', type=float, default=1.0)
-    parser.add_argument('--c2', type=float, default=1.0)
-    parser.add_argument('--c3', type=float, default=1.0)
-    parser.add_argument('--solver', default="ECOS", help='solver software\
-        used to solve LP. Both "ECOS" and "PDLP" are free/open-source')
-    parser.add_argument('--bed_format', type=int, default=6,
-                        help="`3` for BED3 format and `6` for BED6 format")
-    parser.add_argument('--identifiers', default=None,
-                        help="(optional) a filename containing identifiers\
-                          for samples to include in experiment. Each identi\
-                          fier should be a substring of the `.wig` sample.")
-    parser.add_argument('--outdir', type=str, default='.')
-
-    args = vars(parser.parse_args())
-
+def main(args):
     log('ROCCO_chrom: args', args['verbose'])
     log(args, args['verbose'])
 
@@ -413,4 +384,32 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--chrom', help="e.g., --chrom chr1")
+    parser.add_argument('--start', type=int, default=-1)
+    parser.add_argument('--end', type=int, default=-1)
+    parser.add_argument('--locus_size', type=int, default=-1,
+                        help="this must match the constant step-size \
+                        in the wiggle files used as input")
+    parser.add_argument('--wig_path', type=str, default=os.getcwd())
+    parser.add_argument('-N', '--rr_iter', type=int, default=50)
+    parser.add_argument('--verbose', default=False, action="store_true")
+    parser.add_argument('--integral', type=bool, default=False, help='not currently in-use')
+    parser.add_argument('-b', '--budget', type=float, default=.035)
+    parser.add_argument('-g', '--gamma', type=float, default=1.0)
+    parser.add_argument('-t', '--tau', type=float, default=0.0)
+    parser.add_argument('--c1', type=float, default=1.0)
+    parser.add_argument('--c2', type=float, default=1.0)
+    parser.add_argument('--c3', type=float, default=1.0)
+    parser.add_argument('--solver', default="ECOS", help='solver software\
+        used to solve LP. Both "ECOS" and "PDLP" are free/open-source')
+    parser.add_argument('--bed_format', type=int, default=6,
+                        help="`3` for BED3 format and `6` for BED6 format")
+    parser.add_argument('--identifiers', default=None,
+                        help="(optional) a filename containing identifiers\
+                          for samples to include in experiment. Each identi\
+                          fier should be a substring of the `.wig` sample.")
+    parser.add_argument('--outdir', type=str, default='.')
+
+    args = vars(parser.parse_args())
+    main(args)
