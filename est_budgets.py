@@ -87,7 +87,7 @@ import pysam
 import rocco_aux
 
 
-def rd_dens(bamfile: str, size_file: str, a: float = 0.0, b: float = 0.05, desired_avg: float = -1.0) -> Dict[str, float]:
+def rd_dens(bamfile: str, size_file: str, a: float = 0.0, b: float = 0.05, desired_avg: float = -1.0, index: bool = False) -> Dict[str, float]:
     """
     Calculate chromosome-specific budgets as scaled read density for `bamfile`
 
@@ -101,18 +101,28 @@ def rd_dens(bamfile: str, size_file: str, a: float = 0.0, b: float = 0.05, desir
             this bound is ignored if `desired_avg` is non-negative.
         desired_avg (float): scaled read densities will average to this value
             if it is modified to be non-negative.
+        index (bool): whether to index `bamfile` with pysam.index()
 
     Returns:
         dict: A dictionary {chrom: budget}
     """
+    if not os.path.exists(size_file):
+        raise FileNotFoundError(f'Could not find size file {size_file}')
+    
     size_dict = rocco_aux.parse_size_file(size_file)
-    aln = pysam.AlignmentFile(bamfile)
-    chr_reads = {}
+    if index:
+        pysam.index(bamfile)
 
-    for chrom_record in aln.get_index_statistics():
-        if chrom_record[0] not in size_dict.keys():
-            continue
-        chr_reads.update({chrom_record[0]: chrom_record[1]})
+    aln = pysam.AlignmentFile(bamfile,'rb')
+    chr_reads = {}
+    try:
+        for chrom_record in aln.get_index_statistics():
+            if chrom_record[0] not in size_dict.keys():
+                continue
+            chr_reads.update({chrom_record[0]: chrom_record[1]})
+    except ValueError as no_index_err:
+        print(f'\nest_budgets.rd_dens: could not find index file for {bamfile}. Run script with --index argument\n')
+        raise no_index_err
 
     for key in chr_reads.keys():
         chr_reads[key] /= size_dict[key]
@@ -132,7 +142,7 @@ def rd_dens(bamfile: str, size_file: str, a: float = 0.0, b: float = 0.05, desir
     return chr_reads
 
 
-def avg_rd(bamdir: str, size_file: str, a: float = 0.0, b: float = 0.05, desired_avg: float = -1) -> Dict[str, float]:
+def avg_rd(bamdir: str, size_file: str, a: float = 0.0, b: float = 0.05, desired_avg: float = -1, index: bool = False) -> Dict[str, float]:
     """
     Calculate the average read density across *multiple* BAM files in `bamdir`.
 
@@ -152,7 +162,7 @@ def avg_rd(bamdir: str, size_file: str, a: float = 0.0, b: float = 0.05, desired
     bamdir = rocco_aux.trim_path(bamdir)
     bamfiles = [f'{bamdir}/{x}' for x in os.listdir(bamdir)
                 if x.split('.')[-1] == 'bam']
-    bam_rd_dicts = [rd_dens(x, size_file=size_file, a=a, b=b, desired_avg=desired_avg) for x in bamfiles]
+    bam_rd_dicts = [rd_dens(x, size_file=size_file, a=a, b=b, desired_avg=desired_avg, index=index) for x in bamfiles]
     final_dict = dict.fromkeys(bam_rd_dicts[0].keys(), 0)
 
     for key in final_dict.keys():
@@ -163,7 +173,7 @@ def avg_rd(bamdir: str, size_file: str, a: float = 0.0, b: float = 0.05, desired
 
 def main(args):
 
-    dict_output = avg_rd(args.bamdir, args.sizes,  a=args.a, b=args.b, desired_avg=args.desired_avg)
+    dict_output = avg_rd(args['bamdir'], args['sizes'],  a=args['a'], b=args['b'], desired_avg=args['desired_avg'], index=args['index'])
     print('chromosome,input_path,budget,gamma,tau,c1,c2,c3')
     for key, val in dict_output.items():
         print(f'{key},tracks_{key},{round(val, 3)},NULL,NULL,NULL,NULL,NULL')
@@ -181,6 +191,12 @@ if __name__ == '__main__':
         `--desired_avg` is non-negative.')
     parser.add_argument('--desired_avg', type=float, default=-1.0, help='Scaled read densities (i.e., budgets) will\
         average to this value if non-negative. Defaults to -1.')
-    args = parser.parse_args()
+    parser.add_argument('--index', default=False, action='store_true', help='`invoke if BAM files are not yet indexed')
+    args = vars(parser.parse_args())
+
+    if args['sizes'] is None:
+        print('est_budgets.py: A .sizes file is required for the corresponding genome.')
+        print('\tUse the `get_sizes` subcommand or retrieve a sizes file manually')
+        raise Exception('a sizes file is required')
 
     main(args)

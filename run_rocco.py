@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import os
 import argparse
+import rocco_aux
 import ROCCO_chrom
 import ROCCO
 import prep_bams
@@ -130,9 +131,13 @@ def main():
         `--desired_avg` is non-negative.')
     parser_subcommand_budgets.add_argument('--desired_avg', type=float, default=-1.0, help='Scaled read densities (i.e., budgets) will\
         average to this value if non-negative. Defaults to -1.')
+    parser_subcommand_budgets.add_argument('--index', default=False, action='store_true', help='`invoke if BAM files are not yet indexed')
+
+    # 'get_sizes' subcommand parameters
+    parser_subcommand_get_sizes = subparsers.add_parser("get_sizes", help="retrieve .sizes file for reference genome")
+    parser_subcommand_get_sizes.add_argument('-g', '--genome', type=str, default='hg38', help='name of ref. genome')
 
     args = vars(parser.parse_args())
-
     if args['command'] == "gwide":
         subcommand_gwide(args)
     elif args['command'] == "chrom":
@@ -141,6 +146,8 @@ def main():
         subcommand_prep(args)
     elif args['command'] == 'budgets':
         subcommand_budgets(args)
+    elif args['command'] == 'get_sizes':
+        rocco_aux.get_size_file(args['genome'])
     else:
         parser.print_help()
 
