@@ -3,15 +3,15 @@ import os
 import argparse
 import subprocess
 import ROCCO_chrom
+import ROCCO
 
 def subcommand_chrom(args):
-    # run ROCCO_chrom.py
     ROCCO_chrom.main(args)
-    return None
+    return True
 
 def subcommand_gw(args):
-    # run ROCCO.py
-    return None
+    ROCCO.main(args)
+    return True
 
 def subcommand_prep_bams(args):
     # run prep_bams.py
@@ -27,7 +27,54 @@ def main():
     subparsers = parser.add_subparsers(dest="command")
 
     # Add subcommands here
-    parser_subcommand_gw = subparsers.add_parser("subcommand1", help="Description for subcommand1")
+    parser_subcommand_gw = subparsers.add_parser("gwide", help="Run ROCCO genome-wide")
+    parser_subcommand_gw.add_argument('-p', '--param_file',
+                        default='params.csv',
+                        help="CSV param file w/ row for each chromosome")
+    # if some parameters are left `NULL` in `param_file`,
+    # the values given by the following arguments will be
+    # used as defaults.
+    parser_subcommand_gw.add_argument('-b', '--budget', default=.035)
+    parser_subcommand_gw.add_argument('-g', '--gamma', default=1.0)
+    parser_subcommand_gw.add_argument('-t', '--tau', default=0.0)
+    parser_subcommand_gw.add_argument('--c1', default=1.0)
+    parser_subcommand_gw.add_argument('--c2', default=1.0)
+    parser_subcommand_gw.add_argument('--c3', default=1.0)
+    parser_subcommand_gw.add_argument('-N', '--rr_iter', type=int, default=50)
+    parser_subcommand_gw.add_argument('--solver', default="ECOS",
+                        help="Optimization software used to solve the \
+                        LP underlying ROCCO. `ECOS` is used by default \
+                        and is a viable open-source option. `MOSEK`\
+                        offers significantly greater speed and is free\
+                        for academic use. Free trial commerical licenses\
+                        are also available. See\
+                        https://www.mosek.com/products/academic-licenses/")
+    parser_subcommand_gw.add_argument('--bed_format', type=int, default=3,
+                        help="Specifies BED3 or BED6 format.\
+                        Default is BED6. Generate BED3 output with \
+                        --bed_format 3")
+    parser_subcommand_gw.add_argument('--identifiers', default=None,
+                        help="an optional filename containing identifiers\
+                          for samples to include in experiment. Each identi\
+                          fier should be a substring of the `.wig` sample")
+    parser_subcommand_gw.add_argument('--outdir', default='.',
+                        help="directory in which to store ROCCO's output\
+                          files.")
+    parser_subcommand_gw.add_argument('--combine', default=None, help="if not None, combine\
+                        output bed files and store in the file specified\
+                        with this parameter. ex: `--combine bedname.bed` con-\
+                        catenates the chromosome-specific bedfiles into `bedname.bed`.")
+    parser_subcommand_gw.add_argument('-j', '--jobs', type=int, default=1,
+                        help="deprecated: included for backwards compatibility. use `--multi` instead.")
+    parser_subcommand_gw.add_argument('-m', '--mem', default=None,
+                        help="deprecated: included for backwards compatibility. use `--multi` instead.")
+    parser_subcommand_gw.add_argument(
+        '--parlog',
+        default='ROCCO_parlog.txt',
+        help='deprecated: included for backwards compatibility. use `--multi` instead.')
+    parser_subcommand_gw.add_argument('--multi', default=False, action='store_true', help='run ROCCO_chrom.py jobs\
+        simultaneously to improve speed. increases peak memory expense.')
+    parser_subcommand_gw.add_argument('--verbose', default=False, action="store_true")
 
     parser_subcommand_chrom = subparsers.add_parser("chrom", help="Run ROCCO on a single chromosome")
     parser_subcommand_chrom.add_argument('--start', type=int, default=-1)
@@ -56,8 +103,8 @@ def main():
     parser_subcommand_chrom.add_argument('--verbose', default=False, action="store_true")
     args = vars(parser.parse_args())
 
-    if args['command'] == "gw":
-        # Call the relevant function for subcommand1
+    if args['command'] == "gwide":
+        subcommand_gw(args)
         pass
     elif args['command'] == "chrom":
         subcommand_chrom(args)
