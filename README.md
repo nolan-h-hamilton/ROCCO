@@ -28,11 +28,12 @@ load via: `conda activate rocco`.
 
 Alternatively, dependencies (standard bioinformatics tools listed in `docs`) can be installed manually.
 
-**Install ROCCO with pip**
+**Install ROCCO with pip** ([PyPi page](https://pypi.org/project/rocco/))
 
   ```
   pip install rocco
   ```
+
 
 #### Quick Start Demo
 To see ROCCO in action, refer to the Jupyter notebook: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb).
