@@ -48,7 +48,7 @@ def subcommand_budgets(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ROCCO: [R]obust [O]pen [C]hromatin Dection via [C]onvex [O]ptimization. Documentation available at https://nolan-h-hamilton.github.io/ROCCO/")
+    parser = argparse.ArgumentParser(description="ROCCO: [R]obust [O]pen [C]hromatin Dection via [C]onvex [O]ptimization. Documentation available at https://nolan-h-hamilton.github.io/ROCCO/", add_help=True)
     subparsers = parser.add_subparsers(dest="command")
 
     # 'gwide' subcommand parameters
