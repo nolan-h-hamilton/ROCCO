@@ -1,4 +1,0 @@
-chromosome,input_path,budget,gamma,tau,c1,c2,c3
-chr17,tracks_chr17,0.04,NULL,NULL,NULL,NULL,NULL
-chr18,tracks_chr18,0.03,NULL,NULL,NULL,NULL,NULL
-chr19,tracks_chr19,0.05,NULL,NULL,NULL,NULL,NULL

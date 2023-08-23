@@ -5,6 +5,8 @@ on:
     paths:
       - '**.py'
       - '**.yml'
+    branches:
+      - main
 jobs:
   build:
     runs-on: ubuntu-latest

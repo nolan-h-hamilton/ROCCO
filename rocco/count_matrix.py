@@ -22,7 +22,7 @@ import argparse
 import pandas as pd
 import multiprocessing
 from pybedtools import BedTool
-import rocco_aux
+from . import rocco_aux
 
 def proc_bed(bedfile, header=False):
     """

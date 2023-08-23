@@ -33,7 +33,7 @@ jobs:
       - run: pip install pdoc
       - run: sudo apt-get install -y bedtools
       - run: sudo apt-get install -y samtools
-      - run: pdoc locus.py loci.py ROCCO_chrom.py ROCCO_gwide.py rocco_aux.py misc/count_matrix.py est_budgets.py prep_bams.py --math -d google -o docs/ --logo "https://user-images.githubusercontent.com/57746191/240662475-170478f1-5820-4056-b315-3c8dee3603d9.png"
+      - run: pdoc rocco/locus.py rocco/loci.py rocco/ROCCO_chrom.py rocco/ROCCO_gwide.py rocco/rocco_aux.py rocco/count_matrix.py rocco/est_budgets.py rocco/prep_bams.py rocco/rocco.py --math -d google -o docs/ --logo "https://user-images.githubusercontent.com/57746191/240662475-170478f1-5820-4056-b315-3c8dee3603d9.png"
       - uses: actions/upload-pages-artifact@v1
         with:
           path: docs/
