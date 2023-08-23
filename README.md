@@ -3,6 +3,7 @@
 <img width="472" alt="logo" src="https://github.com/nolan-h-hamilton/ROCCO/assets/57746191/170478f1-5820-4056-b315-3c8dee3603d9">
 
 [![Tests](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml/badge.svg)](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml)
+
 Underlying ROCCO is a constrained optimization problem that can be solved efficiently to **predict consensus regions of open chromatin** across multiple samples.
 
 **Features**
@@ -14,13 +15,6 @@ Underlying ROCCO is a constrained optimization problem that can be solved effici
 1. Employs a **mathematically tractable model** permitting guarantees of performance and efficiency.
 
 ## Getting Started
-### Download/Installation
-
-**Clone/download this repository**
-
-  ```
-  git clone https://github.com/nolan-h-hamilton/ROCCO.git
-  ```
 
 **Install Dependencies with Conda**
 
@@ -30,16 +24,20 @@ A ROCCO-specific conda environment with all dependencies installed can be create
 ```
 conda env create -n rocco --file docs/CONDA/rocco_conda.yml
 ```
+load via: `conda activate rocco`.
 
-The created environment can then be loaded via: `conda activate rocco`.
+Alternatively, dependencies (standard bioinformatics tools listed in `docs`) can be installed manually.
+
+**Install ROCCO with pip**
+
+  ```
+  pip install rocco
+  ```
 
 #### Quick Start Demo
 To see ROCCO in action, refer to the Jupyter notebook: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb).
 
 This demonstration offers an *interactive* overview of the ROCCO pipeline that can be executed by running the commands in each cell. Output from a previous session is included if you do not wish to run the pipeline yourself.
-
-## ROCCO API Reference
-https://nolan-h-hamilton.github.io/ROCCO
 
 ## Citation
 ```
