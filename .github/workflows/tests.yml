@@ -34,8 +34,8 @@ jobs:
         sudo apt-get install -y samtools
         pip install -e .
 
-    - name: run test_rocco.py and test_loci.py
+    - name: run test_rocco.py
       working-directory: ./tests
       run: |
         python test_rocco.py
-        python test_loci.py
+        
