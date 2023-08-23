@@ -1,39 +1,49 @@
 """
-Run ROCCO ('Algorithm 2' in paper) on a particular chromosome `--chrom`.
-This script is the workhorse for ROCCO.py which generates results for
-every chromosome and collates results.
+Run ROCCO on singe particular chromosome `--chrom`.
+This script is the workhorse for ROCCO_gwide.py which generates and compiles
+results for multiple chromosomes
 
 ```
 Usage:
-python ROCCO_chrom.py [--chrom CHROM] [--start START] [--end END] [--locus_size LOCUS_SIZE]
-                      [--wig_path WIG_PATH] [-N RR_ITER] [--verbose] [--integral]
+ROCCO_chrom.py [-h] [--chrom CHROM] [--start START] [--end END]
+                      [--locus_size LOCUS_SIZE] [--wig_path WIG_PATH] [-N RR_ITER] [--verbose]
                       [-b BUDGET] [-g GAMMA] [-t TAU] [--c1 C1] [--c2 C2] [--c3 C3]
                       [--solver SOLVER] [--bed_format BED_FORMAT] [--identifiers IDENTIFIERS]
                       [--outdir OUTDIR]
 
-Options:
---chrom CHROM: Chromosome name (e.g., `--chrom chr1`)
---start START: Starting nucleotide position (default: inferred from wig files)
---end END: Ending nucleotide position (default: inferred from wig files)
---locus_size LOCUS_SIZE: Interval/locus size (default: inferred from wig files)
---wig_path WIG_PATH: Path to directory containing wig files (signal tracks) (default: current directory)
--N RR_ITER: Number of randomized rounding iterations (default: 50)
---verbose: specify verbose output
---integral: Use integer optimization (slow)
--b BUDGET: Budget parameter (default: 0.035)
--g GAMMA: Gamma parameter (default: 1.0)
--t TAU: Tau parameter (default: 0.0)
---c1 C1: enrichment weight in mathcal(S)(i) (default: 1.0)
---c2 C2: dispersion weight in mathcal(S)(i) (default: 1.0)
---c3 C3: shift weight in mathcal(S)(i) (default: 1.0)
---solver SOLVER: Solver for optimization (default: ECOS)
---bed_format BED_FORMAT: BED format (3 for BED3, 6 for BED6) (default: 6)
---identifiers IDENTIFIERS: File containing sample identifiers to include in the experiment. One line for each ID.
---outdir OUTDIR: Output directory to store chromosome-specific BED file in (default: current directory)
+options:
+  -h, --help            show this help message and exit
+  --chrom CHROM         e.g., --chrom chr1
+  --start START         beginning nucleotide position (default: infer from wiggle files)
+  --end END             ending nucleotide position (default: infer from wiggle files)
+  --locus_size LOCUS_SIZE
+                        size of loci (L parameter) (default: infer from wiggle files)
+  --wig_path WIG_PATH   directory containing .wig files for each sample
+  -N RR_ITER, --rr_iter RR_ITER
+                        number of RR iterations
+  --verbose             set to `True` for verbose logging
+  -b BUDGET, --budget BUDGET
+                        budget parameter (largest allowed fraction of selected bp)
+  -g GAMMA, --gamma GAMMA
+                        gamma parameter (discontig. penalty weight)
+  -t TAU, --tau TAU     tau parameter (enrichment threshold)
+  --c1 C1               g_1 coefficient in score function (enrichment reward)
+  --c2 C2               g_2 coefficient in score function (dispersion penalty)
+  --c3 C3               g_3 coefficient in score function (local shift)
+  --solver SOLVER       Optimization software used to solve the main LP. `ECOS` is used by
+                        default.
+  --bed_format BED_FORMAT
+                        `3` for BED3 format and `6` for BED6 format
+  --identifiers IDENTIFIERS
+                        (optional) a filename containing identifiers for samples to include in
+                        experiment. Each identi fier should be a uniquely-identifying substring
+                        of the respective `.wig` sample. If not specified, all samples are
+                        used.
+  --outdir OUTDIR       directory in which to store output bed file
 ```
 
 Example:
-    Run on toy/test data in `tests/data`:
+    Run on toy data in `tests/data`:
     ```
     python3 ROCCO_chrom.py --chrom chr22 --wig_path tests/data/tracks_chr22 -b .02
     ```
@@ -47,8 +57,9 @@ import warnings
 import subprocess
 import numpy as np
 import pandas as pd
-from locus import Locus
-from loci import Loci
+from .locus import Locus
+from .loci import Loci
+
 
 
 def get_locus_size(wig_path) -> int:
@@ -279,36 +290,7 @@ def log(text, verbose=True) -> None:
         print(str(text))
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--chrom', help="e.g., --chrom chr1")
-    parser.add_argument('--start', type=int, default=-1)
-    parser.add_argument('--end', type=int, default=-1)
-    parser.add_argument('--locus_size', type=int, default=-1,
-                        help="this must match the constant step-size \
-                        in the wiggle files used as input")
-    parser.add_argument('--wig_path', type=str, default=os.getcwd())
-    parser.add_argument('-N', '--rr_iter', type=int, default=50)
-    parser.add_argument('--verbose', default=False, action="store_true")
-    parser.add_argument('--integral', type=bool, default=False, help='not currently in-use')
-    parser.add_argument('-b', '--budget', type=float, default=.035)
-    parser.add_argument('-g', '--gamma', type=float, default=1.0)
-    parser.add_argument('-t', '--tau', type=float, default=0.0)
-    parser.add_argument('--c1', type=float, default=1.0)
-    parser.add_argument('--c2', type=float, default=1.0)
-    parser.add_argument('--c3', type=float, default=1.0)
-    parser.add_argument('--solver', default="ECOS", help='solver software\
-        used to solve LP. Both "ECOS" and "PDLP" are free/open-source')
-    parser.add_argument('--bed_format', type=int, default=6,
-                        help="`3` for BED3 format and `6` for BED6 format")
-    parser.add_argument('--identifiers', default=None,
-                        help="(optional) a filename containing identifiers\
-                          for samples to include in experiment. Each identi\
-                          fier should be a substring of the `.wig` sample.")
-    parser.add_argument('--outdir', type=str, default='.')
-
-    args = vars(parser.parse_args())
-
+def main(args):
     log('ROCCO_chrom: args', args['verbose'])
     log(args, args['verbose'])
 
@@ -413,4 +395,31 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--chrom', type=str, help="e.g., --chrom chr1")
+    parser.add_argument('--start', type=int, default=-1, help='beginning nucleotide position (default: infer from wiggle files)')
+    parser.add_argument('--end', type=int, default=-1, help='ending nucleotide position (default: infer from wiggle files)')
+    parser.add_argument('--locus_size', type=int, default=-1, help='size of loci (L parameter) (default: infer from wiggle files)')
+    parser.add_argument('--wig_path', type=str, default=os.getcwd(), help='directory containing .wig files for each sample')
+    parser.add_argument('-N', '--rr_iter', type=int, default=50, help = 'number of RR iterations')
+    parser.add_argument('--verbose', default=False, action="store_true", help='set to `True` for verbose logging')
+    parser.add_argument('-b', '--budget', type=float, default=.035, help='budget parameter (largest allowed fraction of selected bp)')
+    parser.add_argument('-g', '--gamma', type=float, default=1.0, help='gamma parameter (discontig. penalty weight)')
+    parser.add_argument('-t', '--tau', type=float, default=0.0, help='tau parameter (enrichment threshold)')
+    parser.add_argument('--c1', type=float, default=1.0, help='g_1 coefficient in score function (enrichment reward)')
+    parser.add_argument('--c2', type=float, default=1.0, help='g_2 coefficient in score function (dispersion penalty) ')
+    parser.add_argument('--c3', type=float, default=1.0, help='g_3 coefficient in score function (local shift)')
+    parser.add_argument('--solver', default="ECOS", help='Optimization software used to solve the \
+                        main LP. `ECOS` is used by default.')
+    parser.add_argument('--bed_format', type=int, default=6,
+                        help="`3` for BED3 format and `6` for BED6 format")
+    parser.add_argument('--identifiers', default=None,
+                        help="(optional) a filename containing identifiers\
+                          for samples to include in experiment. Each identi\
+                          fier should be a uniquely-identifying substring of\
+                          the respective `.wig` sample. If not specified, all\
+                          samples are used.")
+    parser.add_argument('--outdir', type=str, default='.', help="directory in which to store output bed file")
+
+    args = vars(parser.parse_args())
+    main(args)

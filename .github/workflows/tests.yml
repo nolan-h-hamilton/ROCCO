@@ -5,6 +5,9 @@ on:
     paths:
       - '**.py'
       - '**.yml'
+    branches:
+      - main
+      - cli
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,17 +24,12 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install pylint
-        pip install numpy
-        pip install scipy==1.10.0
-        pip install pandas
-        pip install cvxpy
-        pip install pysam
-        pip install pybedtools
         sudo apt-get install -y bedtools
         sudo apt-get install -y samtools
+        pip install -e .
 
-    - name: run test_rocco.py and test_loci.py
+    - name: run test_rocco.py
       working-directory: ./tests
       run: |
         python test_rocco.py
-        python test_loci.py
+

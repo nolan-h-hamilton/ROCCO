@@ -1,13 +1,12 @@
 ***
-The following notice applies to files in the ROCCO/pepatac dir.
-
+June 1 2023
 The files `bamSitesToWig.py`, `cutsToWig.pl`, `smoothWig.pl` 
-are copied from the `tools` directory in the PEPATAC GitHub
-repository at URL:
+in the `rocco` directory are copied from the PEPATAC repository.
 
-https://github.com/databio/pepatac/tree/master/tools
+Permalink:
+https://github.com/databio/pepatac/tree/9ee0b6c1251b1addae8265c12f16cbfeae76d489/tools
 
-as of June 1 2023.
+See below for copyright notice.
 ***
 
 Copyright 2021 Nathan Sheffield

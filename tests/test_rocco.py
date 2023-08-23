@@ -47,9 +47,9 @@ os.chdir(os.path.pardir)
 assert os.path.abspath(os.getcwd())[-5:] == 'ROCCO'
 
 log('running ROCCO_chrom.py for chr21, store output in `tests/output`', sys.argv[0])
-wrap_run('python3 ROCCO_chrom.py --chrom chr21 --wig_path tests/data/tracks_chr21 -b .02 -N 0 --outdir tests/output')
+wrap_run('rocco chrom --chrom chr21 --wig_path tests/data/tracks_chr21 -b .02 -N 0 --outdir tests/output')
 log('running ROCCO_chrom.py for chr22, store output in `tests/output`', sys.argv[0])
-wrap_run('python3 ROCCO_chrom.py --chrom chr22 --wig_path tests/data/tracks_chr22 -b .02 -N 0 --outdir tests/output')
+wrap_run('rocco chrom --chrom chr22 --wig_path tests/data/tracks_chr22 -b .02 -N 0 --outdir tests/output')
 
 assert os.path.exists('tests/output/ROCCO_out_chr21_0.02_1.0_0.0_1.0_1.0_1.0.bed')
 chr21_bed = BedTool('tests/output/ROCCO_out_chr21_0.02_1.0_0.0_1.0_1.0_1.0.bed')
@@ -57,8 +57,8 @@ assert os.path.exists('tests/output/ROCCO_out_chr22_0.02_1.0_0.0_1.0_1.0_1.0.bed
 chr22_bed = BedTool('tests/output/ROCCO_out_chr22_0.02_1.0_0.0_1.0_1.0_1.0.bed')
 merged_bed = chr21_bed.cat(chr22_bed)
 
-log('running ROCCO.py using tests/test_params.csv, store output in `tests/output` and combine', sys.argv[0])
-wrap_run('python3 ROCCO.py -p tests/test_params.csv --outdir tests/output/combined --combine tests/combined.bed -N 0 --multi')
+log('running ROCCO_gwide.py using tests/test_params.csv, store output in `tests/output` and combine', sys.argv[0])
+wrap_run('rocco gwide -p tests/test_params.csv --outdir tests/output/combined --combine tests/combined.bed -N 0 --multi')
 assert os.path.exists('tests/combined.bed')
 combined_bed = BedTool('tests/combined.bed')
 

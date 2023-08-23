@@ -12,7 +12,7 @@ import random
 import numpy as np
 import cvxpy as cp
 from scipy import stats
-from locus import Locus
+from .locus import Locus
 
 class LociIterator:
     """

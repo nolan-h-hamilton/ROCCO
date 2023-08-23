@@ -50,39 +50,11 @@ import os
 import argparse
 import subprocess
 import pysam
-import rocco_aux
+from . import rocco_aux
 import tempfile
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Description of your program.')
-    parser.add_argument('-i','--bamdir', default='.', type=str, help='path to directory containing BAM files')
-    parser.add_argument('-o', '--outdir', default= '.', help='output directory')
-    parser.add_argument('-s', '--sizes',
-                        default='hg38',
-                        help="A path to a chromosome sizes file. OR\
-                        an assembly name")
-    parser.add_argument('-L', '--interval_length',
-                        default=50,
-                        help="wiggle track fixed interval length")
-    parser.add_argument('-c', '--cores',
-                        type=int,
-                        default=1,
-                        help="`bamSitesToWig.py`'s cores  parameter.\
-                        Altering this parameter to use >1 core\
-                        may cause issues on Mac OS")
-    parser.add_argument('--multi',
-                         default=False,
-                         action='store_true',
-                         help='Invoke to run `bamSitesToWig` jobs\
-                         simultaneously.')
-    parser.add_argument('--index',
-                        type=int,
-                        default=1,
-                        help="deprecated--included for backwards compatibility")
-    parser.add_argument('--bstw_path', default='pepatac/bamSitesToWig.py', help="path to bamSitesToWig.py script, included in ROCCO/pepatac by default")
-    args = vars(parser.parse_args())
-
+def main(args):
     # process command line arguments
     cwd = os.getcwd()
     args['bamdir'] = rocco_aux.trim_path(os.path.abspath(args['bamdir']))
@@ -146,5 +118,32 @@ def main():
             subprocess.run(["mv", chrom + '_' + bigwig_file + '.wig',
                         "tracks_{}".format(chrom)], check=True)
     os.chdir(cwd)
+    
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description='Description of your program.')
+    parser.add_argument('-i','--bamdir', default='.', type=str, help='path to directory containing BAM files')
+    parser.add_argument('-o', '--outdir', default= '.', help='output directory')
+    parser.add_argument('-s', '--sizes',
+                        default='hg38',
+                        help="A path to a chromosome sizes file. OR\
+                        an assembly name")
+    parser.add_argument('-L', '--interval_length',
+                        default=50,
+                        help="wiggle track fixed interval length")
+    parser.add_argument('-c', '--cores',
+                        type=int,
+                        default=1,
+                        help="`bamSitesToWig.py`'s cores  parameter.\
+                        Altering this parameter to use >1 core\
+                        may cause issues on Mac OS")
+    parser.add_argument('--multi',
+                         default=True,
+                         help='Set to `False` to run `bamSitesToWig` jobs\
+                         sequentially.')
+    parser.add_argument('--index',
+                        type=int,
+                        default=1,
+                        help="deprecated--included for backwards compatibility")
+    parser.add_argument('--bstw_path', default='rocco/bamSitesToWig.py', help="path to bamSitesToWig.py script, included in ROCCO/pepatac by default")
+    args = vars(parser.parse_args())
+    main(args)
