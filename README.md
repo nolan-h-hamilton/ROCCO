@@ -16,9 +16,17 @@ Underlying ROCCO is a constrained optimization problem that can be solved effici
 
 ## Getting Started
 
-**Install Dependencies with Conda**
+**Install ROCCO with pip** ([PyPi page](https://pypi.org/project/rocco/))
 
-A ROCCO-specific conda environment with all dependencies installed can be created using
+  ```
+  pip install rocco
+  ```
+
+**Dependencies**
+
+*samtools, bedtools, ucsctools*
+
+Can be installed *manually* or with conda in a rocco-specific environment specified in
 [rocco_conda.yml](https://github.com/nolan-h-hamilton/ROCCO/blob/main/docs/CONDA/rocco_conda.yml):
 
 ```
@@ -26,13 +34,7 @@ conda env create -n rocco --file docs/CONDA/rocco_conda.yml
 ```
 load via: `conda activate rocco`.
 
-Alternatively, dependencies (standard bioinformatics tools listed in `docs`) can be installed manually.
 
-**Install ROCCO with pip** ([PyPi page](https://pypi.org/project/rocco/))
-
-  ```
-  pip install rocco
-  ```
 
 
 #### Quick Start Demo
