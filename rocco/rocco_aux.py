@@ -130,16 +130,19 @@ def is_alignment(filepath) -> bool:
             return False
     return False
 
-def run_par(cmd_file, verbose=False):
+def run_par(cmd_file, threads=-1, verbose=False):
     """
     Runs shell commands in `cmd_file` in parallel
 
     Args:
         cmd_file (str): file containing newline-separated commands
+        threads (int): number of threads to use. if default '-1',
+            then the number of threads is set to 1 + os.cpu_count()//2
         verbose (bool): whether to print subprocess output to stdout
     """
     assert os.path.exists(cmd_file), f'supplied `cmd_file` could not be found'
-
+    if threads == -1:
+        threads = 1 + os.cpu_count()//2
     with open(cmd_file, 'r') as file:
         commands = file.readlines()
 
@@ -156,7 +159,7 @@ def run_par(cmd_file, verbose=False):
             process.communicate()
             return command, process.returncode
 
-    with ThreadPoolExecutor(max_workers = 1 + (os.cpu_count() // 2)) as executor:
+    with ThreadPoolExecutor(max_workers = threads) as executor:
         futures = [executor.submit(run_command, cmd) for cmd in commands]
         results = [future.result() for future in futures]
     for command, returncode in results[::-1]:
