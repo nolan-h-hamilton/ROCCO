@@ -23,7 +23,7 @@ Underlying ROCCO is a constrained optimization problem that can be solved effici
   pip install rocco
   ```
 
-Dependencies: *samtools, bedtools, ucsctools*
+System Dependencies: *samtools, bedtools, ucsctools*
 
 **Conda**
 
