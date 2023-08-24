@@ -3,7 +3,7 @@
 <img width="472" alt="logo" src="https://github.com/nolan-h-hamilton/ROCCO/assets/57746191/170478f1-5820-4056-b315-3c8dee3603d9">
 
 [![Tests](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml/badge.svg)](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml)
-![PyPI](https://img.shields.io/pypi/v/rocco?label=PyPI%20package&color=blue)
+[![PyPI](https://img.shields.io/pypi/v/rocco?label=PyPI%20package&color=blue)](https://pypi.org/project/rocco/)
 
 Underlying ROCCO is a constrained optimization problem that can be solved efficiently to **predict consensus regions of open chromatin** across multiple samples.
 
@@ -17,7 +17,7 @@ Underlying ROCCO is a constrained optimization problem that can be solved effici
 
 ## Getting Started
 
-**Install ROCCO with pip** ([PyPi page](https://pypi.org/project/rocco/))
+**Install ROCCO with pip** ([PyPI](https://pypi.org/project/rocco/))
 
   ```
   pip install rocco
