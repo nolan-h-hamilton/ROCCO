@@ -31,12 +31,12 @@ If using [Conda](https://anaconda.org), ROCCO and all dependencies can be instal
 [rocco_conda.yml](https://github.com/nolan-h-hamilton/ROCCO/blob/main/rocco_conda.yml):
 
 ```
-conda env create -n rocco --file docs/CONDA/rocco_conda.yml
+conda env create -n rocco --file rocco_conda.yml
 ```
 load via: `conda activate rocco`.
 
 #### Quick Start Demo
-To see ROCCO in action, refer to the Jupyter notebook: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb).
+To see ROCCO in action, refer to the Jupyter notebook: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb).
 
 This demonstration offers an *interactive* overview of the ROCCO pipeline that can be executed by running the commands in each cell. Output from a previous session is included if you do not wish to run the pipeline yourself.
 

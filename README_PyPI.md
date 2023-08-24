@@ -13,7 +13,7 @@ Underlying ROCCO is a constrained optimization problem that can be solved effici
 1. Employs a **mathematically tractable model** permitting guarantees of performance and efficiency.
 
 
-#### [Quick Start Demo](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo.ipynb)
+#### [Quick Start Demo](https://github.com/nolan-h-hamilton/ROCCO/blob/demo/demo.ipynb)
 The quick start demo is an interactive Jupyter Notebook showcasing ROCCO's functionality.
 
 
