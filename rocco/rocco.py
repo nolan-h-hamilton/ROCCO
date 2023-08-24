@@ -47,7 +47,7 @@ def subcommand_budgets(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ROCCO: [R]obust [O]pen [C]hromatin Dection via [C]onvex [O]ptimization.\nPyPI Homepage: https://pypi.org/project/rocco/ \nGitHub: https://github.com/nolan-h-hamilton/ROCCO/ \nPaper: https://doi.org/10.1101/2023.05.24.542132 \nRun 'rocco [gwide,chrom,prep,...] -h' for subcommand-specific info.\n", add_help=True, formatter_class=argparse.RawTextHelpFormatter)
+    parser = argparse.ArgumentParser(description="ROCCO: [R]obust [O]pen [C]hromatin Dection via [C]onvex [O]ptimization.\n\nPyPI Homepage: https://pypi.org/project/rocco/ \nGitHub: https://github.com/nolan-h-hamilton/ROCCO/ \nPaper: https://doi.org/10.1101/2023.05.24.542132\n",epilog="Note: run 'rocco [gwide,chrom,prep,...] -h' for subcommand-specific arguments.\n", add_help=True, formatter_class=argparse.RawTextHelpFormatter)
     subparsers = parser.add_subparsers(dest="command")
 
     # 'gwide' subcommand parameters

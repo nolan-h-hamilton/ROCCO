@@ -9,6 +9,7 @@ $\mathbf{S}_{chr}$, is implemented by way of the Loci object.
 import copy
 import math
 import random
+import warnings
 import numpy as np
 import cvxpy as cp
 from scipy import stats
@@ -271,22 +272,27 @@ class Loci:
         np.ndarray: the integral $\texttt{RR}$ solution, OR $\texttt{floor\_eps}$ sol if $N \leq 0$.
     """
         n = len(loci_scores)
-
+        init_sol = np.floor(lp_sol + eps)
+        init_score = (-loci_scores@init_sol
+                       + gam*np.sum(np.abs(np.diff(init_sol,1))))
         if N <= 0:
-            print("loci.run_rr(): N <= 0 --> returning floor_eps solution")
-            return np.floor(lp_sol[:n] + eps)
+            num_selected = np.sum(init_sol)
+            if num_selected > math.floor(n*budget):
+                # this shouldn't really occur for reasonable `eps`,
+                # but a warning is included for completeness.
+                warnings.warn('floor solution with eps={eps} exceeds budget by {num_selected - math.floor(n*budget)} selections')
+            return init_sol
 
-        rr_sol = None
-        best_score = 1e6
+        rr_sol = init_sol
+        best_score = init_score
         for j in range(N):
-            ell_rand_n = []
-            for i, ell_i in enumerate(lp_sol[:n]):
+            ell_rand_n = np.zeros(n, dtype=np.int8)
+            for i, ell_i in enumerate(lp_sol):
                 if random.random() <= ell_i:
-                    ell_rand_n.append(1)
+                    ell_rand_n[i] = 1
                 else:
-                    ell_rand_n.append(0)
+                    ell_rand_n[i] = 0
 
-            ell_rand_n = np.array(ell_rand_n)
             score = (-loci_scores@ell_rand_n
                        + gam*np.sum(np.abs(np.diff(ell_rand_n,1))))
             is_feas = (np.sum(ell_rand_n) <= math.floor(n*budget))
@@ -294,11 +300,7 @@ class Loci:
                 rr_sol = ell_rand_n
                 best_score = score
 
-        if rr_sol is None:
-            print("loci.run_rr(): no good solution found via RR --> returning floor solution")
-            return np.floor(lp_sol[:n] + eps)
-
-        return np.array(rr_sol)
+        return rr_sol
 
     def rocco_lp(self, budget: float = .035, tau: float = 0, gam: float = 1, c1: float = 1,
              c2: float = 1, c3: float = 1, verbose_: bool = False, solver: str = "ECOS",
@@ -336,25 +338,30 @@ class Loci:
                           z >= -1*cp.diff(ell,1)]
         problem = cp.Problem(cp.Minimize(-loci_scores@ell + gam*cp.sum(z)),
                              constraints)
-        
+
         # Refer to `Solve method options` at
         # https://www.cvxpy.org/tutorial/advanced/index.html
         if solver == "ECOS":
             problem.solve(solver=cp.ECOS, verbose=verbose_)
 
         if solver == "PDLP":
-            problem.solve(solver=cp.PDLP, verbose=verbose_)
+            try:
+                problem.solve(solver=cp.PDLP, verbose=verbose_)
+            except Exception as ex:
+                print("Ensure PDLP solver is available.\
+                    Can be installed via pip:\
+                    'pip install ortools==9.3.10497'")
 
         if solver == "MOSEK":
             # https://docs.mosek.com/latest/pythonapi/parameters.html
             MOSEK_OPTS = {'MSK_IPAR_NUM_THREADS': 1,
                         'MSK_DPAR_INTPNT_TOL_REL_GAP': .005,
                         'MSK_IPAR_PRESOLVE_LINDEP_ABS_WORK_TRH':10,
-                        'MSK_IPAR_INTPNT_SOLVE_FORM':2} # solve dual
+                        'MSK_IPAR_INTPNT_SOLVE_FORM':2}
             try:
                 problem.solve(cp.MOSEK, mosek_params=MOSEK_OPTS, verbose=verbose_)
             except Exception as ex:
-                print("Ensure a valid `MOSEK` license file is\
+                print("Ensure a valid MOSEK license file is\
                 available in your home directory and that the\
                 mosek-python interface is installed, e.g.,\
                 via 'pip install mosek'")
