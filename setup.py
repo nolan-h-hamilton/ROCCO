@@ -1,11 +1,11 @@
 from setuptools import setup, find_packages
 
-with open("README.md", "r", encoding="utf-8") as readme_file:
+with open("README_PyPI.md", "r", encoding="utf-8") as readme_file:
     long_description = readme_file.read()
 
 setup(
     name='rocco',
-    version='0.3.2',
+    version='0.3.3',
     author='Nolan Holt Hamilton',
     author_email='nolan.hamilton@unc.edu',
     description='Robust ATAC-seq Peak Calling for Many Samples via Convex Optimization',
