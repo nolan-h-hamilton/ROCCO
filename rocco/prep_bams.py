@@ -38,7 +38,7 @@ Example:
 
     Run on toy data in `tests/data`:
     ```
-    python3 prep_bams.py --bamdir tests/data -s tests/data/test_sizes.sizes --multi
+    rocco prep --bamdir tests/data -s tests/data/test_sizes.sizes --multi
     ```
 
 Notes:
@@ -143,7 +143,7 @@ if __name__ == '__main__':
     parser.add_argument('--index',
                         type=int,
                         default=1,
-                        help="deprecated--included for backwards compatibility")
+                        help="deprecated--any bam files without indexes will now be indexed with pysam regardless of this argument")
     parser.add_argument('--bstw_path', default='rocco/bamSitesToWig.py', help="path to bamSitesToWig.py script, included in ROCCO/pepatac by default")
     args = vars(parser.parse_args())
     main(args)

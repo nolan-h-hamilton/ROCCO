@@ -9,7 +9,6 @@ core_dependencies = [
     'cvxpy',
     'pandas',
     'scipy',
-    'pybedtools',
     'pysam',
     'pararead',
     'logmuse'
