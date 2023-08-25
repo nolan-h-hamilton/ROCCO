@@ -1,7 +1,8 @@
 """
 Set budgets for each chromosome based on average read density observed
 across multiple BAM files in directory `--bamdir`. Output (stdout) is formatted
-for easy use as a parameter CSV file for ROCCO.py (`--param_file`).
+for easy use as a parameter CSV file for ROCCO.py (`--param_file`). Note: the
+output CSV assumes wig track directories are local. Adjust accordingly.
 
 The results offer a fair starting point for users wishing to use chromosome-specific budgets--
 some modification may be necessary depending on preferences.
@@ -110,7 +111,7 @@ def rd_dens(bamfile: str, size_file: str, a: float = 0.0, b: float = 0.05, desir
     """
     if not os.path.exists(size_file):
         raise FileNotFoundError(f'Could not find size file {size_file}')
-    
+
     size_dict = rocco_aux.parse_size_file(size_file)
     if index:
         pysam.index(bamfile)
@@ -199,6 +200,6 @@ if __name__ == '__main__':
     if args['sizes'] is None:
         print('est_budgets.py: A .sizes file is required for the corresponding genome.')
         print('\tUse the `get_sizes` subcommand or retrieve a sizes file manually')
-        raise Exception('a sizes file is required')
+        raise Exception('a sizes file is required. Consider `rocco get_sizes -g [assembly]`')
 
     main(args)

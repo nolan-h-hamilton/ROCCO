@@ -1,18 +1,24 @@
 """
-Usage:
-rocco.py [-h] {gwide,chrom,prep,budgets,get_sizes} ...
-
+```
 ROCCO: [R]obust [O]pen [C]hromatin Dection via [C]onvex [O]ptimization.
 
-positional arguments:
+PyPI : https://pypi.org/project/rocco/
+
+GitHub: https://github.com/nolan-h-hamilton/ROCCO/
+
+Demo: https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb
+
+Paper: https://doi.org/10.1101/2023.05.24.542132
+
+
+usage: rocco [-h] {gwide,chrom,prep,budgets,get_sizes} ...
   {gwide,chrom,prep,budgets,get_sizes}
-    gwide               run rocco genome-wide (ROCCO_gwide.py)
+    gwide               run rocco genome-wide/on multiple chromosomes (ROCCO_gwide.py)
     chrom               run ROCCO on a single chromosome (ROCCO_chrom.py)
     prep                Preprocess BAM files (prep_bams.py)
-    budgets             compute budgets for each chromosome based on read densities
-                        (est_budgets.py)
-    get_sizes           download sizes file for a genome in the pybedtools registry
-
+    budgets             Compute a budget (maximum fraction of basepairs that can be selected as 'open') for
+                        each chromosome ranked by average read-density computed using the supplied BAM files (est_budgets.py)
+    get_sizes           download sizes file for a genome in the ucsc genome registry
 options:
   -h, --help            show this help message and exit
 ```
@@ -28,6 +34,7 @@ from . import prep_bams
 from . import est_budgets
 from . import locus
 from . import loci
+
 
 def subcommand_chrom(args):
     ROCCO_chrom.main(args)
@@ -47,12 +54,13 @@ def subcommand_budgets(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ROCCO: [R]obust [O]pen [C]hromatin Dection via [C]onvex [O]ptimization.\n\nPyPI Homepage: https://pypi.org/project/rocco/ \nGitHub: https://github.com/nolan-h-hamilton/ROCCO/ \nPaper: https://doi.org/10.1101/2023.05.24.542132\n",epilog="Note: run 'rocco [gwide,chrom,prep,...] -h' for subcommand-specific arguments.\n", add_help=True, formatter_class=argparse.RawTextHelpFormatter)
+    parser = argparse.ArgumentParser(description="ROCCO: [R]obust [O]pen [C]hromatin Dection via [C]onvex [O]ptimization.\n\nPyPI : https://pypi.org/project/rocco/ \nGitHub: https://github.com/nolan-h-hamilton/ROCCO/ \nDemo: https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb \nPaper: https://doi.org/10.1101/2023.05.24.542132\n", add_help=True, formatter_class=argparse.RawTextHelpFormatter)
     subparsers = parser.add_subparsers(dest="command")
 
     # 'gwide' subcommand parameters
-    parser_subcommand_gwide = subparsers.add_parser("gwide", help='run rocco genome-wide (ROCCO_gwide.py)')
-    parser_subcommand_gwide.add_argument('-p', '--param_file', default='params.csv')
+    parser_subcommand_gwide = subparsers.add_parser("gwide", help='run rocco genome-wide/on multiple chromosomes (ROCCO_gwide.py)')
+    parser_subcommand_gwide.add_argument('-p', '--param_file', required=True,
+                                         help='A CSV file specifying the parameters for each chromosome. See: https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo_params.csv')
     parser_subcommand_gwide.add_argument('-b', '--budget', type=float, default=.035)
     parser_subcommand_gwide.add_argument('-g', '--gamma', type=float, default=1.0)
     parser_subcommand_gwide.add_argument('-t', '--tau', type=float, default=0.0)
@@ -99,7 +107,7 @@ def main():
     parser_subcommand_prep.add_argument('--bstw_path', default='rocco/bamSitesToWig.py')
 
     # 'budgets' subcommand parameters
-    parser_subcommand_budgets = subparsers.add_parser("budgets", help='compute budgets for each chromosome based on read densities (est_budgets.py)')
+    parser_subcommand_budgets = subparsers.add_parser("budgets", help='Compute a budget (maximum fraction of basepairs that can be selected as open) for each chromosome ranked by average read-density computed using the supplied BAM files (est_budgets.py)')
     parser_subcommand_budgets.add_argument('-i', '--bamdir', type=str)
     parser_subcommand_budgets.add_argument('-s', '--sizes', type=str)
     parser_subcommand_budgets.add_argument('-a', type=float, default=0.0)
@@ -108,7 +116,7 @@ def main():
     parser_subcommand_budgets.add_argument('--index', default=False, action='store_true')
 
     # 'get_sizes' subcommand parameters
-    parser_subcommand_get_sizes = subparsers.add_parser("get_sizes", help="download sizes file for a genome in the pybedtools registry")
+    parser_subcommand_get_sizes = subparsers.add_parser("get_sizes", help="download sizes file for a genome in the ucsc genome registry")
     parser_subcommand_get_sizes.add_argument('-g', '--genome', type=str, default='hg38')
 
     args = vars(parser.parse_args())

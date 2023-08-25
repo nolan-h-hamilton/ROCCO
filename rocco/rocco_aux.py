@@ -1,10 +1,10 @@
 import os
 import subprocess
 import pandas as pd
-import pybedtools
 import pysam
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+
 
 def trim_path(fname: str) -> str:
     """
@@ -59,42 +59,42 @@ def sort_combine_bed(outfile: str, dir_: str = '.', exclude_list: list = ['EBV',
                                            stdout=outfile_.fileno())
             cat_process.wait()
 
+def download_file(url, output_path):
+    "download file at `url` to `output_path` using either curl or wget"
+    try:
+        subprocess.run(['curl', '-o', output_path, url], check=True)
+    except subprocess.CalledProcessError:
+        try:
+            subprocess.run(['wget', '-O', output_path, url], check=True)
+        except subprocess.CalledProcessError:
+            raise RuntimeError("Failed to download the file.")
 
 def get_size_file(assembly='hg38', exclude_list=['EBV', 'M', 'MT']) -> str:
     """
-    If `assembly` is the name of an assembly included in the pybedtools
-    genome registry, this function will create a chromosome sizes file
-    and return a path to it: `<assembly>.sizes`
+    if `assembly` is included in the UC Santa Cruz genome repository
+    this function downloads, filters, and sorts the corresponding sizes
+    file to `assembly`.sizes. Chromosomes in `exclude_list` are ignored.
 
     Args:
-        assembly (str): genome assembly name
-        exclude_list (list): list of chromosome names to exclude\
-            Defaults to `['EBV', 'M', 'MT]`
+        assembly (str, optional): name of genome assembly. Defaults to 'hg38'.
+        exclude_list (list, optional): list of chromosome names to exclude in sizes file.
+            Defaults to ['EBV', 'M', 'MT'].
 
     Returns:
-        str: file path to a chromosome sizes file
-
-    Notes: excludes any chromosome names with an underscore
+        str: path to sizes file, `assembly`.sizes
     """
-    fname = assembly + '.sizes'
-    try:
-        assembly_dict = pybedtools.chromsizes(assembly)
-    except (AttributeError, OSError) as not_avail_ex:
-        print(f'{assembly} is not available in the pybedtools genome registry')
-        raise not_avail_ex
-    keys = [x for x in assembly_dict.keys()
-            if '_' not in x
-            and x[3:] not in exclude_list]
-    keys = sorted(keys, key=lambda x: int(val)
-                    if (val := x[3:]).isnumeric() else ord(val))
-
-    with open(fname, "w", encoding='utf-8') as assembly_file:
-        for name in keys:
-            assembly_file.write(
-                "{}\t{}\n".format(
-                    name, assembly_dict[name][1]))
-    return fname
-
+    assembly = assembly.lower()
+    url = f"http://hgdownload.soe.ucsc.edu/goldenPath/{assembly}/bigZips/{assembly}.chrom.sizes"
+    output_path = f"{assembly}.sizes"
+    download_file(url, output_path)
+    with open(output_path, 'r') as file_:
+        lines = file_.readlines()
+    filtered_lines = [line for line in lines if line.strip() and not any(excluded_chr in line for excluded_chr in exclude_list) and '_' not in line]
+    sorted_lines = sorted(filtered_lines, key=lambda x: int(x.split('\t')[0][3:]) if x.split('\t')[0][3:].isnumeric() else ord(x.split('\t')[0][3:]))
+    sorted_output_path = f"{assembly}.sizes"
+    with open(sorted_output_path, 'w') as file_:
+        file_.writelines(sorted_lines)
+    return sorted_output_path
 
 def parse_size_file(size_file, exclude_list=['EBV', 'M', 'MT']) -> dict:
     """Parse a size file and return a dictionary {chr: size}.

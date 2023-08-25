@@ -22,7 +22,6 @@ dependencies:
     - logmuse
     - scipy
     - pysam
-    - pybedtools
     - ortools==9.3.10497
     - rocco
 

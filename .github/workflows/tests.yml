@@ -26,7 +26,8 @@ jobs:
         pip install pylint
         sudo apt-get install -y bedtools
         sudo apt-get install -y samtools
-        pip install rocco
+        pip install pybedtools
+        pip install -e .
 
     - name: run test_rocco.py
       working-directory: ./tests

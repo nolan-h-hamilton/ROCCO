@@ -1,7 +1,7 @@
 """
 Runs multiple `ROCCO_chrom.py` jobs, which execute ROCCO method on each respective
 chromosome. Chromosome-specific parameters are collected in a CSV file specified
-with argument `-p --param_file`. Consider using the `budgets` subcommand of `rocco.py`
+with argument `-p --param_file`. Consider using the `budgets` subcommand
 to set chromosome-specific budgets based on read densities.
 
 If any parameter entry in the CSV file `--param_file` is set to `NULL`, the script uses the
@@ -50,7 +50,7 @@ options:
                         CSV parameter file w/ row for each chromosome
   -b BUDGET, --budget BUDGET
                         budget parameter (largest allowed fraction of selected bp) used for
-                        each chromosome with a `NULL` entry observed in `--param_file`
+                        each chromosome with a `NULL` entry observed in `-p` `--param_file`
   -g GAMMA, --gamma GAMMA
                         gamma parameter (discontig. penalty weight) used for each chromosome
                         with a `NULL` entry observed in `--param_file`
@@ -92,6 +92,7 @@ Example:
 """
 
 import os
+import sys
 import argparse
 import subprocess
 import tempfile
@@ -222,9 +223,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--param_file',
-                        default='params.csv',
-                        help="CSV param file w/ row for each chromosome")
-
+                        required=True)
     parser.add_argument('-b', '--budget', type=float, default=.035, help='budget parameter (largest allowed fraction of selected bp) used for each chromosome with a `NULL` entry observed in `--param_file`')
     parser.add_argument('-g', '--gamma', type=float, default=1.0, help='gamma parameter (discontig. penalty weight) used for each chromosome  with a `NULL` entry observed in `--param_file`')
     parser.add_argument('-t', '--tau', type=float, default=0.0, help='tau parameter (enrichment threshold) used for each chromosome  with a `NULL` entry observed in `--param_file`')
