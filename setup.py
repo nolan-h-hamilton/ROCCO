@@ -32,7 +32,7 @@ long_description += "\n\n" + optional_dependencies_message
 
 setup(
     name='rocco',
-    version='0.3.6',
+    version='0.3.7',
     author='Nolan Holt Hamilton',
     author_email='nolan.hamilton@unc.edu',
     description='Robust ATAC-seq Peak Calling for Many Samples via Convex Optimization',
