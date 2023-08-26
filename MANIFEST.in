@@ -1,0 +1,3 @@
+include README_PyPI.md
+include PEPATAC
+recursive-include rocco *.pl
