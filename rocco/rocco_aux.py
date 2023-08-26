@@ -147,7 +147,6 @@ def run_par(cmd_file, threads=-1, verbose=False):
         commands = file.readlines()
 
     commands = [cmd.strip() for cmd in commands][::-1]
-    print(f'rocco_aux.run_par: running following commmands in parallel\n{commands}\n')
 
     def run_command(command):
         if not verbose:
