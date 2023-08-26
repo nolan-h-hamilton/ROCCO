@@ -17,7 +17,7 @@ usage: rocco [-h] {gwide,chrom,prep,budgets,get_sizes} ...
     chrom               run ROCCO on a single chromosome (ROCCO_chrom.py)
     prep                Preprocess BAM files (prep_bams.py)
     budgets             Compute a budget (maximum fraction of basepairs that can be selected as 'open') for
-                        each chromosome ranked by average read-density computed using the supplied BAM files (est_budgets.py)
+                        each chromosome ranked by average read-density observed in the supplied BAM files (est_budgets.py)
     get_sizes           download sizes file for a genome in the ucsc genome registry
 options:
   -h, --help            show this help message and exit
@@ -107,7 +107,7 @@ def main():
     parser_subcommand_prep.add_argument('--bstw_path', default=None, help='deprecated')
 
     # 'budgets' subcommand parameters
-    parser_subcommand_budgets = subparsers.add_parser("budgets", help='Compute a budget (maximum fraction of basepairs that can be selected as open) for each chromosome ranked by average read-density computed using the supplied BAM files (est_budgets.py)')
+    parser_subcommand_budgets = subparsers.add_parser("budgets", help='Compute a budget for each chromosome ranked by average read-density observed in the supplied BAM files (est_budgets.py)')
     parser_subcommand_budgets.add_argument('-i', '--bamdir', type=str)
     parser_subcommand_budgets.add_argument('-s', '--sizes', type=str)
     parser_subcommand_budgets.add_argument('-a', type=float, default=0.0)

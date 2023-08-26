@@ -39,6 +39,7 @@ import sys
 import logmuse
 import pararead
 import pysam
+import pkg_resources
 
 from pararead import  ParaReadProcessor
 
@@ -126,8 +127,7 @@ class CutTracer(pararead.ParaReadProcessor):
         chromOutFileBwSm = chromOutFile + "_smooth.bw"
         tmpFile = chromOutFile + "_cuts.txt"
 
-        cutsToWig = os.path.join(os.path.dirname(__file__), "cutsToWig.pl")
-
+        cutsToWig = pkg_resources.resource_filename(__name__, 'cutsToWig.pl')
         cmd1 = ("sort -n | perl " + cutsToWig + " " + str(chrom_size) +
                 " " + str(self.variable_step) + " " + str(self.scale))
         cmd2 = ("wigToBigWig -clip -fixedSummaries -keepAllChromosomes stdin " +
@@ -145,8 +145,10 @@ class CutTracer(pararead.ParaReadProcessor):
                  stdin=cutsToWigProcess.stdout)
 
         if self.smoothbw:
-            cutsToWigSm = os.path.join(os.path.dirname(__file__),
-                                       "smoothWig.pl")
+            #cutsToWigSm = os.path.join(os.path.dirname(__file__),
+                                       #"smoothWig.pl")
+            cutsToWigSm =pkg_resources.resource_filename(__name__, 'smoothWig.pl')
+
             cmd1 = ("sort -n | tee " + tmpFile + " | perl " + cutsToWigSm +
                     " " + str(chrom_size) + " " +  str(self.smooth_length) +
                     " " + str(self.step_size) + " " + str(self.variable_step) +
