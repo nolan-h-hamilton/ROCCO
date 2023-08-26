@@ -16,6 +16,8 @@ Underlying ROCCO is a constrained optimization problem that can be solved effici
 #### [Quick Start Demo](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb)
 The quick start demo is an interactive Jupyter Notebook showcasing ROCCO's functionality.
 
+## Documentation
+API Reference: https://nolan-h-hamilton.github.io/ROCCO/index.html
 
 ## Citation
 ```
