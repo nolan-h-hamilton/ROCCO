@@ -31,7 +31,7 @@ long_description += "\n\n" + optional_dependencies_message
 
 setup(
     name='rocco',
-    version='0.3.11',
+    version='0.3.12',
     author='Nolan Holt Hamilton',
     author_email='nolan.hamilton@unc.edu',
     description='Robust ATAC-seq Peak Calling for Many Samples via Convex Optimization',
@@ -41,6 +41,8 @@ setup(
     packages=find_packages(),
     scripts=
         ['rocco/smoothWig.pl', 'rocco/cutsToWig.pl'],
+    include_package_data=True,
+    package_data={'': ['rocco/cutsToWig.pl', 'rocco/smoothWig.pl']},
     classifiers=[
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3",
