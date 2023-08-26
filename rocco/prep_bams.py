@@ -7,26 +7,8 @@ create smooth, fixed-step bigwig signal tracks. These signal tracks are split by
 chromosome, converted to human-readable .wig format, and then placed into directories
 à la [this flowchart](https://github.com/nolan-h-hamilton/ROCCO/blob/main/docs/bamsig_flowchart.png).
 
-The resulting `tracks_chr[]` directories can then be supplied to ROCCO_chrom.py
+The resulting `tracks_chr[]` directories can then be supplied to rocco chrom
 via `--wig_path` to construct the signal matrix $\mathbf{S}_{chr}$.
-
-```
-usage: prep_bams.py [-h] [-i BAMDIR] [-o OUTDIR] [-s SIZES]
-                    [-L INTERVAL_LENGTH] [-c CORES] [--multi] [--index INDEX]
-options:
-  -h, --help            show this help message and exit
-  -i BAMDIR, --bamdir BAMDIR
-                        path to directory containing BAM files
-  -o OUTDIR, --outdir OUTDIR
-                        output directory
-  -s SIZES, --sizes SIZES
-                        A path to a chromosome sizes file. OR an assembly name
-  -L INTERVAL_LENGTH, --interval_length INTERVAL_LENGTH
-                        wiggle track fixed interval length
-  -c CORES, --cores CORES
-                        `bamSitesToWig.py`'s cores parameter. Altering this
-                        parameter to use >1 core may cause issues on Mac OS
-  --index INDEX         deprecated--included for backwards compatibility
 
 ```
 
@@ -52,10 +34,6 @@ def main(args):
     cwd = os.getcwd()
     args['bamdir'] = rocco_aux.trim_path(os.path.abspath(args['bamdir']))
     args['outdir'] = rocco_aux.trim_path(os.path.abspath(args['outdir']))
-
-    if not args['multi']:
-        print('prep_bams.py(): consider running with `--multi` for\
-        parallel execution of bamSitesToWig.py jobs')
 
     if not os.path.exists(args['sizes']):
         args['sizes'] = rocco_aux.get_size_file(args['sizes'])
@@ -112,7 +90,7 @@ def main(args):
             subprocess.run(["mv", chrom + '_' + bigwig_file + '.wig',
                         "tracks_{}".format(chrom)], check=True)
     os.chdir(cwd)
-    
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='BAM preprocessing')
     parser.add_argument('-i','--bamdir', default='.', type=str, help='path to directory containing BAM files')

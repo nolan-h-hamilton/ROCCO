@@ -1,30 +1,13 @@
 """
 Set budgets for each chromosome based on average read density observed
 across multiple BAM files in directory `--bamdir`. Output (stdout) is formatted
-for easy use as a parameter CSV file for ROCCO.py (`--param_file`). Note: the
-output CSV assumes wig track directories are local. Adjust accordingly.
+for easy use as a parameter CSV file for `rocco gwide` (`--param_file`). Note: the
+output CSV assumes wig track directories are local. Adjust paths accordingly.
 
-The results offer a fair starting point for users wishing to use chromosome-specific budgets--
-some modification may be necessary depending on preferences.
-
-In the following examples BAM files are assumed to have been indexed and located in the parent directory ('..')
-Usage:
-    est_budgets.py [-h] [-i BAMDIR] [-s SIZES] [-a A] [-b B] [--desired_avg DESIRED_AVG] [--index]
-
-Arguments:
-    bamdir (str): Path to the directory containing BAM files.
-    size_file (str): path to a chromosome sizes file
-    a (float): Minimum allowed budget for a particular chromosome
-        this bound is ignored if `desired_avg` is non-negative.
-    b (float): Maximum allowed budget for a particular chromosome
-        this bound is ignored if `desired_avg` is non-negative.
-    desired_avg (float): scaled read densities will average to this value
-        if it is modified to be non-negative.
-    index (bool): invoke '--index' if BAM files in '--bamdir' are not indexed
 
 Examples:
     ```
-    python3 est_budgets.py -i ../bamfiles -s hg38.sizes -a 0 -b .05
+    rocco budgets -i ../bamfiles -s hg38.sizes -a 0 -b .05
         chromosome,input_path,budget,gamma,tau,c1,c2,c3
         chr1,tracks_chr1,0.037,NULL,NULL,NULL,NULL,NULL
         chr2,tracks_chr2,0.038,NULL,NULL,NULL,NULL,NULL
@@ -53,7 +36,7 @@ Examples:
     ```
 
     ```
-    python3 est_budgets.py -i ../bamfiles -s hg38.sizes --desired_avg .035
+    rocco budgets -i ../bamfiles -s hg38.sizes --desired_avg .035
         chromosome,input_path,budget,gamma,tau,c1,c2,c3
         chr1,tracks_chr1,0.037,NULL,NULL,NULL,NULL,NULL
         chr2,tracks_chr2,0.039,NULL,NULL,NULL,NULL,NULL
@@ -198,7 +181,7 @@ if __name__ == '__main__':
     args = vars(parser.parse_args())
 
     if args['sizes'] is None:
-        print('est_budgets.py: A .sizes file is required for the corresponding genome.')
+        print('rocco budgets: A .sizes file is required for the corresponding genome.')
         print('\tUse the `get_sizes` subcommand or retrieve a sizes file manually')
         raise Exception('a sizes file is required. Consider `rocco get_sizes -g [assembly]`')
 

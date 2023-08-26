@@ -38,7 +38,7 @@ load via: `conda activate rocco`.
 System Dependencies: *samtools, bedtools, [UCSC KentUtils](http://hgdownload.soe.ucsc.edu/admin/exe/): bigWigToWig, wigToBigWig, bigWigCat*
 
 #### Quick Start Demo
-To see ROCCO in action, refer to the Jupyter notebook: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb).
+For a quick intro, refer to the Jupyter notebook: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb).
 
 This demonstration offers an interactive overview of the ROCCO pipeline that can be executed by running the commands in each cell. Output from a previous session is included if you do not wish to run the pipeline yourself.
 

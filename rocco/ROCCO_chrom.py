@@ -1,53 +1,7 @@
 """
 Run ROCCO on singe particular chromosome `--chrom`.
-This script is the workhorse for ROCCO_gwide.py which generates and compiles
+This script is the workhorse for `rocco gwide` which generates and compiles
 results for multiple chromosomes
-
-```
-Usage:
-ROCCO_chrom.py [-h] [--chrom CHROM] [--start START] [--end END]
-                      [--locus_size LOCUS_SIZE] [--wig_path WIG_PATH] [-N RR_ITER] [--verbose]
-                      [-b BUDGET] [-g GAMMA] [-t TAU] [--c1 C1] [--c2 C2] [--c3 C3]
-                      [--solver SOLVER] [--bed_format BED_FORMAT] [--identifiers IDENTIFIERS]
-                      [--outdir OUTDIR]
-
-options:
-  -h, --help            show this help message and exit
-  --chrom CHROM         e.g., --chrom chr1
-  --start START         beginning nucleotide position (default: infer from wiggle files)
-  --end END             ending nucleotide position (default: infer from wiggle files)
-  --locus_size LOCUS_SIZE
-                        size of loci (L parameter) (default: infer from wiggle files)
-  --wig_path WIG_PATH   directory containing .wig files for each sample
-  -N RR_ITER, --rr_iter RR_ITER
-                        number of RR iterations
-  --verbose             set to `True` for verbose logging
-  -b BUDGET, --budget BUDGET
-                        budget parameter (largest allowed fraction of selected bp)
-  -g GAMMA, --gamma GAMMA
-                        gamma parameter (discontig. penalty weight)
-  -t TAU, --tau TAU     tau parameter (enrichment threshold)
-  --c1 C1               g_1 coefficient in score function (enrichment reward)
-  --c2 C2               g_2 coefficient in score function (dispersion penalty)
-  --c3 C3               g_3 coefficient in score function (local shift)
-  --solver SOLVER       Optimization software used to solve the main LP. `ECOS` is used by
-                        default.
-  --bed_format BED_FORMAT
-                        `3` for BED3 format and `6` for BED6 format
-  --identifiers IDENTIFIERS
-                        (optional) a filename containing identifiers for samples to include in
-                        experiment. Each identi fier should be a uniquely-identifying substring
-                        of the respective `.wig` sample. If not specified, all samples are
-                        used.
-  --outdir OUTDIR       directory in which to store output bed file
-```
-
-Example:
-    Run on toy data in `tests/data`:
-    ```
-    python3 ROCCO_chrom.py --chrom chr22 --wig_path tests/data/tracks_chr22 -b .02
-    ```
-
 """
 
 import os
