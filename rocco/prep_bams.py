@@ -13,7 +13,6 @@ via `--wig_path` to construct the signal matrix $\mathbf{S}_{chr}$.
 ```
 usage: prep_bams.py [-h] [-i BAMDIR] [-o OUTDIR] [-s SIZES]
                     [-L INTERVAL_LENGTH] [-c CORES] [--multi] [--index INDEX]
-                    [--bstw_path BSTW_PATH]
 options:
   -h, --help            show this help message and exit
   -i BAMDIR, --bamdir BAMDIR
@@ -27,23 +26,17 @@ options:
   -c CORES, --cores CORES
                         `bamSitesToWig.py`'s cores parameter. Altering this
                         parameter to use >1 core may cause issues on Mac OS
-  --multi               Invoke to run `bamSitesToWig` jobs simultaneously.
   --index INDEX         deprecated--included for backwards compatibility
-  --bstw_path BSTW_PATH
-                        path to bamSitesToWig.py script, included in
-                        ROCCO/pepatac by default
+
 ```
 
 Example:
 
     Run on toy data in `tests/data`:
     ```
-    rocco prep --bamdir tests/data -s tests/data/test_sizes.sizes --multi
+    rocco prep --bamdir tests/data -s tests/data/test_sizes.sizes
     ```
 
-Notes:
-    - Several alternative tools exist for creating signal tracks in the desired format,\
-        but have not yet been tested.
 """
 
 import os
@@ -59,7 +52,7 @@ def main(args):
     cwd = os.getcwd()
     args['bamdir'] = rocco_aux.trim_path(os.path.abspath(args['bamdir']))
     args['outdir'] = rocco_aux.trim_path(os.path.abspath(args['outdir']))
-    args['bstw_path'] = rocco_aux.trim_path(os.path.abspath(args['bstw_path']))
+
     if not args['multi']:
         print('prep_bams.py(): consider running with `--multi` for\
         parallel execution of bamSitesToWig.py jobs')
@@ -80,7 +73,8 @@ def main(args):
                 print(f'no index file available for {fname}, calling pysam.index()')
                 pysam.index(fname)
             print('{}: running bamSitesToWig.py'.format(aln.filename.decode()))
-            bstw_cmd = ['python3', args['bstw_path'],
+            bstw_path = os.path.join(os.path.dirname(__file__), "bamSitesToWig.py")
+            bstw_cmd = ['python3', bstw_path,
                         '-i', aln.filename.decode(),
                         '-c', args['sizes'],
                         '-w', args['outdir'] + '/' + aln.filename.decode().split('/')[-1] + '.bw',
@@ -120,7 +114,7 @@ def main(args):
     os.chdir(cwd)
     
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Description of your program.')
+    parser = argparse.ArgumentParser(description='BAM preprocessing')
     parser.add_argument('-i','--bamdir', default='.', type=str, help='path to directory containing BAM files')
     parser.add_argument('-o', '--outdir', default= '.', help='output directory')
     parser.add_argument('-s', '--sizes',
@@ -143,7 +137,7 @@ if __name__ == '__main__':
     parser.add_argument('--index',
                         type=int,
                         default=1,
-                        help="deprecated--any bam files without indexes will now be indexed with pysam regardless of this argument")
-    parser.add_argument('--bstw_path', default='rocco/bamSitesToWig.py', help="path to bamSitesToWig.py script, included in ROCCO/pepatac by default")
+                        help="Deprecated -- backwards compatibility")
+    parser.add_argument('--bstw_path', default=None, help="Deprecated -- backwards compatibility")
     args = vars(parser.parse_args())
     main(args)
