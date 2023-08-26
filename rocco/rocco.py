@@ -104,7 +104,7 @@ def main():
     parser_subcommand_prep.add_argument('-L', '--interval_length', default=50)
     parser_subcommand_prep.add_argument('-c', '--cores', type=int, default=1)
     parser_subcommand_prep.add_argument('--multi', default=True)
-    parser_subcommand_prep.add_argument('--bstw_path', default='rocco/bamSitesToWig.py')
+    parser_subcommand_prep.add_argument('--bstw_path', default=None, help='deprecated')
 
     # 'budgets' subcommand parameters
     parser_subcommand_budgets = subparsers.add_parser("budgets", help='Compute a budget (maximum fraction of basepairs that can be selected as open) for each chromosome ranked by average read-density computed using the supplied BAM files (est_budgets.py)')
