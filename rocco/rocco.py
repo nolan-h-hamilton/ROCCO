@@ -8,6 +8,8 @@ GitHub: https://github.com/nolan-h-hamilton/ROCCO/
 
 Demo: https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb
 
+Documentation: https://nolan-h-hamilton.github.io/ROCCO/
+
 Paper: https://doi.org/10.1101/2023.05.24.542132
 
 
@@ -21,8 +23,13 @@ usage: rocco [-h] {gwide,chrom,prep,budgets,get_sizes} ...
     get_sizes           download sizes file for a genome in the ucsc genome registry
 options:
   -h, --help            show this help message and exit
-```
 
+note: 
+rocco gwide --> rocco/ROCCO_gwide.py
+rocco chrom --> rocco/ROCCO_chrom.py
+rocco prep --> rocco/prep_bams.py
+rocco budgets --> rocco/est_budgets.py
+```
 """
 #!/usr/bin/env python
 import os
