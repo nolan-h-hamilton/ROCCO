@@ -27,12 +27,11 @@ optional_dependencies_message = (
     "- 'ortools': Includes the PDLP first-order solver.\n"
 )
 
-# Include the message in the long description
 long_description += "\n\n" + optional_dependencies_message
 
 setup(
     name='rocco',
-    version='0.3.9',
+    version='0.3.10',
     author='Nolan Holt Hamilton',
     author_email='nolan.hamilton@unc.edu',
     description='Robust ATAC-seq Peak Calling for Many Samples via Convex Optimization',
@@ -52,9 +51,5 @@ setup(
         'console_scripts': [
             'rocco = rocco.rocco:main'
         ]
-    },
-    include_package_data=True,
-    package_data={
-        'rocco': ['*.py', '*.pl'],
     },
 )
