@@ -4,6 +4,7 @@ import sys
 import shlex
 import subprocess
 from pybedtools import BedTool
+
 def wrap_run(cmd):
     print(cmd)
     try:
@@ -58,7 +59,7 @@ chr22_bed = BedTool('tests/output/ROCCO_out_chr22_0.02_1.0_0.0_1.0_1.0_1.0.bed')
 merged_bed = chr21_bed.cat(chr22_bed)
 
 log('running ROCCO_gwide.py using tests/test_params.csv, store output in `tests/output` and combine', sys.argv[0])
-wrap_run('rocco gwide -p tests/test_params.csv --outdir tests/output/combined --combine tests/combined.bed -N 0 --multi')
+wrap_run('rocco gwide -p tests/test_params.csv --outdir tests/output/combined --combine tests/combined.bed -N 0 --multi 2')
 assert os.path.exists('tests/combined.bed')
 combined_bed = BedTool('tests/combined.bed')
 

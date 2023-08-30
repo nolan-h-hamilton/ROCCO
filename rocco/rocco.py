@@ -24,12 +24,18 @@ usage: rocco [-h] {gwide,chrom,prep,budgets,get_sizes} ...
 options:
   -h, --help            show this help message and exit
 
-note: 
-rocco gwide --> rocco/ROCCO_gwide.py
-rocco chrom --> rocco/ROCCO_chrom.py
-rocco prep --> rocco/prep_bams.py
-rocco budgets --> rocco/est_budgets.py
 ```
+
+Subcommand Documentation:
+    [`gwide`](https://nolan-h-hamilton.github.io/ROCCO/rocco/ROCCO_gwide.html)
+
+    [`chrom`](https://nolan-h-hamilton.github.io/ROCCO/rocco/ROCCO_chrom.html)
+
+    [`prep`](https://nolan-h-hamilton.github.io/ROCCO/rocco/prep_bams.html)
+
+    [`budgets`](https://nolan-h-hamilton.github.io/ROCCO/rocco/est_budgets.html)
+    
+
 """
 #!/usr/bin/env python
 import os
@@ -80,7 +86,7 @@ def main():
     parser_subcommand_gwide.add_argument('--identifiers', default=None)
     parser_subcommand_gwide.add_argument('--outdir', default='.')
     parser_subcommand_gwide.add_argument('--combine', default=None)
-    parser_subcommand_gwide.add_argument('--multi', default=False, action='store_true')
+    parser_subcommand_gwide.add_argument('--multi', default=1, type=int, help='number of simultaneous `rocco chrom` jobs to execute')
     parser_subcommand_gwide.add_argument('--verbose', default=False, action="store_true")
 
     # 'chrom' subcommand parameters

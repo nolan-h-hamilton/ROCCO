@@ -1,7 +1,51 @@
 """
 Run ROCCO on singe particular chromosome `--chrom`.
-This script is the workhorse for `rocco gwide` which generates and compiles
+This script is the workhorse for [`rocco gwide`](https://nolan-h-hamilton.github.io/ROCCO/rocco/ROCCO_gwide.html) which generates and compiles
 results for multiple chromosomes
+
+Arguments:
+    --chrom (str):
+        Chromosome identifier, e.g., --chrom chr1.
+
+    --wig_path (str, default=os.getcwd()):
+        Directory containing .wig files for each sample.
+
+    -N, --rr_iter (int, default=50):
+        Number of Repetitive Refinement (RR) iterations.
+
+    --verbose (bool, default=False):
+        Set to `True` for verbose logging.
+
+    -b, --budget (float, default=0.035):
+        Budget parameter (largest allowed fraction of selected bp).
+
+    -g, --gamma (float, default=1.0):
+        Gamma parameter (discontiguity penalty weight).
+
+    -t, --tau (float, default=0.0):
+        Tau parameter (enrichment threshold).
+
+    --c1 (float, default=1.0):
+        g_1 coefficient in score function (enrichment reward).
+
+    --c2 (float, default=1.0):
+        g_2 coefficient in score function (dispersion penalty).
+
+    --c3 (float, default=1.0):
+        g_3 coefficient in score function (local shift).
+
+    --solver (str, default="ECOS"):
+        Optimization software used to solve the main LP. `ECOS` is used by default.
+
+    --bed_format (int, default=6):
+        Format for output BED file. `3` for BED3 format and `6` for BED6 format.
+
+    --identifiers (str, default=None):
+        (optional) Filename containing identifiers for samples to include in the experiment. Each identifier should be a uniquely-identifying substring of the respective `.wig` sample. If not specified, all samples are used.
+
+    --outdir (str, default='.'):
+        Directory in which to store the output BED file.
+
 """
 
 import os

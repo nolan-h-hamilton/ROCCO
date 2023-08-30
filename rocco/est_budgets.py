@@ -4,6 +4,22 @@ across multiple BAM files in directory `--bamdir`. Output (stdout) is formatted
 for easy use as a parameter CSV file for `rocco gwide` (`--param_file`). Note: the
 output CSV assumes wig track directories are local. Adjust paths accordingly.
 
+Arguments:
+    -i, --bamdir (str):
+        Path to the directory containing .bam and .bai files.
+
+    -s, --sizes (str):
+        Path to the chromosome sizes file. Required.
+
+    -a (float, default=0.0):
+        Minimum allowed budget. This bound is ignored if `--desired_avg` is non-negative.
+
+    -b (float, default=0.05):
+        Maximum allowed budget. This bound is ignored if `--desired_avg` is non-negative.
+
+    --desired_avg (float, default=-1.0):
+        Scaled read densities (i.e., budgets) will average to this value if non-negative. Defaults to -1.
+
 
 Examples:
     ```
@@ -170,7 +186,7 @@ if __name__ == '__main__':
         Uses min-max normalization (default) on the read density vals to yield budgets in interval [a,b] OR scales the values by a\
         constant such that their mean is `desired_avg`.')
     parser.add_argument('-i', '--bamdir', type=str, help='Path to the directory containing .bam and .bai files')
-    parser.add_argument('-s', '--sizes', type=str, help='chromosome sizes file')
+    parser.add_argument('-s', '--sizes', type=str, help='chromosome sizes file', required=True)
     parser.add_argument('-a', type=float, default=0.0, help='Minimum allowed budget. This bound is ignored if\
         `--desired_avg` is non-negative.')
     parser.add_argument('-b', type=float, default=0.05, help='Maximum allowed budget. This bound is ignored if\
@@ -179,10 +195,5 @@ if __name__ == '__main__':
         average to this value if non-negative. Defaults to -1.')
     parser.add_argument('--index', default=False, action='store_true', help='invoke `--index` if BAM files are not yet indexed')
     args = vars(parser.parse_args())
-
-    if args['sizes'] is None:
-        print('rocco budgets: A .sizes file is required for the corresponding genome.')
-        print('\tUse the `get_sizes` subcommand or retrieve a sizes file manually')
-        raise Exception('a sizes file is required. Consider `rocco get_sizes -g [assembly]`')
 
     main(args)

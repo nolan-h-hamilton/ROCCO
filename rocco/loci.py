@@ -355,9 +355,8 @@ class Loci:
         if solver == "MOSEK":
             # https://docs.mosek.com/latest/pythonapi/parameters.html
             MOSEK_OPTS = {'MSK_IPAR_NUM_THREADS': 1,
-                        'MSK_DPAR_INTPNT_TOL_REL_GAP': .005,
-                        'MSK_IPAR_PRESOLVE_LINDEP_ABS_WORK_TRH':10,
-                        'MSK_IPAR_INTPNT_SOLVE_FORM':2}
+                        'MSK_DPAR_INTPNT_TOL_REL_GAP': .001,
+                        'MSK_IPAR_PRESOLVE_LINDEP_ABS_WORK_TRH':10}
             try:
                 problem.solve(cp.MOSEK, mosek_params=MOSEK_OPTS, verbose=verbose_)
             except Exception as ex:

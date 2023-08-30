@@ -1,7 +1,7 @@
 """
-Runs multiple `rocco chrom` jobs, which execute ROCCO  on each respective
+Runs multiple [`rocco chrom`](https://nolan-h-hamilton.github.io/ROCCO/rocco/ROCCO_chrom.html) jobs, which execute ROCCO  on each respective
 chromosome. Chromosome-specific parameters are collected in a CSV file specified
-with argument `-p --param_file`. Consider using the `budgets` subcommand
+with argument `-p --param_file`. Consider using the [`rocco budgets`](https://nolan-h-hamilton.github.io/ROCCO/rocco/est_budgets.html) subcommand
 to set chromosome-specific budgets based on read densities.
 
 If any parameter entry in the CSV file `--param_file` is set to `NULL`, the script uses the
@@ -37,6 +37,52 @@ pip install mosek
 After these steps, you should be able to specify MOSEK with
 with `--solver MOSEK`
 
+
+Arguments:
+    -p, --param_file (str):
+        Path to the parameter file containing per-chromosome parameters. Required.
+
+    -b, --budget (float, default=0.035):
+        Budget parameter (largest allowed fraction of selected bp) used for each chromosome with a `NULL` entry observed in `--param_file`.
+
+    -g, --gamma (float, default=1.0):
+        Gamma parameter (discontig. penalty weight) used for each chromosome with a `NULL` entry observed in `--param_file`.
+
+    -t, --tau (float, default=0.0):
+        Tau parameter (enrichment threshold) used for each chromosome with a `NULL` entry observed in `--param_file`.
+
+    --c1 (float, default=1.0):
+        g_1 coefficient in score function (enrichment reward) used for each chromosome with a `NULL` entry observed in `--param_file`.
+
+    --c2 (float, default=1.0):
+        g_2 coefficient in score function (dispersion penalty) used for each chromosome with a `NULL` entry observed in `--param_file`.
+
+    --c3 (float, default=1.0):
+        g_3 coefficient in score function (local shift) used for each chromosome with a `NULL` entry observed in `--param_file`.
+
+    -N, --rr_iter (int, default=50):
+        Number of RR iterations.
+
+    --solver (str, default="ECOS"):
+        Optimization software used to solve the main LP. `ECOS` is used by default.
+
+    --bed_format (int, default=3):
+        Specifies BED3 or BED6 format. Default is BED6. Generate BED3 output with `--bed_format 3`.
+
+    --identifiers (str, default=None):
+        (optional) a filename containing identifiers for samples to include in experiment. Each identifier should be a uniquely-identifying substring of the respective `.wig` sample. If not specified, all samples are used.
+
+    --outdir (str, default='.'):
+        Directory in which to store output bed files from the calls to rocco chrom.
+
+    --combine (str, default=None):
+        If not None, combine output bed files and store in the file specified with this parameter. ex: `--combine bedname.bed` concatenates the chromosome-specific bedfiles into `bedname.bed`.
+
+    --multi (int, default=1):
+        Run `--multi` rocco chrom jobs simultaneously to improve speed. May increase peak memory use.
+
+    --verbose (bool, default=False):
+        If specified, enable verbose mode.
 
 """
 
@@ -149,7 +195,7 @@ def main(args):
                          args['solver'], str(args['bed_format']),
                          args['verbose'], str(args['rr_iter']),
                          identifiers=args['identifiers'], outdir=args['outdir'])
-        if not args['multi']:
+        if args['multi'] == 1:
             try:
                 seq_process = subprocess.run(cmd.split(' '),
                                          capture_output=True, text=True, check=True)
@@ -160,8 +206,8 @@ def main(args):
         tmp.write(str(cmd + '\n'))
 
     tmp.flush()
-    if args['multi']:
-        rocco_aux.run_par(tmp.name, verbose=args['verbose'])
+    if args['multi'] > 1:
+        rocco_aux.run_par(tmp.name, threads=args['multi'], verbose=args['verbose'])
     tmp.close()
 
     if args['combine'] is not None:
@@ -199,7 +245,7 @@ if __name__ == "__main__":
                         output bed files and store in the file specified\
                         with this parameter. ex: `--combine bedname.bed` con-\
                         catenates the chromosome-specific bedfiles into `bedname.bed`.")
-    parser.add_argument('--multi', default=False, action='store_true', help='run rocco chrom jobs\
+    parser.add_argument('--multi', type=int, default=1, help='run `--multi` rocco chrom jobs\
         simultaneously to improve speed. May increase peak memory use.')
     parser.add_argument('--verbose', default=False, action="store_true")
     args = vars(parser.parse_args())
