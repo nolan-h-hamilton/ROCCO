@@ -31,6 +31,7 @@ load via: `conda activate rocco`.
 
 **Install ROCCO with pip** ([PyPI](https://pypi.org/project/rocco/))
 
+Alternatively, ROCCO can be obtained via pip/PyPi:
   ```
   pip install rocco --upgrade
   ```
@@ -40,7 +41,7 @@ System Dependencies: *samtools, bedtools, [UCSC KentUtils](http://hgdownload.soe
 #### Quick Start Demo
 For a quick intro, refer to the Jupyter notebook: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb).
 
-This demonstration offers an interactive overview of the ROCCO pipeline that can be executed by running the commands in each cell. Output from a previous session is included if you do not wish to run the pipeline yourself.
+This demonstration offers an interactive overview of the ROCCO pipeline that can be executed by running the commands in each cell. Output from a previous session is included if you do not wish to run the steps yourself.
 ## Documentation
 API Reference: https://nolan-h-hamilton.github.io/ROCCO/index.html
 ## Citation
