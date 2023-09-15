@@ -34,7 +34,6 @@ Subcommand Documentation:
     [`prep`](https://nolan-h-hamilton.github.io/ROCCO/rocco/prep_bams.html)
 
     [`budgets`](https://nolan-h-hamilton.github.io/ROCCO/rocco/est_budgets.html)
-    
 
 """
 #!/usr/bin/env python
@@ -73,7 +72,7 @@ def main():
     # 'gwide' subcommand parameters
     parser_subcommand_gwide = subparsers.add_parser("gwide", help='run rocco genome-wide/on multiple chromosomes (ROCCO_gwide.py)')
     parser_subcommand_gwide.add_argument('-p', '--param_file', required=True,
-                                         help='A CSV file specifying the parameters for each chromosome. See: https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo_params.csv')
+                                         help='A CSV file specifying the parameters for each chromosome. See: https://github.com/nolan-h-hamilton/ROCCO/blob/main/hg38_params.csv')
     parser_subcommand_gwide.add_argument('-b', '--budget', type=float, default=.035)
     parser_subcommand_gwide.add_argument('-g', '--gamma', type=float, default=1.0)
     parser_subcommand_gwide.add_argument('-t', '--tau', type=float, default=0.0)

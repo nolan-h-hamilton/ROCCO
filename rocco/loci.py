@@ -345,10 +345,10 @@ class Loci:
 
         # Refer to `Solve method options` at
         # https://www.cvxpy.org/tutorial/advanced/index.html
-        if solver == "ECOS":
+        if solver.lower() == "ecos":
             problem.solve(solver=cp.ECOS, verbose=verbose_)
 
-        if solver == "PDLP":
+        if solver.lower() == "pdlp":
             try:
                 problem.solve(solver=cp.PDLP, verbose=verbose_)
             except Exception as ex:
@@ -356,7 +356,7 @@ class Loci:
                     Can be installed via pip:\
                     'pip install ortools==9.3.10497'")
 
-        if solver == "MOSEK":
+        if solver.lower() == "mosek":
             # https://docs.mosek.com/latest/pythonapi/parameters.html
             MOSEK_OPTS = {'MSK_IPAR_NUM_THREADS': 1,
                         'MSK_DPAR_INTPNT_TOL_REL_GAP': .001,
