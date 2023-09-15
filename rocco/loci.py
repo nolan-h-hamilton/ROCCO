@@ -225,7 +225,7 @@ class Loci:
             v_vec.append(vel)
         return np.array(v_vec)
 
-    def score_loci(self, tau: float = 0.0, c1: float = 1.0, c2: float = 1.0, c3: float = 1.0) -> np.ndarray:
+    def score_loci(self, tau: float = 0.0, c1: float = 1.0, c2: float = 1.0, c3: float = 1.0, eps_l=1e-4) -> np.ndarray:
         r"""
         compute locus score vector, i.e., $\mathcal{S}(i), \forall i = 1 \ldots n$
         given the $K \times n$ signal matrix $\mathbf{S}_{chr}$.
@@ -237,6 +237,7 @@ class Loci:
             c2 (float): weight for second term in $\mathcal{S}(i)$,
                 (MAD dispersion) $g_2$
             c3 (float): weight for third term in  $\mathcal{S}(i)$, $g_3$
+            eps_l (float): prevent unnecessary selections in interior-point solutions
 
         Returns:
             np.ndarray: the $n$-dimensional score vector $\mathcal{S}(i), \forall i = 1 \ldots n$
@@ -250,7 +251,7 @@ class Loci:
         for i, val in enumerate(s_vec):
             if med_vec[i] <= tau:
                 s_vec[i] = 0
-        return s_vec
+        return s_vec - eps_l*np.ones(len(med_vec))
 
     def run_rr(self, lp_sol, N, loci_scores, budget, gam, eps=1e-5) -> np.ndarray:
         r"""
@@ -278,9 +279,8 @@ class Loci:
         if N <= 0:
             num_selected = np.sum(init_sol)
             if num_selected > math.floor(n*budget):
-                # this shouldn't really occur for reasonable `eps`,
-                # but a warning is included for completeness.
-                warnings.warn('floor solution with eps={eps} exceeds budget by {num_selected - math.floor(n*budget)} selections')
+                # this shouldn't really happen for reasonable `eps`
+                warnings.warn(f'floor solution with eps={eps} exceeds budget by {np.sum(init_sol) - math.floor(n*budget)} selections')
             return init_sol
 
         rr_sol = init_sol
@@ -299,6 +299,10 @@ class Loci:
             if is_feas and score < best_score:
                 rr_sol = ell_rand_n
                 best_score = score
+
+        if np.sum(rr_sol) > math.floor(n*budget):
+            # this shouldn't really happen for any reasonable `eps`
+            warnings.warn(f'floor solution with eps={eps} exceeds budget by {np.sum(rr_sol)- math.floor(n*budget)} selections')
 
         return rr_sol
 
