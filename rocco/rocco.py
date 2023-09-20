@@ -19,7 +19,7 @@ usage: rocco [-h] {gwide,chrom,prep,budgets,get_sizes} ...
     chrom               run ROCCO on a single chromosome (ROCCO_chrom.py)
     prep                Preprocess BAM files (prep_bams.py)
     budgets             Compute a budget (maximum fraction of basepairs that can be selected as 'open') for
-                        each chromosome ranked by average read-density observed in the supplied BAM files (est_budgets.py)
+                        each chromosome ranked by average read-density observed in samples (est_budgets.py)
     get_sizes           download sizes file for a genome in the ucsc genome registry
 options:
   -h, --help            show this help message and exit
@@ -119,14 +119,14 @@ def main():
     parser_subcommand_prep.add_argument('--bstw_path', default=None, help='deprecated')
 
     # 'budgets' subcommand parameters
-    parser_subcommand_budgets = subparsers.add_parser("budgets", help='Compute a budget for each chromosome ranked by average read-density observed in the supplied BAM files (est_budgets.py)')
-    parser_subcommand_budgets.add_argument('-i', '--bamdir', type=str)
+    parser_subcommand_budgets = subparsers.add_parser("budgets", help='Compute a budget for each chromosome ranked by read density (est_budgets.py). ')
+    parser_subcommand_budgets.add_argument('--wigdir', type=str)
     parser_subcommand_budgets.add_argument('-s', '--sizes', type=str)
-    parser_subcommand_budgets.add_argument('-a', type=float, default=0.0)
-    parser_subcommand_budgets.add_argument('-b', type=float, default=0.05)
-    parser_subcommand_budgets.add_argument('--desired_avg', type=float, default=-1.0)
-    parser_subcommand_budgets.add_argument('--index', default=False, action='store_true')
-
+    parser_subcommand_budgets.add_argument('--smean', type=float, default=.035)
+    parser_subcommand_budgets.add_argument('--samp_rate', type=float, default=0.10)
+    parser_subcommand_budgets.add_argument('-o', '--outfile', type=str, default='params.csv')
+    parser_subcommand_budgets.add_argument('-L','--locsize',type=int,default=50)
+    
     # 'get_sizes' subcommand parameters
     parser_subcommand_get_sizes = subparsers.add_parser("get_sizes", help="download sizes file for a genome in the ucsc genome registry")
     parser_subcommand_get_sizes.add_argument('-g', '--genome', type=str, default='hg38')

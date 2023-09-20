@@ -1,7 +1,9 @@
 """
 Runs multiple [`rocco chrom`](https://nolan-h-hamilton.github.io/ROCCO/rocco/ROCCO_chrom.html) jobs, which execute ROCCO  on each respective
 chromosome. Chromosome-specific parameters are collected in a CSV file specified
-with argument `-p --param_file`. Consider using the [`rocco budgets`](https://nolan-h-hamilton.github.io/ROCCO/rocco/est_budgets.html) subcommand
+with argument `-p --param_file`. See example param file below for hg38.
+
+Consider using the [`rocco budgets`](https://nolan-h-hamilton.github.io/ROCCO/rocco/est_budgets.html) subcommand
 to set chromosome-specific budgets based on read densities.
 
 If any parameter entry in the CSV file `--param_file` is set to `NULL`, the script uses the
@@ -23,26 +25,27 @@ Generous free trials are also available for commercial use.
 After obtaining the license (`mosek.lic`, or something similar), create a folder `mosek` in
 your home directory and move the license file to it.
 
-```
-mkdir ~/mosek
-mv mosek.lic ~/mosek
-```
+    ```
+    mkdir ~/mosek
+    mv mosek.lic ~/mosek
+    ```
 
 Then, run:
 
-```
-pip install mosek
-```
+    ```
+    pip install mosek
+    ```
 
-After these steps, you should be able to specify MOSEK with
-with `--solver MOSEK`
+    After these steps, you should be able to specify MOSEK with
+    with `--solver MOSEK`
 
 
 Arguments:
     -p, --param_file (str):
         Path to the parameter file containing per-chromosome parameters. Required.
         See https://github.com/nolan-h-hamilton/ROCCO/blob/main/hg38_params.csv for an example
-        with chromosome-specific budgets on hg38.
+        with chromosome-specific budgets on hg38. `rocco budgets` can also be used to compute 
+        budgets and produce a valid -p/--param_file.
 
     -b, --budget (float, default=0.035):
         Budget parameter (largest allowed fraction of selected bp) used for each chromosome with a `NULL` entry observed in `--param_file`.
@@ -87,34 +90,34 @@ Arguments:
         If specified, enable verbose mode.
 
 
-*Example hg38 `-p/--param_file`*
-```
-chromosome,input_path,budget,gamma,tau,c1,c2,c3
-chr1,tracks_chr1,0.035,NULL,NULL,NULL,NULL,NULL
-chr2,tracks_chr2,0.03,NULL,NULL,NULL,NULL,NULL
-chr3,tracks_chr3,0.03,NULL,NULL,NULL,NULL,NULL
-chr4,tracks_chr4,0.02,NULL,NULL,NULL,NULL,NULL
-chr5,tracks_chr5,0.03,NULL,NULL,NULL,NULL,NULL
-chr6,tracks_chr6,0.035,NULL,NULL,NULL,NULL,NULL
-chr7,tracks_chr7,0.035,NULL,NULL,NULL,NULL,NULL
-chr8,tracks_chr8,0.03,NULL,NULL,NULL,NULL,NULL
-chr9,tracks_chr9,0.03,NULL,NULL,NULL,NULL,NULL
-chr10,tracks_chr10,0.035,NULL,NULL,NULL,NULL,NULL
-chr11,tracks_chr11,0.04,NULL,NULL,NULL,NULL,NULL
-chr12,tracks_chr12,0.04,NULL,NULL,NULL,NULL,NULL
-chr13,tracks_chr13,0.025,NULL,NULL,NULL,NULL,NULL
-chr14,tracks_chr14,0.03,NULL,NULL,NULL,NULL,NULL
-chr15,tracks_chr15,0.035,NULL,NULL,NULL,NULL,NULL
-chr16,tracks_chr16,0.04,NULL,NULL,NULL,NULL,NULL
-chr17,tracks_chr17,0.055,NULL,NULL,NULL,NULL,NULL
-chr18,tracks_chr18,0.025,NULL,NULL,NULL,NULL,NULL
-chr19,tracks_chr19,0.06,NULL,NULL,NULL,NULL,NULL
-chr20,tracks_chr20,0.04,NULL,NULL,NULL,NULL,NULL
-chr21,tracks_chr21,0.03,NULL,NULL,NULL,NULL,NULL
-chr22,tracks_chr22,0.04,NULL,NULL,NULL,NULL,NULL
-chrX,tracks_chrX,0.02,NULL,NULL,NULL,NULL,NULL
-chrY,tracks_chrY,0.01,NULL,NULL,NULL,NULL,NULL
-```
+Example hg38 `-p/--param_file`:
+    ```
+    chromosome,input_path,budget,gamma,tau,c1,c2,c3
+    chr1,tracks_chr1,0.035,NULL,NULL,NULL,NULL,NULL
+    chr2,tracks_chr2,0.03,NULL,NULL,NULL,NULL,NULL
+    chr3,tracks_chr3,0.03,NULL,NULL,NULL,NULL,NULL
+    chr4,tracks_chr4,0.02,NULL,NULL,NULL,NULL,NULL
+    chr5,tracks_chr5,0.03,NULL,NULL,NULL,NULL,NULL
+    chr6,tracks_chr6,0.035,NULL,NULL,NULL,NULL,NULL
+    chr7,tracks_chr7,0.035,NULL,NULL,NULL,NULL,NULL
+    chr8,tracks_chr8,0.03,NULL,NULL,NULL,NULL,NULL
+    chr9,tracks_chr9,0.03,NULL,NULL,NULL,NULL,NULL
+    chr10,tracks_chr10,0.035,NULL,NULL,NULL,NULL,NULL
+    chr11,tracks_chr11,0.04,NULL,NULL,NULL,NULL,NULL
+    chr12,tracks_chr12,0.04,NULL,NULL,NULL,NULL,NULL
+    chr13,tracks_chr13,0.025,NULL,NULL,NULL,NULL,NULL
+    chr14,tracks_chr14,0.03,NULL,NULL,NULL,NULL,NULL
+    chr15,tracks_chr15,0.035,NULL,NULL,NULL,NULL,NULL
+    chr16,tracks_chr16,0.04,NULL,NULL,NULL,NULL,NULL
+    chr17,tracks_chr17,0.055,NULL,NULL,NULL,NULL,NULL
+    chr18,tracks_chr18,0.025,NULL,NULL,NULL,NULL,NULL
+    chr19,tracks_chr19,0.06,NULL,NULL,NULL,NULL,NULL
+    chr20,tracks_chr20,0.04,NULL,NULL,NULL,NULL,NULL
+    chr21,tracks_chr21,0.03,NULL,NULL,NULL,NULL,NULL
+    chr22,tracks_chr22,0.04,NULL,NULL,NULL,NULL,NULL
+    chrX,tracks_chrX,0.02,NULL,NULL,NULL,NULL,NULL
+    chrY,tracks_chrY,0.01,NULL,NULL,NULL,NULL,NULL
+    ```
 """
 
 import os

@@ -325,7 +325,8 @@ class Loci:
                 \texttt{floor\_eps} procedure is applied...
                 See `Loci.run_rr()`
             verbose_ (bool): Verbosity flag for the solver
-            solver (str): Defaults to `ECOS`.
+            solver (str): Defaults to `ECOS`. `MOSEK` is a commercial grade solver that is also supported.
+                `PDLP` is a first-order solver suited for especially large problems.
 
         Returns:
             cp.Problem: a CVXPY problem object
