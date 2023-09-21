@@ -10,35 +10,35 @@ chromosome, converted to human-readable .wig format, and then placed into direct
 The resulting `tracks_chr[]` directories can then be supplied to rocco chrom
 via `--wig_path` to construct the signal matrix $\mathbf{S}_{chr}$.
 
-```
-
-Example:
-
+Example Usage:
     Run on toy data in `tests/data`:
     ```
     rocco prep --bamdir tests/data -s tests/data/test_sizes.sizes
     ```
+
 Arguments:
-    -i, --bamdir (str, default='.'):
+    - `-i, --bamdir (str, default='.')`:
         Path to the directory containing BAM files.
 
-    -o, --outdir (str, default='.'):
+    - `-o, --outdir (str, default='.')`:
         Output directory.
 
-    -s, --sizes (str, default='hg38'):
-        A path to a chromosome sizes file, or an assembly name.
+    - `-s, --sizes (str, default='hg38')`:
+        A path to a chromosome sizes file or an assembly name.
 
-    -L, --interval_length (int, default=50):
+    - `-L, --interval_length (int, default=50)`:
         Wiggle track fixed interval length.
 
-    -c, --cores (int, default=1):
+    - `-c, --cores (int, default=1)`:
         The `bamSitesToWig.py` cores parameter. Altering this parameter to use >1 core may cause issues on Mac OS.
 
-    --multi (bool, default=True):
+    - `--multi (bool, default=True)`:
         Set to `False` to run `bamSitesToWig` jobs sequentially. Note that this definition of `--multi` differs from `ROCCO_gwide.py`. 
 
-    --index (int, default=1):
+    - `--index (int, default=1)`:
         Deprecated - backwards compatibility. Now, if BAM files are not indexed, pysam.index() is called by default. Before, this behavior was specified with this argument.
+
+*Note*: Several alternative protocols can yield the same results, e.g., `deeptools bamCoverage`, `bedtools`, etc. but have not been tested currently.
 
 """
 

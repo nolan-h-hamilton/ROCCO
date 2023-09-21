@@ -1,5 +1,5 @@
 """
-Run ROCCO on singe particular chromosome `--chrom`.
+Run ROCCO on chromosome `--chrom`.
 This script is the workhorse for [`rocco gwide`](https://nolan-h-hamilton.github.io/ROCCO/rocco/ROCCO_gwide.html) which generates and compiles
 results for multiple chromosomes
 
