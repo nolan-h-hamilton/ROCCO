@@ -217,11 +217,15 @@ def main(args):
     tmp = tempfile.NamedTemporaryFile(mode="w+")
     for i, arglist in enumerate(chrom_args):
         arglist = [str(x) for x in arglist]
+        if not(os.path.exists(arglist[1]) and os.listdir(arglist[1]) > 0):
+            print(f'directory {arglist[1]} does not exist or is empty...skipping')
+            continue
         cmd = call_rocco(arglist[0], arglist[1], arglist[2], arglist[3],
                          arglist[4], arglist[5], arglist[6], arglist[7],
                          args['solver'], str(args['bed_format']),
                          args['verbose'], str(args['rr_iter']),
                          identifiers=args['identifiers'], outdir=args['outdir'])
+
         if args['multi'] == 1:
             try:
                 seq_process = subprocess.run(cmd.split(' '),
@@ -230,6 +234,7 @@ def main(args):
             except Exception as ex:
                 print(ex)
                 raise ex
+
         tmp.write(str(cmd + '\n'))
 
     tmp.flush()
