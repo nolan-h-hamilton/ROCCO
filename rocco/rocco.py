@@ -190,8 +190,8 @@ def main():
 
     args = vars(parser.parse_args())
     if args['command'] == "gwide":
+        args_cpy = deepcopy(args)
         if args['coldata'] is not None:
-            args_cpy = deepcopy(args)
             ind_files = parse_coldata(args['coldata'],args['group_column'],args['sample_column'],args['split_sex'])
             bed_files = []
             for file_ in ind_files:

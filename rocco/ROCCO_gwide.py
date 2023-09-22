@@ -217,7 +217,7 @@ def main(args):
     tmp = tempfile.NamedTemporaryFile(mode="w+")
     for i, arglist in enumerate(chrom_args):
         arglist = [str(x) for x in arglist]
-        if not(os.path.exists(arglist[1]) and os.listdir(arglist[1]) > 0):
+        if not os.path.exists(arglist[1]) or not len(os.listdir(arglist[1])) > 0:
             print(f'directory {arglist[1]} does not exist or is empty...skipping')
             continue
         cmd = call_rocco(arglist[0], arglist[1], arglist[2], arglist[3],
