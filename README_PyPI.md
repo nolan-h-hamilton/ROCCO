@@ -1,4 +1,4 @@
-# [R]obust [O]pen [C]hromatin Dection via [C]onvex [O]ptimization
+# [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
 <p align="center">
 <img width="472" alt="logo" src="https://github.com/nolan-h-hamilton/ROCCO/assets/57746191/170478f1-5820-4056-b315-3c8dee3603d9">
 
