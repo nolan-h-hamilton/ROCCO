@@ -19,6 +19,16 @@ Underlying ROCCO is a constrained optimization problem that can be solved effici
 
 ROCCO is written for compatibility with any unix variant: MacOS, linux, etc.
 
+
+**Install ROCCO with pip** ([PyPI](https://pypi.org/project/rocco/))
+
+ROCCO can be installed with pip:
+  ```
+  pip install rocco --upgrade
+  ```
+
+System Dependencies: *samtools, bedtools, [UCSC KentUtils](http://hgdownload.soe.ucsc.edu/admin/exe/): bigWigToWig, wigToBigWig, bigWigCat*
+
 **Conda**
 
 If using [conda](https://anaconda.org), ROCCO and all dependencies can be installed in a virtual environment specified in [rocco_conda.yml](https://github.com/nolan-h-hamilton/ROCCO/blob/main/rocco_conda.yml):
@@ -28,15 +38,6 @@ conda env create -n rocco --file rocco_conda.yml
 ```
 
 load via: `conda activate rocco`.
-
-**Install ROCCO with pip** ([PyPI](https://pypi.org/project/rocco/))
-
-Alternatively, ROCCO can be obtained via pip/PyPi:
-  ```
-  pip install rocco --upgrade
-  ```
-
-System Dependencies: *samtools, bedtools, [UCSC KentUtils](http://hgdownload.soe.ucsc.edu/admin/exe/): bigWigToWig, wigToBigWig, bigWigCat*
 
 #### Quick Start Demo
 For a quick intro, refer to the Jupyter notebook: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb).

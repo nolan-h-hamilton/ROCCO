@@ -20,25 +20,17 @@ A note on `--solver`: The default solver is ECOS, which is free, open-source, an
 conveniently installed alongside cvxpy. ECOS should prove sufficient in general, but
 using a commerical (e.g., MOSEK) solver can improve speed of execution. *Free* academic
 MOSEK licenses can be obtained *instantly* with a valid .edu email address: https://www.mosek.com/products/academic-licenses/
-Generous free trials are also available for commercial use.
+Generous free trials are also available for commercial use. The PDLP first-order solver is also
+supported and is suited for especially large problems (e.g., large $n$).
 
-After obtaining the license (`mosek.lic`, or something similar), create a folder `mosek` in
-your home directory and move the license file to it.
+Note, if you are performing differential analysis with considerably imbalanced classes, consider
+running running ROCCO separately for each class's samples and merging the resulting peak files
+before creating a count matrix. This can be done by invoking the `--coldata` (rocco.parse_coldata)
+parameter and specifying the columns containing the relevant sample IDs, group names, etc.:
+    `--group_column`, `--sample_column`, (optional) `--split_sex`
 
-    ```
-    mkdir ~/mosek
-    mv mosek.lic ~/mosek
-    ```
-
-Then, run:
-
-    ```
-    pip install mosek
-    ```
-
-    After these steps, you should be able to specify MOSEK with
-    with `--solver MOSEK`
-
+Alternatively, you can manually create text files with sample IDs for each class and execute
+multiple `rocco gwide` with `--identifiers <class_txtfile>`.
 
 Arguments:
     -p, --param_file (str):
@@ -125,6 +117,7 @@ import sys
 import argparse
 import subprocess
 import tempfile
+import pandas as pd
 from . import rocco_aux
 
 def get_params(param_file: str, budget: float, gamma: float, tau: float,
@@ -224,11 +217,15 @@ def main(args):
     tmp = tempfile.NamedTemporaryFile(mode="w+")
     for i, arglist in enumerate(chrom_args):
         arglist = [str(x) for x in arglist]
+        if not os.path.exists(arglist[1]) or not len(os.listdir(arglist[1])) > 0:
+            print(f'directory {arglist[1]} does not exist or is empty...skipping')
+            continue
         cmd = call_rocco(arglist[0], arglist[1], arglist[2], arglist[3],
                          arglist[4], arglist[5], arglist[6], arglist[7],
                          args['solver'], str(args['bed_format']),
                          args['verbose'], str(args['rr_iter']),
                          identifiers=args['identifiers'], outdir=args['outdir'])
+
         if args['multi'] == 1:
             try:
                 seq_process = subprocess.run(cmd.split(' '),
@@ -237,6 +234,7 @@ def main(args):
             except Exception as ex:
                 print(ex)
                 raise ex
+
         tmp.write(str(cmd + '\n'))
 
     tmp.flush()
@@ -252,7 +250,9 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--param_file',
-                        required=True)
+                        required=True, help='Path to the parameter file containing per-chromosome parameters. Required.\
+                        \nSee https://github.com/nolan-h-hamilton/ROCCO/blob/main/hg38_params.csv for an example with chromosome-specific budgets on hg38.\n\
+                        `rocco budgets` can also be used to compute chromosome-specific budgets given the input wig files and produces a valid -p/--param_file.')
     parser.add_argument('-b', '--budget', type=float, default=.035, help='budget parameter (largest allowed fraction of selected bp) used for each chromosome with a `NULL` entry observed in `--param_file`')
     parser.add_argument('-g', '--gamma', type=float, default=1.0, help='gamma parameter (discontig. penalty weight) used for each chromosome  with a `NULL` entry observed in `--param_file`')
     parser.add_argument('-t', '--tau', type=float, default=0.0, help='tau parameter (enrichment threshold) used for each chromosome  with a `NULL` entry observed in `--param_file`')
