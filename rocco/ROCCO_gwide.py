@@ -125,6 +125,7 @@ import sys
 import argparse
 import subprocess
 import tempfile
+import pandas as pd
 from . import rocco_aux
 
 def get_params(param_file: str, budget: float, gamma: float, tau: float,

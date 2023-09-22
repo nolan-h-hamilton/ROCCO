@@ -39,6 +39,7 @@ Subcommand Documentation:
 #!/usr/bin/env python
 import os
 import argparse
+import subprocess
 from . import rocco_aux
 from . import ROCCO_chrom
 from . import ROCCO_gwide
@@ -46,6 +47,69 @@ from . import prep_bams
 from . import est_budgets
 from . import locus
 from . import loci
+import pandas as pd
+from copy import deepcopy
+
+
+def sort_bed_files(bed_files):
+    for bed_file in bed_files:
+        sorted_file = f"{bed_file}.sorted"
+        subprocess.run(f'sort -k1,1 -k2,2n {bed_file} > {sorted_file}', shell=True, check=True)
+        os.replace(sorted_file, bed_file)
+
+def merge_gwide_beds(bed_files, output_file='merged_gwide.bed'):
+    sort_bed_files(bed_files)
+    input_files_str = ' '.join(bed_files)
+    bedtools_cmd = f'bedtools cat -i {input_files_str} | bedtools merge -i - > {output_file}'
+    subprocess.run(bedtools_cmd, shell=True, check=True)
+    print(f'merged output: {output_file}')
+
+
+def parse_coldata(coldata_file: str, group_column: str, sample_column: str, split_sex: str = None):
+    """
+    Given a metadata file for the samples, create text files containing sample names for each group
+
+    These created textfiles are then used for the `--identifiers` argument of `rocco gwide`/`rocco chrom`
+
+    The entries in `sample_column` should uniquely identify the corresponding `.wig` tracks generated with `rocco prep`.
+        Ideally, they are just the stripped names of the corresponding BAM files supplied to `rocco prep`.
+
+    Args:
+        coldata_file (str): path to the colData file in CSV format
+        group_column (str):  column containing group label
+        sample_column (str): column containing sample names
+        split_sex (str): if not None, create separate text files for each sex within each group
+            based on the specified column name.
+
+    Returns:
+        List: a list of the file names created
+    """
+    created_files = []
+    try:
+        coldata_df = pd.read_csv(coldata_file)
+        group_names = coldata_df[group_column].unique()
+        for group_name in group_names:
+            group_samples = coldata_df[coldata_df[group_column] == group_name][sample_column]
+            file_name = f'{group_name}.txt'
+            if split_sex is None:
+                print(f'writing {file_name}')
+                with open(file_name, 'w') as file:
+                    file.write('\n'.join(group_samples))
+                created_files.append(file_name)
+            if split_sex is not None:
+                for sex in coldata_df[split_sex].unique():
+                    sex_samples = coldata_df[
+                        (coldata_df[group_column] == group_name) &
+                        (coldata_df[split_sex] == sex)
+                    ][sample_column]
+                    sex_file_name = f'{group_name}_{sex}.txt'
+                    print(f'writing {sex_file_name}')
+                    with open(sex_file_name, 'w') as file:
+                        file.write('\n'.join(sex_samples))
+                    created_files.append(sex_file_name)
+    except Exception as e:
+        print(f"parsing coldata failed:\n{e}")
+    return created_files
 
 
 def subcommand_chrom(args):
@@ -87,6 +151,10 @@ def main():
     parser_subcommand_gwide.add_argument('--combine', default=None)
     parser_subcommand_gwide.add_argument('--multi', default=1, type=int, help='number of simultaneous `rocco chrom` jobs to execute')
     parser_subcommand_gwide.add_argument('--verbose', default=False, action="store_true")
+    parser_subcommand_gwide.add_argument('--coldata', default=None, help='if not None, parse coldata file to create group-specific `--identifiers` files on which to run rocco')
+    parser_subcommand_gwide.add_argument('--group_column', default='group', help='column in coldata file containing group labels')
+    parser_subcommand_gwide.add_argument('--sample_column', default='sample', help='column in coldata file containing sample labels')
+    parser_subcommand_gwide.add_argument('--split_sex', default='sex', help='(optional) column in coldata file containing sex labels')
 
     # 'chrom' subcommand parameters
     parser_subcommand_chrom = subparsers.add_parser("chrom", help='run ROCCO on a single chromosome (ROCCO_chrom.py)')
@@ -126,14 +194,34 @@ def main():
     parser_subcommand_budgets.add_argument('--samp_rate', type=float, default=0.10)
     parser_subcommand_budgets.add_argument('-o', '--outfile', type=str, default='params.csv')
     parser_subcommand_budgets.add_argument('-L','--locsize',type=int,default=50)
-    
+
     # 'get_sizes' subcommand parameters
     parser_subcommand_get_sizes = subparsers.add_parser("get_sizes", help="download sizes file for a genome in the ucsc genome registry")
     parser_subcommand_get_sizes.add_argument('-g', '--genome', type=str, default='hg38')
 
     args = vars(parser.parse_args())
     if args['command'] == "gwide":
-        subcommand_gwide(args)
+        if args['coldata'] is not None:
+            args_cpy = deepcopy(args)
+            ind_files = parse_coldata(args['coldata',args['group_column'],args['group_column'],args['split_sex']])
+            bed_files = []
+            for file_ in ind_files:
+                args = args_cpy
+                print(f'rocco_gwide: {file_}')
+                args['identifiers'] = file_
+                args['outdir'] = file_ + '_dir'
+                args['combine'] = file_ + '.bed'
+                bed_files.append(file_ + '.bed')
+                subcommand_gwide(args)
+            try:
+                merge_gwide_beds(bed_files)
+            except Exception as e:
+                print(e)
+                print('Failed to merge output from group-specific rocco runs. Is bedtools installed?')
+        else:
+            args = args_cpy
+            subcommand_gwide(args)
+
     elif args['command'] == "chrom":
         subcommand_chrom(args)
     elif args['command'] == 'prep':
