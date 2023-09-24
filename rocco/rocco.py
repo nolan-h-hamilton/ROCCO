@@ -48,7 +48,6 @@ from . import est_budgets
 from . import locus
 from . import loci
 import pandas as pd
-from copy import deepcopy
 
 
 def parse_coldata(coldata_file: str, group_column: str, sample_column: str, split_sex: str = None, delimiter='\t'):
@@ -97,16 +96,33 @@ def parse_coldata(coldata_file: str, group_column: str, sample_column: str, spli
                         file.write('\n'.join(sex_samples))
                     created_files.append(sex_file_name)
     except Exception as e:
-        print(f"parsing coldata failed:\n{e}.\nEnsure group,sample,sex column names are correctly specified.")
+        print(f"parsing coldata failed:\n{e}.\nEnsure column names are correctly specified.")
     return created_files
-
 
 def subcommand_chrom(args):
     ROCCO_chrom.main(args)
     return True
 
 def subcommand_gwide(args):
-    ROCCO_gwide.main(args)
+    if args['coldata'] is not None:
+        ind_files = parse_coldata(args['coldata'],
+                                  args['group_column'],
+                                  args['sample_column'],
+                                  args['split_sex'])
+        bed_files = []
+        for file_ in ind_files:
+            temp_args = args.copy()
+            print(f'rocco_gwide: {file_}')
+            temp_args['identifiers'] = file_
+            temp_args['outdir'] = file_ + '_dir'
+            temp_args['combine'] = file_ + '.bed'
+            bed_files.append(temp_args['combine'])
+            ROCCO_gwide.main(temp_args)
+        
+        print(f'completed: {bed_files}')
+    else:
+        ROCCO_gwide.main(args)
+
     return True
 
 def subcommand_prep(args):
@@ -190,23 +206,7 @@ def main():
 
     args = vars(parser.parse_args())
     if args['command'] == "gwide":
-        args_cpy = deepcopy(args)
-        if args['coldata'] is not None:
-            ind_files = parse_coldata(args['coldata'],args['group_column'],args['sample_column'],args['split_sex'])
-            bed_files = []
-            for file_ in ind_files:
-                args = args_cpy
-                print(f'rocco_gwide: {file_}')
-                args['identifiers'] = file_
-                args['outdir'] = file_ + '_dir'
-                args['combine'] = file_ + '.bed'
-                bed_files.append(file_ + '.bed')
-                subcommand_gwide(args)
-            print(f'completed: {bed_files}')
-        else:
-            args = args_cpy
-            subcommand_gwide(args)
-
+        subcommand_gwide(args)
     elif args['command'] == "chrom":
         subcommand_chrom(args)
     elif args['command'] == 'prep':

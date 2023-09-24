@@ -80,7 +80,7 @@ def main(args):
                         '-r', str(args['interval_length']),
                         '-m', 'atac',
                         '-p', str(args['cores']),
-                        '--variable-step']
+                        '--variable-step','--limit', " ".join(list(rocco_aux.parse_size_file(args['sizes']).keys())) ]
             if not args['multi']:
                 # if `--multi False
                 subprocess.run(bstw_cmd,

@@ -21,16 +21,7 @@ conveniently installed alongside cvxpy. ECOS should prove sufficient in general,
 using a commerical (e.g., MOSEK) solver can improve speed of execution. *Free* academic
 MOSEK licenses can be obtained *instantly* with a valid .edu email address: https://www.mosek.com/products/academic-licenses/
 Generous free trials are also available for commercial use. The PDLP first-order solver is also
-supported and is suited for especially large problems (e.g., large $n$).
-
-Note, if you are performing differential analysis with considerably imbalanced classes, consider
-running running ROCCO separately for each class's samples and merging the resulting peak files
-before creating a count matrix. This can be done by invoking the `--coldata` (rocco.parse_coldata)
-parameter and specifying the columns containing the relevant sample IDs, group names, etc.:
-    `--group_column`, `--sample_column`, (optional) `--split_sex`
-
-Alternatively, you can manually create text files with sample IDs for each class and execute
-multiple `rocco gwide` with `--identifiers <class_txtfile>`.
+supported and is suited for especially large problems (e.g., large $n$/small $L$).
 
 Arguments:
     -p, --param_file (str):
@@ -282,5 +273,10 @@ if __name__ == "__main__":
     parser.add_argument('--multi', type=int, default=1, help='run `--multi` rocco chrom jobs\
         simultaneously to improve speed. May increase peak memory use.')
     parser.add_argument('--verbose', default=False, action="store_true")
+    parser.add_argument('--coldata', default=None, help='if not None, parse coldata file to create group-specific `--identifiers` files on which to run rocco')
+    parser.add_argument('--group_column', default='group', help='column in coldata file containing group labels. Only used if --coldata is not None')
+    parser.add_argument('--sample_column', default='sample', help='column in coldata file containing sample labels. Only used if --coldata is not None')
+    parser.add_argument('--split_sex', default=None, help='column in coldata file containing sex labels. Only used if --coldata is not None')
+
     args = vars(parser.parse_args())
     main(args)
