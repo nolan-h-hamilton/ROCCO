@@ -1,50 +1,39 @@
 """
 Run ROCCO on chromosome `--chrom`.
-This script is the workhorse for [`rocco gwide`](https://nolan-h-hamilton.github.io/ROCCO/rocco/ROCCO_gwide.html) which generates and compiles
+
+This script is the workhorse for [`rocco gwide`](https://nolan-h-hamilton.github.io/ROCCO/rocco/gwide.html) which generates and combines
 results for multiple chromosomes
 
-Arguments:
-    --chrom (str):
-        Chromosome identifier, e.g., --chrom chr1.
+Parameters:
+    --chrom (str): Specifies the chromosome, e.g., `--chrom chr1`.
+    --start (int): Beginning nucleotide position (default: infer from wiggle files).
+    --end (int): Ending nucleotide position (default: infer from wiggle files).
+    --locus_size (int): Size of loci (L parameter) (default: infer from wiggle files).
+    --wig_path (str): Directory containing chromosome-specific .wig files for each sample (default: current working directory).
+    -N, --rr_iter (int): Number of RR iterations (default: 50).
+    --verbose (bool): Set to `True` for verbose logging (default: False).
+    -b, --budget (float): Budget parameter (upper-bound on the fraction of base pairs selected as 'open') (default: 0.035).
+    -g, --gamma (float): Gamma parameter (discontinuity penalty weight) (default: 1.0).
+    -t, --tau (float): Tau parameter (enrichment threshold) (default: 0.0).
+    --c1 (float): g_1 coefficient in the score function (enrichment reward) (default: 1.0).
+    --c2 (float): g_2 coefficient in the score function (dispersion penalty) (default: 1.0).
+    --c3 (float): g_3 coefficient in the score function (local shift) (default: 1.0).
+    --solver (str): Optimization software used to solve the main LP. `ECOS` is used by default (default: "ECOS").
+    --bed_format (int): BED format, `3` for BED3 format and `6` for BED6 format (default: 6).
+    --identifiers (str): (Optional) a filename containing identifiers for samples to include in the experiment. Each identifier should be a uniquely-identifying substring of the respective `.wig` sample. If not specified, all samples are used.
+    --outdir (str): Directory in which to store the output bed file (default: current directory).
 
-    --wig_path (str, default=os.getcwd()):
-        Directory containing .wig files for each sample.
+Input:
+    `--wig_path`: path to `tracks_chr[]` directory containing a wiggle track over `--chrom` for each sample
 
-    -N, --rr_iter (int, default=50):
-        Number of Repetitive Refinement (RR) iterations.
+Output:
+    BED file containing ROCCO's results for `--chrom`
 
-    --verbose (bool, default=False):
-        Set to `True` for verbose logging.
 
-    -b, --budget (float, default=0.035):
-        Budget parameter (largest allowed fraction of selected bp).
-
-    -g, --gamma (float, default=1.0):
-        Gamma parameter (discontiguity penalty weight).
-
-    -t, --tau (float, default=0.0):
-        Tau parameter (enrichment threshold).
-
-    --c1 (float, default=1.0):
-        g_1 coefficient in score function (enrichment reward).
-
-    --c2 (float, default=1.0):
-        g_2 coefficient in score function (dispersion penalty).
-
-    --c3 (float, default=1.0):
-        g_3 coefficient in score function (local shift).
-
-    --solver (str, default="ECOS"):
-        Optimization software used to solve the main LP. `ECOS` is used by default.
-
-    --bed_format (int, default=6):
-        Format for output BED file. `3` for BED3 format and `6` for BED6 format.
-
-    --identifiers (str, default=None):
-        (optional) Filename containing identifiers for samples to include in the experiment. Each identifier should be a uniquely-identifying substring of the respective `.wig` sample. If not specified, all samples are used.
-
-    --outdir (str, default='.'):
-        Directory in which to store the output BED file.
+Example [from demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb):
+    ```
+    rocco chrom --wig_path tracks_chr21 --chrom chr21
+    ```
 
 """
 
@@ -158,7 +147,7 @@ def read_wig(wig_file, start=0, end=10**10, locus_size=50):
         loci: list of starting nucleotide positions for each locus
         signal: enrichment signal value at each locus in `loci`
     """
-    log("ROCCO_chrom: reading wig file {}".format(wig_file))
+    log("rocco chrom: reading wig file {}".format(wig_file))
     loci = []
     signal = []
     with open(wig_file, mode='r', encoding='utf-8') as wig:
@@ -289,7 +278,7 @@ def log(text, verbose=True) -> None:
 
 
 def main(args):
-    log('ROCCO_chrom: args', args['verbose'])
+    log('rocco chrom: args', args['verbose'])
     log(args, args['verbose'])
 
     if args['locus_size'] == -1:
@@ -304,7 +293,7 @@ def main(args):
         warnings.warn('Only BED3 and BED6 are supported--setting to BED3')
         args['bed_format'] = 6
 
-    log("ROCCO_chrom: inferred args", args['verbose'])
+    log("rocco chrom: inferred args", args['verbose'])
     log(args, args['verbose'])
 
     # collect wig files for each replicate/sample for `--chrom`
@@ -327,7 +316,7 @@ def main(args):
                                  end=args['end'],
                                  locus_size=args['locus_size'])
 
-    log("ROCCO_chrom: building Loci object", args['verbose'])
+    log("rocco chrom: building Loci object", args['verbose'])
     InitLoci = Loci()
     for i, loc in enumerate(signal_matrix.columns):
         size_ = args['locus_size']
@@ -338,7 +327,7 @@ def main(args):
     del signal_matrix
     gc.collect()
 
-    log("ROCCO_chrom: solving for optimal solution", args['verbose'])
+    log("rocco chrom: solving for optimal solution", args['verbose'])
     InitLoci.rocco_lp(budget=args['budget'],
                         gam=args['gamma'],
                         tau=args['tau'],
@@ -349,7 +338,7 @@ def main(args):
                         solver=args['solver'],
                         N=args['rr_iter'])
 
-    log("ROCCO_chrom: merging adjacent selections", args['verbose'])
+    log("rocco chrom: merging adjacent selections", args['verbose'])
     InitLoci.combine_selected()
 
     if not os.path.exists(args['outdir']):
@@ -364,7 +353,7 @@ def main(args):
         args['c2'],
         args['c3'])
 
-    log('ROCCO_chrom: writing output: {}'.format(fname), True)
+    log('rocco chrom: writing output: {}'.format(fname), True)
     outfile = open(fname, mode='w', encoding='utf-8')
     output = ""
     if args['bed_format'] == 6:

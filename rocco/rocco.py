@@ -15,11 +15,11 @@ Paper: https://doi.org/10.1101/2023.05.24.542132
 
 usage: rocco [-h] {gwide,chrom,prep,budgets,get_sizes} ...
   {gwide,chrom,prep,budgets,get_sizes}
-    gwide               run rocco genome-wide/on multiple chromosomes (ROCCO_gwide.py)
-    chrom               run ROCCO on a single chromosome (ROCCO_chrom.py)
-    prep                Preprocess BAM files (prep_bams.py)
-    budgets             Compute a budget (maximum fraction of basepairs that can be selected as 'open') for
-                        each chromosome ranked by average read-density observed in samples (est_budgets.py)
+    gwide               run rocco genome-wide/on multiple chromosomes (gwide.py)
+    chrom               run ROCCO on a single chromosome (chrom.py)
+    prep                Preprocess BAM files (prep.py)
+    budgets             Compute a budget (upper-bound on the fraction of basepairs that can be selected as 'open') for
+                        each chromosome ranked by average read-density observed in samples (budgets.py)
     get_sizes           download sizes file for a genome in the ucsc genome registry
 options:
   -h, --help            show this help message and exit
@@ -27,13 +27,13 @@ options:
 ```
 
 Subcommand Documentation:
-    [`gwide`](https://nolan-h-hamilton.github.io/ROCCO/rocco/ROCCO_gwide.html)
+    [`gwide`](https://nolan-h-hamilton.github.io/ROCCO/rocco/gwide.html)
 
-    [`chrom`](https://nolan-h-hamilton.github.io/ROCCO/rocco/ROCCO_chrom.html)
+    [`chrom`](https://nolan-h-hamilton.github.io/ROCCO/rocco/chrom.html)
 
-    [`prep`](https://nolan-h-hamilton.github.io/ROCCO/rocco/prep_bams.html)
+    [`prep`](https://nolan-h-hamilton.github.io/ROCCO/rocco/prep.html)
 
-    [`budgets`](https://nolan-h-hamilton.github.io/ROCCO/rocco/est_budgets.html)
+    [`budgets`](https://nolan-h-hamilton.github.io/ROCCO/rocco/budgets.html)
 
 """
 #!/usr/bin/env python
@@ -41,14 +41,13 @@ import os
 import argparse
 import subprocess
 from . import rocco_aux
-from . import ROCCO_chrom
-from . import ROCCO_gwide
-from . import prep_bams
-from . import est_budgets
+from . import chrom
+from . import gwide
+from . import prep
+from . import budgets
 from . import locus
 from . import loci
 import pandas as pd
-from copy import deepcopy
 
 
 def parse_coldata(coldata_file: str, group_column: str, sample_column: str, split_sex: str = None, delimiter='\t'):
@@ -97,24 +96,41 @@ def parse_coldata(coldata_file: str, group_column: str, sample_column: str, spli
                         file.write('\n'.join(sex_samples))
                     created_files.append(sex_file_name)
     except Exception as e:
-        print(f"parsing coldata failed:\n{e}.\nEnsure group,sample,sex column names are correctly specified.")
+        print(f"parsing coldata failed:\n{e}.\nEnsure column names are correctly specified.")
     return created_files
 
-
 def subcommand_chrom(args):
-    ROCCO_chrom.main(args)
+    chrom.main(args)
     return True
 
 def subcommand_gwide(args):
-    ROCCO_gwide.main(args)
+    if args['coldata'] is not None:
+        ind_files = parse_coldata(args['coldata'],
+                                  args['group_column'],
+                                  args['sample_column'],
+                                  args['split_sex'])
+        bed_files = []
+        for file_ in ind_files:
+            temp_args = args.copy()
+            print(f'rocco gwide: {file_}')
+            temp_args['identifiers'] = file_
+            temp_args['outdir'] = file_ + '_dir'
+            temp_args['combine'] = file_ + '.bed'
+            bed_files.append(temp_args['combine'])
+            gwide.main(temp_args)
+        
+        print(f'completed: {bed_files}')
+    else:
+        gwide.main(args)
+
     return True
 
 def subcommand_prep(args):
-    prep_bams.main(args)
+    prep.main(args)
     return True
 
 def subcommand_budgets(args):
-    est_budgets.main(args)
+    budgets.main(args)
     return True
 
 
@@ -123,7 +139,7 @@ def main():
     subparsers = parser.add_subparsers(dest="command")
 
     # 'gwide' subcommand parameters
-    parser_subcommand_gwide = subparsers.add_parser("gwide", help='run rocco genome-wide/on multiple chromosomes (ROCCO_gwide.py)')
+    parser_subcommand_gwide = subparsers.add_parser("gwide", help='run rocco genome-wide/on multiple chromosomes (gwide.py)')
     parser_subcommand_gwide.add_argument('-p', '--param_file', required=True,
                                          help='A CSV file specifying the parameters for each chromosome. See: https://github.com/nolan-h-hamilton/ROCCO/blob/main/hg38_params.csv')
     parser_subcommand_gwide.add_argument('-b', '--budget', type=float, default=.035)
@@ -146,7 +162,7 @@ def main():
     parser_subcommand_gwide.add_argument('--split_sex', default=None, help='column in coldata file containing sex labels. Only used if --coldata is not None')
 
     # 'chrom' subcommand parameters
-    parser_subcommand_chrom = subparsers.add_parser("chrom", help='run ROCCO on a single chromosome (ROCCO_chrom.py)')
+    parser_subcommand_chrom = subparsers.add_parser("chrom", help='run ROCCO on a single chromosome (chrom.py)')
     parser_subcommand_chrom.add_argument('--start', type=int, default=-1)
     parser_subcommand_chrom.add_argument('--end', type=int, default=-1)
     parser_subcommand_chrom.add_argument('--locus_size', type=int, default=-1)
@@ -166,7 +182,7 @@ def main():
     parser_subcommand_chrom.add_argument('--verbose', default=False, action="store_true")
 
     # 'prep' subcommand parameters
-    parser_subcommand_prep = subparsers.add_parser("prep", help='Preprocess BAM files (prep_bams.py)')
+    parser_subcommand_prep = subparsers.add_parser("prep", help='Preprocess BAM files (prep.py)')
     parser_subcommand_prep.add_argument('-i', '--bamdir', default='.', type=str)
     parser_subcommand_prep.add_argument('-o', '--outdir', default='.')
     parser_subcommand_prep.add_argument('-s', '--sizes', default='hg38')
@@ -176,7 +192,7 @@ def main():
     parser_subcommand_prep.add_argument('--bstw_path', default=None, help='deprecated')
 
     # 'budgets' subcommand parameters
-    parser_subcommand_budgets = subparsers.add_parser("budgets", help='Compute a budget for each chromosome ranked by read density (est_budgets.py). ')
+    parser_subcommand_budgets = subparsers.add_parser("budgets", help='Compute a budget for each chromosome ranked by read density (budgets.py). ')
     parser_subcommand_budgets.add_argument('--wigdir', type=str)
     parser_subcommand_budgets.add_argument('-s', '--sizes', type=str)
     parser_subcommand_budgets.add_argument('--smean', type=float, default=.035)
@@ -190,23 +206,7 @@ def main():
 
     args = vars(parser.parse_args())
     if args['command'] == "gwide":
-        args_cpy = deepcopy(args)
-        if args['coldata'] is not None:
-            ind_files = parse_coldata(args['coldata'],args['group_column'],args['sample_column'],args['split_sex'])
-            bed_files = []
-            for file_ in ind_files:
-                args = args_cpy
-                print(f'rocco_gwide: {file_}')
-                args['identifiers'] = file_
-                args['outdir'] = file_ + '_dir'
-                args['combine'] = file_ + '.bed'
-                bed_files.append(file_ + '.bed')
-                subcommand_gwide(args)
-            print(f'completed: {bed_files}')
-        else:
-            args = args_cpy
-            subcommand_gwide(args)
-
+        subcommand_gwide(args)
     elif args['command'] == "chrom":
         subcommand_chrom(args)
     elif args['command'] == 'prep':

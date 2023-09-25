@@ -31,7 +31,7 @@ long_description += "\n\n" + optional_dependencies_message
 
 setup(
     name='rocco',
-    version='0.4.6',
+    version='0.5.1',
     author='Nolan Holt Hamilton',
     author_email='nolan.hamilton@unc.edu',
     description='Robust ATAC-seq Peak Calling for Many Samples via Convex Optimization',
@@ -46,7 +46,7 @@ setup(
     classifiers=[
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3",
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 4 - Beta",
     ],
     keywords='peak-caller, atac-seq, consensus-peaks',
     install_requires=core_dependencies,

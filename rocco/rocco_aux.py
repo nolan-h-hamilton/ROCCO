@@ -148,7 +148,7 @@ def run_par(cmd_file, threads=-1, verbose=False):
 
     commands = [cmd.strip() for cmd in commands][::-1]
 
-    def run_command(command):
+    def run_command(command, verbose=verbose):
         if not verbose:
             process = subprocess.Popen(command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             process.communicate()
@@ -161,5 +161,6 @@ def run_par(cmd_file, threads=-1, verbose=False):
     with ThreadPoolExecutor(max_workers = threads) as executor:
         futures = [executor.submit(run_command, cmd) for cmd in commands]
         results = [future.result() for future in futures]
-    for command, returncode in results[::-1]:
-        print(f"cmd: {command}\nretval: {returncode}\n")
+    if verbose:
+        for command, returncode in results[::-1]:
+            print(f"cmd: {command}\nretval: {returncode}\n")

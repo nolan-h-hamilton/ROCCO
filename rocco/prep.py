@@ -10,12 +10,6 @@ chromosome, converted to human-readable .wig format, and then placed into direct
 The resulting `tracks_chr[]` directories can then be supplied to rocco chrom
 via `--wig_path` to construct the signal matrix $\mathbf{S}_{chr}$.
 
-Example Usage:
-    Run on toy data in `tests/data`:
-    ```
-    rocco prep --bamdir tests/data -s tests/data/test_sizes.sizes
-    ```
-
 Arguments:
     - `-i, --bamdir (str, default='.')`:
         Path to the directory containing BAM files.
@@ -38,7 +32,11 @@ Arguments:
     - `--index (int, default=1)`:
         Deprecated - backwards compatibility. Now, if BAM files are not indexed, pysam.index() is called by default. Before, this behavior was specified with this argument.
 
-*Note*: Several alternative protocols can yield the same results, e.g., `deeptools bamCoverage`, `bedtools`, etc. but have not been tested currently.
+
+Example [from demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb):
+    ```
+    rocco prep --bamdir . --outdir . -s hg38
+    ```
 
 """
 
@@ -79,8 +77,9 @@ def main(args):
                         '-w', args['outdir'] + '/' + aln.filename.decode().split('/')[-1] + '.bw',
                         '-r', str(args['interval_length']),
                         '-m', 'atac',
+                        '-l', str(int(args['interval_length'])//2), 
                         '-p', str(args['cores']),
-                        '--variable-step']
+                        '--variable-step','--limit', " ".join(list(rocco_aux.parse_size_file(args['sizes']).keys())) ]
             if not args['multi']:
                 # if `--multi False
                 subprocess.run(bstw_cmd,
