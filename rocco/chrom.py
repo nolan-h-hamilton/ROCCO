@@ -31,7 +31,8 @@ Output:
 
 
 Example [from demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb):
-    `rocco chrom --wig_path tracks_chr21 --chrom chr21`
+
+    ```rocco chrom --wig_path tracks_chr21 --chrom chr21```
 
 """
 

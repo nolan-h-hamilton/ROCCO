@@ -40,9 +40,8 @@ conda env create -n rocco --file rocco_conda.yml
 load via: `conda activate rocco`.
 
 #### Quick Start Demo
-For a quick intro, refer to the Jupyter notebook: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb).
+For a quick intro, refer to the interactive demonstration: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb).
 
-This demonstration offers an interactive overview of the ROCCO pipeline that can be executed by running the commands in each cell. Output from a previous session is included if you do not wish to run the steps yourself.
 ## Documentation
 API Reference: https://nolan-h-hamilton.github.io/ROCCO/index.html
 ## Citation

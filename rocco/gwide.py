@@ -60,9 +60,10 @@ Parameters:
     ```
 
 Examples [from demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb):
-    `rocco gwide -p budgets_params.csv --outdir demo_outdir --combine demo_out.bed`
-
-    `rocco gwide -p budgets_params.csv --coldata coldata.csv --sample_column sample --group_column group`
+    ```
+    rocco gwide -p budgets_params.csv --outdir demo_outdir --combine demo_out.bed
+    rocco gwide -p budgets_params.csv --coldata coldata.csv --sample_column sample --group_column group
+    ```
 """
 
 import os
