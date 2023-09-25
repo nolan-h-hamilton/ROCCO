@@ -79,6 +79,7 @@ def main(args):
                         '-w', args['outdir'] + '/' + aln.filename.decode().split('/')[-1] + '.bw',
                         '-r', str(args['interval_length']),
                         '-m', 'atac',
+                        '-l', str(int(args['interval_length'])//2), 
                         '-p', str(args['cores']),
                         '--variable-step','--limit', " ".join(list(rocco_aux.parse_size_file(args['sizes']).keys())) ]
             if not args['multi']:
