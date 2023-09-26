@@ -38,6 +38,7 @@ Example [from demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/de
 """
 
 import os
+import sys
 import gc
 import argparse
 import warnings
@@ -309,6 +310,10 @@ def main(args):
                 if tag in wfname:
                     new_wig_files.append(wfname)
         wig_files = new_wig_files
+
+    if len(wig_files) == 0:
+        print(f"rocco chrom: did not find wig files for the given samples + {args['chrom']}")
+        sys.exit(0)
 
     # create a dataframe of signal values for `K` replicates and `n` loci
     signal_matrix = collect_wigs(wig_files,
