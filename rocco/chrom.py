@@ -147,7 +147,7 @@ def read_wig(wig_file, start=0, end=10**10, locus_size=50):
         loci: list of starting nucleotide positions for each locus
         signal: enrichment signal value at each locus in `loci`
     """
-    log("rocco chrom: reading wig file {}".format(wig_file))
+    log("read_wig(): {}".format(wig_file))
     loci = []
     signal = []
     with open(wig_file, mode='r', encoding='utf-8') as wig:

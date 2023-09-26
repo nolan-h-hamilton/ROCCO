@@ -23,12 +23,12 @@ def trim_path(fname: str) -> str:
 
 def sort_combine_bed(outfile: str, dir_: str = '.', exclude_list: list = ['EBV', 'M', 'MT']):
     """
-    Sorts and combines chromosome-specific bed files. Creates a new
+    Sorts and combines chromosome-specific peak files. Creates a new
     bed file `outfile` to store the combined results.
 
     Parameters:
-        outfile (str): The output file name where the sorted and combined bed file will be written.
-        dir_ (str): The directory containing the chromosome-specific bed files.
+        outfile (str): output file name
+        dir_ (str): directory containing chromosome-specific bed files
             Default is the current directory ('.').
         exclude_list (list): list of chromosomes to exclude. (default: ['EBV', 'M', 'MT'])
 
@@ -59,6 +59,7 @@ def sort_combine_bed(outfile: str, dir_: str = '.', exclude_list: list = ['EBV',
                                            stdout=outfile_.fileno())
             cat_process.wait()
 
+
 def download_file(url, output_path):
     "download file at `url` to `output_path` using either curl or wget"
     try:
@@ -68,6 +69,7 @@ def download_file(url, output_path):
             subprocess.run(['wget', '-O', output_path, url], check=True)
         except subprocess.CalledProcessError:
             raise RuntimeError("Failed to download the file.")
+
 
 def get_size_file(assembly='hg38', exclude_list=['EBV', 'M', 'MT']) -> str:
     """
@@ -95,6 +97,7 @@ def get_size_file(assembly='hg38', exclude_list=['EBV', 'M', 'MT']) -> str:
     with open(sorted_output_path, 'w') as file_:
         file_.writelines(sorted_lines)
     return sorted_output_path
+
 
 def parse_size_file(size_file, exclude_list=['EBV', 'M', 'MT']) -> dict:
     """Parse a size file and return a dictionary {chr: size}.
@@ -130,6 +133,7 @@ def is_alignment(filepath) -> bool:
             return False
     return False
 
+
 def run_par(cmd_file, threads=-1, verbose=False):
     """
     Runs shell commands in `cmd_file` in parallel
@@ -164,3 +168,26 @@ def run_par(cmd_file, threads=-1, verbose=False):
     if verbose:
         for command, returncode in results[::-1]:
             print(f"cmd: {command}\nretval: {returncode}\n")
+
+
+def has_reads(bamfile, min_reads=1, chrom='chrY') -> bool:
+    """
+    Check if a BAM file contains a minimum number of reads for a specific chromosome.
+
+    Args:
+        bamfile (str): path to the BAM file
+        min_reads (int): minimum read threshold
+        chrom (str, optional): chromosome to check for reads
+
+    Returns:
+        bool: True if the BAM file contains at least 'min_reads' for 'chrom', False otherwise.
+    """
+    bamfile = pysam.AlignmentFile(bamfile, "rb")
+    has_min_reads = False
+
+    for elem in bamfile.get_index_statistics():
+        if elem[0] == chrom and elem[1] >= min_reads:
+            has_min_reads = True
+            break
+    bamfile.close()
+    return has_min_reads
