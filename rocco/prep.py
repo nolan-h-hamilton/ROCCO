@@ -55,13 +55,19 @@ def main(args):
     args['outdir'] = rocco_aux.trim_path(os.path.abspath(args['outdir']))
 
     if not os.path.exists(args['sizes']):
+        # if args['sizes'] is not a locally available file,
+        # check UCSC for the assembly's sizes file
         args['sizes'] = rocco_aux.get_size_file(args['sizes'])
 
+    chroms = list(rocco_aux.parse_size_file(args['sizes']).keys())
     bigwig_files = []
     tf = tempfile.NamedTemporaryFile(mode='w', delete=False)
+
     for fname in os.listdir(args['bamdir']):
-        fname = args['bamdir'] + '/' + fname
+        fname = os.path.join(args['bamdir'], fname)
         fname = os.path.abspath(fname)
+
+        # create an index for bam files if not present already
         if rocco_aux.is_alignment(fname):
             aln = pysam.AlignmentFile(fname)
             try:
@@ -69,6 +75,7 @@ def main(args):
             except ValueError:
                 print(f'no index file available for {fname}, calling pysam.index()')
                 pysam.index(fname)
+
             print('{}: running bamSitesToWig.py'.format(aln.filename.decode()))
             bstw_path = os.path.join(os.path.dirname(__file__), "bamSitesToWig.py")
             bstw_cmd = ['python3', bstw_path,
@@ -77,9 +84,11 @@ def main(args):
                         '-w', args['outdir'] + '/' + aln.filename.decode().split('/')[-1] + '.bw',
                         '-r', str(args['interval_length']),
                         '-m', 'atac',
-                        '-l', str(int(args['interval_length'])//2), 
+                        '-l', str(int(args['interval_length'])//2),
                         '-p', str(args['cores']),
-                        '--variable-step','--limit', " ".join(list(rocco_aux.parse_size_file(args['sizes']).keys())) ]
+                        '--variable-step',
+                        '--limit', " ".join([x for x in chroms if rocco_aux.has_reads(bamfile=aln.filename.decode(),min_reads=1,chrom=x)])]
+
             if not args['multi']:
                 # if `--multi False
                 subprocess.run(bstw_cmd,
@@ -93,10 +102,11 @@ def main(args):
             bigwig_file = args['outdir'] + '/' + aln.filename.decode().split('/')[-1] + '.bw'
             bigwig_files.append(bigwig_file)
     tf.close()
+
     if args['multi']:
         rocco_aux.run_par(tf.name)
 
-    chroms = list(rocco_aux.parse_size_file(args['sizes']).keys())
+    # after running bamSitesToWig, split each bigwig file by chromosome into tracks_chr[]
     os.chdir(args['outdir'])
     for chrom in chroms:
         try:
@@ -107,8 +117,14 @@ def main(args):
             subprocess.run(['bigWigToWig', bigwig_file,
                         chrom + '_' + bigwig_file + '.wig',
                         '-chrom={}'.format(chrom)], check=True)
-            subprocess.run(["mv", chrom + '_' + bigwig_file + '.wig',
+
+            # if wig file is nonempty, place in tracks_chr[]
+            if os.path.getsize(chrom + '_' + bigwig_file + '.wig') > 1024:
+                subprocess.run(["mv", chrom + '_' + bigwig_file + '.wig',
                         "tracks_{}".format(chrom)], check=True)
+            else:
+                subprocess.run(["rm", chrom + '_' + bigwig_file + '.wig'], check=True)
+
     os.chdir(cwd)
 
 if __name__ == '__main__':
