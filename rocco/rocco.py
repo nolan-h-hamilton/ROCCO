@@ -1,17 +1,18 @@
 """
 # ROCCO: [R]obust [O]pen [C]hromatin Dection via [C]onvex [O]ptimization.
 
-### PyPI : https://pypi.org/project/rocco/
+#### PyPI : https://pypi.org/project/rocco/
 
-### GitHub: https://github.com/nolan-h-hamilton/ROCCO/
+#### GitHub: https://github.com/nolan-h-hamilton/ROCCO/
 
-### Demo: https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb
+#### Demo: https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb
 
-### Documentation: https://nolan-h-hamilton.github.io/ROCCO/
+#### Documentation: https://nolan-h-hamilton.github.io/ROCCO/
 
-### Paper: https://doi.org/10.1101/2023.05.24.542132
+#### Paper: https://doi.org/10.1101/2023.05.24.542132
 
 
+```
 usage: rocco [-h] {gwide,chrom,prep,budgets,get_sizes} ...
   {gwide,chrom,prep,budgets,get_sizes}
     gwide               run rocco genome-wide/on multiple chromosomes (gwide.py)
