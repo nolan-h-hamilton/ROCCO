@@ -22,6 +22,5 @@ dependencies:
     - logmuse
     - scipy
     - pysam
-    - ortools==9.3.10497
     - rocco
 
