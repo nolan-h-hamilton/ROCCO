@@ -7,7 +7,6 @@ on:
       - '**.yml'
     branches:
       - main
-      - dev
 jobs:
   build:
     runs-on: ubuntu-latest
