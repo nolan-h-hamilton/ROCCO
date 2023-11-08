@@ -357,7 +357,8 @@ def main(args):
         args['c1'],
         args['c2'],
         args['c3'])
-
+    if os.path.exists(fname):
+        log(f'rocco chrom: overwriting {fname}')
     log('rocco chrom: writing output: {}'.format(fname), True)
     outfile = open(fname, mode='w', encoding='utf-8')
     output = ""

@@ -251,7 +251,7 @@ class Loci:
         for i, val in enumerate(s_vec):
             if med_vec[i] <= tau:
                 s_vec[i] = 0
-        return s_vec - eps_l*np.ones(len(med_vec))
+        return s_vec - eps_l
 
     def run_rr(self, lp_sol, N, loci_scores, budget, gam, eps=1e-5) -> np.ndarray:
         r"""
@@ -282,16 +282,19 @@ class Loci:
                 # this shouldn't really happen for reasonable `eps`
                 warnings.warn(f'floor solution with eps={eps} exceeds budget by {np.sum(init_sol) - math.floor(n*budget)} selections')
             return init_sol
-
+        nonint_loci = [i for i in range(len(lp_sol)) if lp_sol[i] > 0 and lp_sol[i] < 1]
         rr_sol = init_sol
         best_score = init_score
+        lp_sol_cpy = copy.copy(lp_sol)
         for j in range(N):
-            ell_rand_n = np.zeros(n, dtype=np.int8)
-            for i, ell_i in enumerate(lp_sol):
-                if random.random() <= ell_i:
-                    ell_rand_n[i] = 1
+            # initialize as `lp_sol`
+            ell_rand_n = lp_sol_cpy
+            # can restrict rounding to `nonint_loci` for efficiency.
+            for idx in nonint_loci:
+                if random.random() <= lp_sol[idx]:
+                    ell_rand_n[idx] = 1
                 else:
-                    ell_rand_n[i] = 0
+                    ell_rand_n[idx] = 0
 
             score = (-loci_scores@ell_rand_n
                        + gam*np.sum(np.abs(np.diff(ell_rand_n,1))))
@@ -326,7 +329,6 @@ class Loci:
                 See `Loci.run_rr()`
             verbose_ (bool): Verbosity flag for the solver
             solver (str): Defaults to `ECOS`. `MOSEK` is a commercial grade solver that is also supported.
-                `PDLP` is a first-order solver suited for especially large problems.
 
         Returns:
             cp.Problem: a CVXPY problem object
@@ -348,14 +350,6 @@ class Loci:
         # https://www.cvxpy.org/tutorial/advanced/index.html
         if solver.lower() == "ecos":
             problem.solve(solver=cp.ECOS, verbose=verbose_)
-
-        if solver.lower() == "pdlp":
-            try:
-                problem.solve(solver=cp.PDLP, verbose=verbose_)
-            except Exception as ex:
-                print("Ensure PDLP solver is available.\
-                    Can be installed via pip:\
-                    'pip install ortools==9.3.10497'")
 
         if solver.lower() == "mosek":
             # https://docs.mosek.com/latest/pythonapi/parameters.html
