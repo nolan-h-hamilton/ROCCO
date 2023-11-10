@@ -44,6 +44,12 @@ For a quick intro, refer to the interactive demonstration: [demo.ipynb](https://
 
 ## Documentation
 API Reference: https://nolan-h-hamilton.github.io/ROCCO/index.html
+
+## Testing
+See the `Tests` GitHub Action which runs [test_rocco.py](https://github.com/nolan-h-hamilton/ROCCO/blob/main/tests/test_rocco.py) using pytest.
+
+In this workflow, ENCODE ATAC-seq data is used to simulate test data on which the functionality of the software is verified.
+
 ## Citation
 ```
 ROCCO: A Robust Method for Detection of Open Chromatin via Convex Optimization
