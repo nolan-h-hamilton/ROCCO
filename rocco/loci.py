@@ -253,7 +253,7 @@ class Loci:
                 s_vec[i] = 0
         return s_vec - eps_l
 
-    def run_rr(self, lp_sol, N, loci_scores, budget, gam, eps=1e-5) -> np.ndarray:
+    def run_rr(self, lp_sol, N, loci_scores, budget, gam, eps = 1e-4) -> np.ndarray:
         r"""
         Carry out the $\texttt{RR}$ rounding procedure to return a
         'good' integral solution with reference to the LP solution
@@ -261,34 +261,34 @@ class Loci:
         Args:
             lp_sol (numpy.ndarray): The LP solution
             N (int): Number of RR solutions to evaluate. If $N \leq 0$, the
-                $\texttt{floor\_eps}$ rounding protocol is applied in which
-                any decision variable satisfying $\ell_i + \epsilon < 1$
-                (`lp_sol[i] + eps < 1`) is rounded down to zero.
-            loci_scores (list): mathcal{S} for each locus
+                floor-epsilon protocol is applied.
+            loci_scores (np.ndarray): mathcal{S} for each locus
             budget (float): budget parameter
-            gam (float): gamma
-            eps (float): epsilon value for "floor" rounding (Default: eps=1e-5)
+            gam (float): weight for $\sum_{i=1}^{i=n-1} |lp_sol[i] - lp_sol[i+1]| (total variation) penalty
+            eps (float): `init_sol = np.floor(lp_sol + eps)`. Decreased iteratively if initial `eps` does
+                not yield a feasible solution.
 
     Returns:
-        np.ndarray: the integral $\texttt{RR}$ solution, OR $\texttt{floor\_eps}$ sol if $N \leq 0$.
+        np.ndarray: the integral $\texttt{RR}$ solution, OR $\texttt{floor\_eps}$ solution if $N \leq 0$.
     """
         n = len(loci_scores)
+        eps_cpy = eps
         init_sol = np.floor(lp_sol + eps)
+        while np.sum(init_sol) > np.floor(n*budget):
+            eps_cpy = eps_cpy/2
+            init_sol = np.floor(lp_sol + eps_cpy)
+        if N <= 0:
+            return init_sol
+
         init_score = (-loci_scores@init_sol
                        + gam*np.sum(np.abs(np.diff(init_sol,1))))
-        if N <= 0:
-            num_selected = np.sum(init_sol)
-            if num_selected > math.floor(n*budget):
-                # this shouldn't really happen for reasonable `eps`
-                warnings.warn(f'floor solution with eps={eps} exceeds budget by {np.sum(init_sol) - math.floor(n*budget)} selections')
-            return init_sol
+
         nonint_loci = [i for i in range(len(lp_sol)) if lp_sol[i] > 0 and lp_sol[i] < 1]
         rr_sol = init_sol
         best_score = init_score
-        lp_sol_cpy = copy.copy(lp_sol)
         for j in range(N):
             # initialize as `lp_sol`
-            ell_rand_n = lp_sol_cpy
+            ell_rand_n = copy.copy(lp_sol)
             # can restrict rounding to `nonint_loci` for efficiency.
             for idx in nonint_loci:
                 if random.random() <= lp_sol[idx]:
@@ -298,15 +298,11 @@ class Loci:
 
             score = (-loci_scores@ell_rand_n
                        + gam*np.sum(np.abs(np.diff(ell_rand_n,1))))
+
             is_feas = (np.sum(ell_rand_n) <= math.floor(n*budget))
             if is_feas and score < best_score:
                 rr_sol = ell_rand_n
                 best_score = score
-
-        if np.sum(rr_sol) > math.floor(n*budget):
-            # this shouldn't really happen for any reasonable `eps`
-            warnings.warn(f'floor solution with eps={eps} exceeds budget by {np.sum(rr_sol)- math.floor(n*budget)} selections')
-
         return rr_sol
 
     def rocco_lp(self, budget: float = .035, tau: float = 0, gam: float = 1, c1: float = 1,
@@ -357,7 +353,7 @@ class Loci:
                         'MSK_DPAR_INTPNT_TOL_REL_GAP': .001,
                         'MSK_IPAR_PRESOLVE_LINDEP_ABS_WORK_TRH':10}
             try:
-                problem.solve(cp.MOSEK, mosek_params=MOSEK_OPTS, verbose=verbose_)
+                problem.solve(cp.MOSEK, mosek_params=MOSEK_OPTS, bfs=True, verbose=verbose_)
             except Exception as ex:
                 print("Ensure a valid MOSEK license file is\
                 available in your home directory and that the\
