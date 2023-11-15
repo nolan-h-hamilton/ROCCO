@@ -45,7 +45,7 @@ for i in range(int(sys.argv[3])):
     loci = copy.copy(loci_)
     orig = copy.copy(orig_)
     for j in range(0,len(orig)):
-        if orig[j] >= 1:
+        if orig[j] > 0:
             if random.random() < .10:
                 orig[j] = max(int(0),int(orig[j] + np.random.normal(0,float(sys.argv[2]),size=1)))
     fname = sys.argv[1] + f'.c{str(i)}.wig'

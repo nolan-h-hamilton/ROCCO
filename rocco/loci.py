@@ -1,10 +1,15 @@
 r"""
-Loci object: ROCCO creates a Locus object (see `locus.py`) for each
+
+Loci object: ROCCO creates a Locus object (see `Locus.py`) for each
 $\ell_i, \forall i = 1 \ldots n$. These Locus objects are then linked
 together as a Loci object, defined in this code.
 
-The necessary functionality to construct the signal matrix,
-$\mathbf{S}_{chr}$, is implemented by way of the Loci object.
+Scoring: `Loci.score_loci()`
+
+Optimization: `Loci.rocco_lp()`
+
+Randomization: `Loci.run_rr()`
+
 """
 import copy
 import math
@@ -307,7 +312,7 @@ class Loci:
 
     def rocco_lp(self, budget: float = .035, tau: float = 0, gam: float = 1, c1: float = 1,
              c2: float = 1, c3: float = 1, verbose_: bool = False, solver: str = "ECOS",
-             N: int = 50) -> cp.Problem:
+             N: int = 50, solver_reltol: float = 1e-4) -> cp.Problem:
         r"""
         Solve relaxed problem as an LP and assign binary accessibility
         prediction to each locus using the $\texttt{RR}$ or $\texttt{floor\_eps}$
@@ -325,7 +330,7 @@ class Loci:
                 See `Loci.run_rr()`
             verbose_ (bool): Verbosity flag for the solver
             solver (str): Defaults to `ECOS`. `MOSEK` is a commercial grade solver that is also supported.
-
+            solver_reltol (float): acceptable relative optimality gap for solver termination.
         Returns:
             cp.Problem: a CVXPY problem object
     """
@@ -344,14 +349,15 @@ class Loci:
 
         # Refer to `Solve method options` at
         # https://www.cvxpy.org/tutorial/advanced/index.html
+
         if solver.lower() == "ecos":
-            problem.solve(solver=cp.ECOS, verbose=verbose_)
+            problem.solve(solver=cp.ECOS, reltol=solver_reltol, verbose=verbose_)
 
         if solver.lower() == "mosek":
             # https://docs.mosek.com/latest/pythonapi/parameters.html
             MOSEK_OPTS = {'MSK_IPAR_NUM_THREADS': 1,
-                        'MSK_DPAR_INTPNT_TOL_REL_GAP': .001,
-                        'MSK_IPAR_PRESOLVE_LINDEP_ABS_WORK_TRH':10}
+                        'MSK_DPAR_INTPNT_TOL_REL_GAP': solver_reltol,
+                        'MSK_IPAR_PRESOLVE_LINDEP_ABS_WORK_TRH': 10}
             try:
                 problem.solve(cp.MOSEK, mosek_params=MOSEK_OPTS, bfs=True, verbose=verbose_)
             except Exception as ex:
@@ -359,6 +365,13 @@ class Loci:
                 available in your home directory and that the\
                 mosek-python interface is installed, e.g.,\
                 via 'pip install mosek'")
+                raise ex
+
+        if solver.lower() == "pdlp":
+            try:
+                problem.solve(solver=cp.PDLP, reltol=solver_reltol, verbose=verbose_)
+            except Exception as ex:
+                print("Ensure PDLP solver is available via ortools: `pip install ortools`")
                 raise ex
 
         lp_sol = problem.variables()[0].value

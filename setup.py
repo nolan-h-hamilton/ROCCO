@@ -16,6 +16,8 @@ core_dependencies = [
 
 optional_feature_dependencies = {
     'mosek': ['mosek'],
+    'ortools': ['ortools'],
+    'pytest': ['pytest']
 }
 
 all_dependencies = core_dependencies + sum(optional_feature_dependencies.values(), [])
@@ -23,13 +25,15 @@ all_dependencies = core_dependencies + sum(optional_feature_dependencies.values(
 optional_dependencies_message = (
     "Additional dependencies for optional features:\n\n"
     "- 'mosek': Commercial grade solver. Users can instantly obtain a free academic license or generous trial commericial license at https://www.mosek.com/products/academic-licenses/.\n"
+    "- 'ortools': includes the first-order PDLP solver.\n"
+    "- 'pytest': allows local execution of the Tests workflow.\n"
 )
 
 long_description += "\n\n" + optional_dependencies_message
 
 setup(
     name='rocco',
-    version='0.6.0',
+    version='0.6.3',
     author='Nolan Holt Hamilton',
     author_email='nolan.hamilton@unc.edu',
     description='Robust ATAC-seq Peak Calling for Many Samples via Convex Optimization',
