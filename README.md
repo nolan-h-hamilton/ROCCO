@@ -1,6 +1,6 @@
 # [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
 <p align="center">
-<img width="472" alt="logo" src="https://github.com/nolan-h-hamilton/ROCCO/assets/57746191/170478f1-5820-4056-b315-3c8dee3603d9">
+<img width="472" alt="logo" src="https://github.com/nolan-h-hamilton/ROCCO/assets/57746191/467d8b2a-5861-41d3-b496-f3cded91c4ab">
 
 [![Tests](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml/badge.svg)](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml)
 [![PyPI](https://img.shields.io/pypi/v/rocco?label=PyPI%20package&color=blue)](https://pypi.org/project/rocco/)
@@ -10,12 +10,12 @@ Underlying ROCCO is a constrained optimization problem that can be solved effici
 **Features**
 
 1. Explicitly accounts for both **enrichment and spatial characteristics** of open chromatin signals to capture the full extent of peaks;
-1. **No arbitrary thresholds** on the minimum number of supporting samples/replicates;
-1. Is efficient for **large numbers of samples** with an asymptotic time complexity independent of sample size;
-2. **Does not require training data** or initial candidate peak regions
-3. Employs a **mathematically tractable model** permitting guarantees of performance and efficiency
+2. **No arbitrary thresholds** on the minimum number of supporting samples/replicates;
+3. Is efficient for **large numbers of samples** with an asymptotic time complexity independent of sample size;
+4. **Does not require training data** or initial candidate peak regions
+5. Employs a **mathematically tractable model** permitting guarantees of performance and efficiency
 
-## Getting Started
+## Installation
 
 ROCCO is written for compatibility with -nix variants: MacOS, linux, etc.
 
@@ -40,11 +40,11 @@ conda env create -n rocco --file rocco_conda.yml
 
 load via: `conda activate rocco`.
 
-#### Quick Start Demo
-For a quick intro, refer to the interactive demonstration: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb). Includes a walkthrough using publicly available ENCODE ATAC-seq alignments.
+## Quick Start Demo
+Refer to the interactive demonstration: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb). Includes a walkthrough using publicly available ENCODE ATAC-seq alignments.
 
 ## Documentation
-API Reference: https://nolan-h-hamilton.github.io/ROCCO/index.html
+API Reference: https://nolan-h-hamilton.github.io/ROCCO/rocco/rocco.html
 
 ## Testing
 [test_rocco.py](https://github.com/nolan-h-hamilton/ROCCO/blob/main/tests/test_rocco.py) is run via GitHub Actions at each release in the [`Tests`](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml) workflow. Simulates data from ENCODE ATAC-seq data and ensures functionality of fundamental tasks. To run

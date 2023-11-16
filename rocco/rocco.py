@@ -1,30 +1,12 @@
 """
-# ROCCO: [R]obust [O]pen [C]hromatin Dection via [C]onvex [O]ptimization.
+# ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization.
 
-#### PyPI : https://pypi.org/project/rocco/
-
-#### GitHub: https://github.com/nolan-h-hamilton/ROCCO/
+#### GitHub (Homepage): https://github.com/nolan-h-hamilton/ROCCO/
 
 #### Demo: https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb
 
-#### Documentation: https://nolan-h-hamilton.github.io/ROCCO/
-
 #### Paper: https://doi.org/10.1101/2023.05.24.542132
 
-
-```
-usage: rocco [-h] {gwide,chrom,prep,budgets,get_sizes} ...
-  {gwide,chrom,prep,budgets,get_sizes}
-    gwide               run rocco genome-wide/on multiple chromosomes (gwide.py)
-    chrom               run ROCCO on a single chromosome (chrom.py)
-    prep                Preprocess BAM files (prep.py)
-    budgets             Compute a budget (upper-bound on the fraction of basepairs that can be selected as 'open') for
-                        each chromosome ranked by average read-density observed in samples (budgets.py)
-    get_sizes           download sizes file for a genome in the ucsc genome registry
-options:
-  -h, --help            show this help message and exit
-
-```
 
 Subcommand Documentation:
     [`gwide`](https://nolan-h-hamilton.github.io/ROCCO/rocco/gwide.html)
@@ -36,6 +18,7 @@ Subcommand Documentation:
     [`budgets`](https://nolan-h-hamilton.github.io/ROCCO/rocco/budgets.html)
 
 """
+
 #!/usr/bin/env python
 import os
 import argparse
@@ -52,14 +35,16 @@ import pandas as pd
 
 def parse_coldata(coldata_file: str, group_column: str, sample_column: str, split_sex: str = None, delimiter='\t'):
     """
-    Given a metadata file for the samples, create text files containing sample names for each group
+    Parses a metadata file for the samples for group-specific treatment
 
-    These created textfiles are then used for the `--identifiers` argument of `rocco gwide`/`rocco chrom`
-
-    *The entries in `sample_column` should uniquely identify the corresponding `.wig` files* generated with `rocco prep`.
+    Note:
+        The entries in `sample_column` should uniquely identify the corresponding `.wig` files generated with [`rocco prep`](https://nolan-h-hamilton.github.io/ROCCO/rocco/prep.html).
         Example:
+
             Wiggle files: `[tracks_dir]/sample_12345_a.wig`, `[tracks_dir]/sample_12345_b.wig`
+
             Good ID(s) in `sample_column`: `sample_12345_a`, `sample_12345_b`
+
             Bad ID(s) in `sample_column`: `sample_12345`
     Args:
         coldata_file (str): path to the colData file in CSV format

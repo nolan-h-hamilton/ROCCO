@@ -1,16 +1,16 @@
 # [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
 <p align="center">
-<img width="472" alt="logo" src="https://github.com/nolan-h-hamilton/ROCCO/assets/57746191/170478f1-5820-4056-b315-3c8dee3603d9">
+<img width="472" alt="logo" src="https://github.com/nolan-h-hamilton/ROCCO/assets/57746191/467d8b2a-5861-41d3-b496-f3cded91c4ab">
 
 Underlying ROCCO is a constrained optimization problem that can be solved efficiently to **predict consensus regions of open chromatin** across multiple samples.
 
 **Features**
 
 1. Explicitly accounts for both **enrichment and spatial characteristics** of open chromatin signals to capture the full extent of peaks;
-1. **No arbitrary thresholds** on the minimum number of supporting samples/replicates;
-1. Is efficient for **large numbers of samples** with an asymptotic time complexity independent of sample count;
-1. **Does not require training data** or initial candidate peak regions which are hard to define given the lack of a priori sets of open chromatin regions;
-1. Employs a **mathematically tractable model** permitting guarantees of performance and efficiency.
+2. **No arbitrary thresholds** on the minimum number of supporting samples/replicates;
+3. Is efficient for **large numbers of samples** with an asymptotic time complexity independent of sample count;
+4. **Does not require training data** or initial candidate peak regions which are hard to define given the lack of a priori sets of open chromatin regions;
+5. Employs a **mathematically tractable model** permitting guarantees of performance and efficiency.
 
 
 #### [Quick Start Demo](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb)

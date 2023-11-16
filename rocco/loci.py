@@ -1,6 +1,6 @@
 r"""
 
-Loci object: ROCCO creates a Locus object (see `Locus.py`) for each
+ROCCO creates a Locus object (see `Locus.py`) for each
 $\ell_i, \forall i = 1 \ldots n$. These Locus objects are then linked
 together as a Loci object, defined in this code.
 
@@ -8,9 +8,10 @@ Scoring: `Loci.score_loci()`
 
 Optimization: `Loci.rocco_lp()`
 
-Randomization: `Loci.run_rr()`
+Integral solutions: `Loci.run_rr()`
 
 """
+
 import copy
 import math
 import random
@@ -256,13 +257,13 @@ class Loci:
             lp_sol (numpy.ndarray): The LP solution
             N (int): Number of RR solutions to evaluate. If $N \leq 0$, the
                 floor-epsilon protocol is applied.
-            loci_scores (np.ndarray): mathcal{S} for each locus
+            loci_scores (np.ndarray): $\mathcal{S}$
             budget (float): budget parameter
-            gam (float): weight for $\sum_{i=1}^{i=n-1} |lp_sol[i] - lp_sol[i+1]|$ (total variation) penalty
+            gam (float): weight for $\sum_{i=1}^{i=n-1} |\ell_i - \ell_{i+1}|$ (discontig.) penalty
             eps (float): `init_sol = np.floor(lp_sol + eps)`. Decreased iteratively if initial `eps` does
                 not yield a feasible solution.
 
-    Returns:
+        Returns:
         np.ndarray: the integral $\texttt{RR}$ solution, OR $\texttt{floor\_eps}$ solution if $N \leq 0$.
     """
         n = len(loci_scores)
@@ -306,14 +307,14 @@ class Loci:
              solver_feastol: float = 1e-8) -> cp.Problem:
         r"""
         Solve the LP-relaxation and apply the randomization procedure,
-        $\texttt{RR}$ ($N > 0$), or $\texttt{floor\_eps} ($N \leq 0$) for an
+        $\texttt{RR}$ ($N > 0$), or $\texttt{floor\_eps}$ ($N \leq 0$) for an
         integral solution $\mathbf{\ell}^{*}$.
 
         Args:
-            budget (float): budget constraint
+            budget (float): determines budget constraint $\sum_i \ell_i \leq nb$
             tau (float): $\tau$ in $\mathcal{S}$
             gam (float): $\gamma$ in obj. function $f(\mathbf{\ell})$
-            c1 (float): $c_1$ value in $\mathcal{S}$. 
+            c1 (float): $c_1$ value in $\mathcal{S}$.
             c2 (float): $c_2$ value in $\mathcal{S}$
             c3 (float): $c_3$ value in $\mathcal{S}$
             N (int): $\texttt{RR}$ procedure iterations. See `Loci.run_rr()`
