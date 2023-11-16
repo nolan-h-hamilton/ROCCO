@@ -11,7 +11,8 @@ core_dependencies = [
     'scipy',
     'pysam',
     'pararead',
-    'logmuse'
+    'logmuse',
+    'clarabel'
 ]
 
 optional_feature_dependencies = {
@@ -25,7 +26,7 @@ all_dependencies = core_dependencies + sum(optional_feature_dependencies.values(
 optional_dependencies_message = (
     "Additional dependencies for optional features:\n\n"
     "- 'mosek': Commercial grade solver. Users can instantly obtain a free academic license or generous trial commericial license at https://www.mosek.com/products/academic-licenses/.\n"
-    "- 'ortools': includes the first-order PDLP solver.\n"
+    "- 'ortools': includes the first-order solver, PDLP.\n"
     "- 'pytest': allows local execution of the Tests workflow.\n"
 )
 

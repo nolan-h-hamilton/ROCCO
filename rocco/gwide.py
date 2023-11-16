@@ -17,7 +17,7 @@ Parameters:
     --c2 (float): g_2 coefficient in score function (dispersion penalty) used for each chromosome with a `NULL` entry observed in `--param_file` (default: 1.0).
     --c3 (float): g_3 coefficient in score function (local shift) used for each chromosome with a `NULL` entry observed in `--param_file` (default: 1.0).
     -N, --rr_iter (int): Number of RR iterations (default: 50).
-    --solver (str): Optimization software used to solve the main LP. `ECOS` is used by default (default: "ECOS").
+    --solver (str): Optimization software used to solve the main LP. `CLARABEL` is used by default (default: "CLARABEL").
     --bed_format (int): Specifies BED3 or BED6 format. Default is BED6. Generate BED3 output with --bed_format 3 (default: 6).
     --identifiers (str): (Optional) a filename containing identifiers for samples to include in the experiment. Each identifier should be a uniquely-identifying substring of the respective `.wig` sample. If not specified, all samples are used (default: None).
     --outdir (str): Directory in which to store output bed files from the calls to rocco chrom (default: None, create tmp dir.).
@@ -131,7 +131,7 @@ def call_rocco(chrom, wig_path, budget, gamma, tau, c1, c2, c3, solver,
             $\texttt{floor\_eps}$ procedure is applied...
             See `Loci.run_rr()`
         verbose_ (bool): Verbosity flag for the solver
-        solver (str): the solver to use--either "ECOS" or "MOSEK"
+        solver (str): the solver to use--either "CLARABEL" or "MOSEK"
     Returns:
         str: a formatted rocco chrom command with the appropriate parameters.
         substituted.
@@ -165,7 +165,7 @@ def main(args):
                             args['c2'], args['c3'])
     if args['outdir'] is None:
         args['outdir'] = tempfile.mkdtemp(dir=os.getcwd())
-        print(f"--outdir not specified, storing results in {args['outdir']}")
+        print(f"--outdir not specified, storing chromosome-specific BED files in {args['outdir']}")
     if args['outdir'] is not None and not os.path.exists(args['outdir']):
         os.mkdir(args['outdir'])
 
@@ -215,9 +215,9 @@ if __name__ == "__main__":
     parser.add_argument('--c2', type=float, default=1.0, help='g_2 coefficient in score function (dispersion penalty) used for each chromosome  with a `NULL` entry observed in `--param_file`')
     parser.add_argument('--c3', type=float, default=1.0, help='g_3 coefficient in score function (local shift) used for each chromosome  with a `NULL` entry observed in `--param_file`')
     parser.add_argument('-N', '--rr_iter', type=int, default=50, help = 'number of RR iterations')
-    parser.add_argument('--solver', default="ECOS",
+    parser.add_argument('--solver', default="CLARABEL",
                         help="Optimization software used to solve the \
-                        main LP. `ECOS` is used by default.")
+                        main LP. `CLARABEL` is used by default.")
     parser.add_argument('--bed_format', type=int, default=3,
                         help="Specifies BED3 or BED6 format.\
                         Default is BED6. Generate BED3 output with \

@@ -11,9 +11,9 @@ Underlying ROCCO is a constrained optimization problem that can be solved effici
 
 1. Explicitly accounts for both **enrichment and spatial characteristics** of open chromatin signals to capture the full extent of peaks;
 1. **No arbitrary thresholds** on the minimum number of supporting samples/replicates;
-1. Is efficient for **large numbers of samples** with an asymptotic time complexity independent of sample count;
-1. **Does not require training data** or initial candidate peak regions which are hard to define given the lack of a priori sets of open chromatin regions;
-1. Employs a **mathematically tractable model** permitting guarantees of performance and efficiency.
+1. Is efficient for **large numbers of samples** with an asymptotic time complexity independent of sample size;
+2. **Does not require training data** or initial candidate peak regions
+3. Employs a **mathematically tractable model** permitting guarantees of performance and efficiency
 
 ## Getting Started
 
@@ -32,7 +32,7 @@ on manual installation, see [environment.md](https://github.com/nolan-h-hamilton
 
 **Conda**
 
-If using [conda](https://anaconda.org), ROCCO and all dependencies can be installed in a virtual environment specified in [rocco_conda.yml](https://github.com/nolan-h-hamilton/ROCCO/blob/main/rocco_conda.yml):
+If using [conda](https://anaconda.org), ROCCO and all core/optional dependencies can be installed in a virtual environment specified in [rocco_conda.yml](https://github.com/nolan-h-hamilton/ROCCO/blob/main/rocco_conda.yml):
 
 ```
 conda env create -n rocco --file rocco_conda.yml
@@ -48,7 +48,7 @@ API Reference: https://nolan-h-hamilton.github.io/ROCCO/index.html
 
 ## Testing
 [test_rocco.py](https://github.com/nolan-h-hamilton/ROCCO/blob/main/tests/test_rocco.py) is run via GitHub Actions at each release in the [`Tests`](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml) workflow. Simulates data from ENCODE ATAC-seq data and ensures functionality of fundamental tasks. To run
-locally, `cd` in to the `tests` directory and run `pytest test_rocco.py`. 
+locally, `cd` in to the `tests` directory and run `pytest test_rocco.py`.
 
 ## Citation
 ```

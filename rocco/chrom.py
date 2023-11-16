@@ -18,7 +18,7 @@ Parameters:
     --c1 (float): g_1 coefficient in the score function (enrichment reward) (default: 1.0).
     --c2 (float): g_2 coefficient in the score function (dispersion penalty) (default: 1.0).
     --c3 (float): g_3 coefficient in the score function (local shift) (default: 1.0).
-    --solver (str): Optimization software used to solve the main LP. `ECOS` is used by default (default: "ECOS").
+    --solver (str): Optimization software used to solve the main LP (default: "CLARABEL").
     --bed_format (int): BED format, `3` for BED3 format and `6` for BED6 format (default: 6).
     --identifiers (str): (Optional) a filename containing identifiers for samples to include in the experiment. Each identifier should be a uniquely-identifying substring of the respective `.wig` sample. If not specified, all samples are used.
     --outdir (str): Directory in which to store the output bed file (default: current directory).
@@ -402,8 +402,8 @@ if __name__ == "__main__":
     parser.add_argument('--c1', type=float, default=1.0, help='g_1 coefficient in score function (enrichment reward)')
     parser.add_argument('--c2', type=float, default=1.0, help='g_2 coefficient in score function (dispersion penalty) ')
     parser.add_argument('--c3', type=float, default=1.0, help='g_3 coefficient in score function (local shift)')
-    parser.add_argument('--solver', default="ECOS", help='Optimization software used to solve the \
-                        main LP. `ECOS` is used by default.')
+    parser.add_argument('--solver', default="CLARABEL", help='Optimization software used to solve the \
+                        main LP. `CLARABEL` is used by default.')
     parser.add_argument('--bed_format', type=int, default=6,
                         help="`3` for BED3 format and `6` for BED6 format")
     parser.add_argument('--identifiers', default=None,

@@ -14,7 +14,6 @@ Randomization: `Loci.run_rr()`
 import copy
 import math
 import random
-import warnings
 import numpy as np
 import cvxpy as cp
 from scipy import stats
@@ -205,31 +204,6 @@ class Loci:
             head_ = head_.right
         return np.array(sig_mat)
 
-    def g3_vec(self, metric_vec) -> np.ndarray:
-        r"""
-        Compute locus score term $g_3$ for each locus.
-
-        Args:
-            metric_vec (np.ndarray): (by default) a $1 \times n$ vector of
-                median signal values at each locus.
-
-        Returns:
-            np.ndarray: A vector $g_3(i), \forall i=1 \ldots n$
-        """
-        v_vec = []
-        for i,Loc in enumerate(metric_vec):
-            if i == 0:
-                vel = (abs(metric_vec[i] - metric_vec[i+1]))
-            if i == len(metric_vec)-1:
-                vel = abs(metric_vec[i] - metric_vec[i-1])
-            else:
-                vel = max(abs(metric_vec[i] - metric_vec[i+1]),
-                      abs(metric_vec[i] - metric_vec[i-1]))
-
-            vel /= metric_vec[i]+1
-            v_vec.append(vel)
-        return np.array(v_vec)
-
     def score_loci(self, tau: float = 0.0, c1: float = 1.0, c2: float = 1.0, c3: float = 1.0, eps_l=1e-4) -> np.ndarray:
         r"""
         compute locus score vector, i.e., $\mathcal{S}(i), \forall i = 1 \ldots n$
@@ -247,18 +221,33 @@ class Loci:
         Returns:
             np.ndarray: the $n$-dimensional score vector $\mathcal{S}(i), \forall i = 1 \ldots n$
         """
+        def g3_vec(vvec) -> np.ndarray:
+            g3_vals = np.zeros(len(vvec))
+            for i,Loc in enumerate(vvec):
+                if i == 0:
+                    vel = (abs(vvec[i] - vvec[i+1]))
+                if i == len(vvec)-1:
+                    vel = abs(vvec[i] - vvec[i-1])
+                else:
+                    vel = max(abs(vvec[i] - vvec[i+1]),
+                        abs(vvec[i] - vvec[i-1]))
+
+                vel /= vvec[i]+1
+                g3_vals[i] = vel
+            return g3_vals
+
         sig_mat = self.get_sig_mat()
         med_vec = np.median(sig_mat,axis=1) # g_1
         mad_vec = stats.median_abs_deviation(sig_mat,axis=1) # g_2
-        vel_vec = self.g3_vec(med_vec) # g_3
-        s_vec = c1*med_vec - c2*mad_vec + c3*vel_vec
+        g3_vec_ = g3_vec(med_vec) # g_3
+        s_vec = c1*med_vec - c2*mad_vec + c3*g3_vec_
 
         for i, val in enumerate(s_vec):
             if med_vec[i] <= tau:
                 s_vec[i] = 0
         return s_vec - eps_l
 
-    def run_rr(self, lp_sol, N, loci_scores, budget, gam, eps = 1e-4) -> np.ndarray:
+    def run_rr(self, lp_sol, N, loci_scores, budget, gam, eps = 1e-8) -> np.ndarray:
         r"""
         Carry out the $\texttt{RR}$ rounding procedure to return a
         'good' integral solution with reference to the LP solution
@@ -269,7 +258,7 @@ class Loci:
                 floor-epsilon protocol is applied.
             loci_scores (np.ndarray): mathcal{S} for each locus
             budget (float): budget parameter
-            gam (float): weight for $\sum_{i=1}^{i=n-1} |lp_sol[i] - lp_sol[i+1]| (total variation) penalty
+            gam (float): weight for $\sum_{i=1}^{i=n-1} |lp_sol[i] - lp_sol[i+1]|$ (total variation) penalty
             eps (float): `init_sol = np.floor(lp_sol + eps)`. Decreased iteratively if initial `eps` does
                 not yield a feasible solution.
 
@@ -278,8 +267,10 @@ class Loci:
     """
         n = len(loci_scores)
         eps_cpy = eps
+        # initialize as floor_eps solution
         init_sol = np.floor(lp_sol + eps)
         while np.sum(init_sol) > np.floor(n*budget):
+            # loop guarantees the feasibility of solutions
             eps_cpy = eps_cpy/2
             init_sol = np.floor(lp_sol + eps_cpy)
         if N <= 0:
@@ -292,9 +283,8 @@ class Loci:
         rr_sol = init_sol
         best_score = init_score
         for j in range(N):
-            # initialize as `lp_sol`
             ell_rand_n = copy.copy(lp_sol)
-            # can restrict rounding to `nonint_loci` for efficiency.
+            # for efficiency, only round `nonint_loci`
             for idx in nonint_loci:
                 if random.random() <= lp_sol[idx]:
                     ell_rand_n[idx] = 1
@@ -311,27 +301,28 @@ class Loci:
         return rr_sol
 
     def rocco_lp(self, budget: float = .035, tau: float = 0, gam: float = 1, c1: float = 1,
-             c2: float = 1, c3: float = 1, verbose_: bool = False, solver: str = "ECOS",
-             N: int = 50, solver_reltol: float = 1e-8, solver_maxiter: float = 10000,
+             c2: float = 1, c3: float = 1, verbose_: bool = False, solver: str = "CLARABEL",
+             N: int = 50, solver_reltol: float = 1.0e-8, solver_maxiter: float = 10000,
              solver_feastol: float = 1e-8) -> cp.Problem:
         r"""
-        Solve relaxed problem as an LP and assign binary accessibility
-        prediction to each locus using the $\texttt{RR}$ or $\texttt{floor\_eps}$
-        procedure.
+        Solve the LP-relaxation and apply the randomization procedure,
+        $\texttt{RR}$ ($N > 0$), or $\texttt{floor\_eps} ($N \leq 0$) for an
+        integral solution $\mathbf{\ell}^{*}$.
 
         Args:
             budget (float): budget constraint
-            tau (float): tau in $\mathcal{S}(i)$
-            gam (float): gamma
-            c1 (float): c1 value in $\mathcal{S}(i)$
-            c2 (float): c2 value in $\mathcal{S}(i)$
-            c3 (float): c3 value in $\mathcal{S}(i)$
-            N (int): RR procedure iterations. If N <= 0,
-                \texttt{floor\_eps} procedure is applied...
-                See `Loci.run_rr()`
+            tau (float): $\tau$ in $\mathcal{S}$
+            gam (float): $\gamma$ in obj. function $f(\mathbf{\ell})$
+            c1 (float): $c_1$ value in $\mathcal{S}$. 
+            c2 (float): $c_2$ value in $\mathcal{S}$
+            c3 (float): $c_3$ value in $\mathcal{S}$
+            N (int): $\texttt{RR}$ procedure iterations. See `Loci.run_rr()`
             verbose_ (bool): Verbosity flag for the solver
-            solver (str): Defaults to `ECOS`. `MOSEK` is a commercial grade solver that is also supported.
+            solver (str): Defaults to `CLARABEL`. `ECOS, PDLP, MOSEK` are also supported.
             solver_reltol (float): acceptable relative optimality gap for solver termination.
+            solver_feastol (float): the solver will consider solutions within `solver_feastol`
+                of the constraint boundaries as feasible
+            solver_maxiter (int): bounds the number of solving iterations before terminating
         Returns:
             cp.Problem: a CVXPY problem object
     """
@@ -339,7 +330,7 @@ class Loci:
         n = len(loci_scores)
         # define problem in CVXPY
         ell = cp.Variable(n)
-        z = cp.Variable(n-1)
+        z = cp.Variable(n-1) # aux. variables
         constraints = [ell <= 1,
                           ell >= 0,
                           cp.sum(ell) <= math.floor(budget*n),
@@ -350,41 +341,43 @@ class Loci:
 
         # Refer to `Solve method options` at
         # https://www.cvxpy.org/tutorial/advanced/index.html
+        if solver.lower() not in [x.lower() for x in cp.installed_solvers()]:
+            raise cp.error.SolverError(
+                f'\nSolver {solver} is not available.\
+                \nInstalled solvers: {cp.installed_solvers()}\
+                \nhttps://www.cvxpy.org/tutorial/advanced/index.html\n')
 
-        if solver.lower() == "ecos":
+        elif solver.lower() == 'clarabel':
+            problem.solve(solver=cp.CLARABEL,
+                          tol_gap_rel=solver_reltol,
+                          tol_feas=solver_feastol,
+                          max_iter=solver_maxiter,
+                          verbose=verbose_)
+
+        elif solver.lower() == "ecos":
             problem.solve(solver=cp.ECOS,
                           reltol=solver_reltol,
                           max_iters=solver_maxiter,
                           feastol=solver_feastol,
                           verbose=verbose_)
 
-        if solver.lower() == "mosek":
+        elif solver.lower() == "mosek":
             # https://docs.mosek.com/latest/pythonapi/parameters.html
             MOSEK_OPTS = {'MSK_IPAR_NUM_THREADS': 1,
-                        'MSK_DPAR_INTPNT_TOL_REL_GAP': solver_reltol,
                         'MSK_IPAR_PRESOLVE_LINDEP_ABS_WORK_TRH': 10}
             try:
-                problem.solve(cp.MOSEK, mosek_params=MOSEK_OPTS, bfs=True, verbose=verbose_)
-            except Exception as ex:
-                print("Ensure a valid MOSEK license file is\
-                available in your home directory and that the\
-                mosek-python interface is installed, e.g.,\
-                via 'pip install mosek'")
+                problem.solve(cp.MOSEK, mosek_params=MOSEK_OPTS, eps=solver_reltol, bfs=True, verbose=verbose_)
+            except cp.error.SolverError as ex:
+                print("Ensure a valid MOSEK license is available: https://docs.mosek.com/latest/licensing/quickstart.html")
                 raise ex
 
-        if solver.lower() == "pdlp":
-            try:
-                problem.solve(solver=cp.PDLP, reltol=solver_reltol, verbose=verbose_)
-            except Exception as ex:
-                print("Ensure PDLP solver is available via ortools: `pip install ortools`")
-                raise ex
+        elif solver.lower() == "pdlp":
+            problem.solve(solver=cp.PDLP, verbose=verbose_)
 
-        if solver.lower() == 'clarabel':
-            problem.solve(solver=cp.CLARABEL,
-                          tol_gap_rel=solver_reltol,
-                          tol_feas=solver_feastol,
-                          max_iter=solver_maxiter,
-                          verbose=verbose_)
+        p_stat = problem.status
+        if p_stat is None or p_stat in ['infeasible','unbounded'] or problem.variables()[0].value is None:
+            raise cp.error.SolverError(f'\nFailed to obtain optimal solution.\
+                \nProblem status: {problem.status}.\n')
 
         lp_sol = problem.variables()[0].value
         sol_rr  = self.run_rr(lp_sol, N, loci_scores, budget, gam)
