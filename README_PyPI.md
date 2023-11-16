@@ -1,6 +1,6 @@
 # [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
 <p align="center">
-<img width="472" alt="logo" src="https://github.com/nolan-h-hamilton/ROCCO/assets/57746191/467d8b2a-5861-41d3-b496-f3cded91c4ab">
+<img width="472" alt="logo" src="https://github.com/nolan-h-hamilton/ROCCO/assets/57746191/f700408d-4749-441c-8a02-e51141c85eb5">
 
 Underlying ROCCO is a constrained optimization problem that can be solved efficiently to **predict consensus regions of open chromatin** across multiple samples.
 

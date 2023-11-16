@@ -31,7 +31,7 @@ jobs:
       - run: pip install pdoc
       - run: sudo apt-get install -y bedtools
       - run: sudo apt-get install -y samtools
-      - run: pdoc rocco/locus.py rocco/loci.py rocco/rocco.py rocco/chrom.py rocco/gwide.py rocco/rocco_aux.py rocco/budgets.py rocco/prep.py --math -d google -o docs/ --logo "https://github.com/nolan-h-hamilton/ROCCO/assets/57746191/467d8b2a-5861-41d3-b496-f3cded91c4ab"
+      - run: pdoc rocco/locus.py rocco/loci.py rocco/rocco.py rocco/chrom.py rocco/gwide.py rocco/rocco_aux.py rocco/budgets.py rocco/prep.py --math -d google -o docs/ --logo "https://github.com/nolan-h-hamilton/ROCCO/assets/57746191/f700408d-4749-441c-8a02-e51141c85eb5"
       - uses: actions/upload-pages-artifact@v1
         with:
           path: docs/

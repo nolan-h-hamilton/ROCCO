@@ -1,6 +1,6 @@
 # [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
 <p align="center">
-<img width="472" alt="logo" src="https://github.com/nolan-h-hamilton/ROCCO/assets/57746191/467d8b2a-5861-41d3-b496-f3cded91c4ab">
+<img width="472" alt="logo" src="https://github.com/nolan-h-hamilton/ROCCO/assets/57746191/f700408d-4749-441c-8a02-e51141c85eb5">
 
 [![Tests](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml/badge.svg)](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml)
 [![PyPI](https://img.shields.io/pypi/v/rocco?label=PyPI%20package&color=blue)](https://pypi.org/project/rocco/)
@@ -44,7 +44,7 @@ load via: `conda activate rocco`.
 Refer to the interactive demonstration: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb). Includes a walkthrough using publicly available ENCODE ATAC-seq alignments.
 
 ## Documentation
-API Reference: https://nolan-h-hamilton.github.io/ROCCO/rocco/rocco.html
+[Rocco API Reference](https://nolan-h-hamilton.github.io/ROCCO/rocco/rocco.html)
 
 ## Testing
 [test_rocco.py](https://github.com/nolan-h-hamilton/ROCCO/blob/main/tests/test_rocco.py) is run via GitHub Actions at each release in the [`Tests`](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml) workflow. Simulates data from ENCODE ATAC-seq data and ensures functionality of fundamental tasks. To run
