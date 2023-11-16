@@ -17,6 +17,9 @@ dependencies:
     - Mosek
     - numpy
     - cvxpy
+    - clarabel
+    - ecos
+    - ortools
     - pandas
     - pararead
     - logmuse

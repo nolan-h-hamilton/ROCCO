@@ -11,13 +11,13 @@ Underlying ROCCO is a constrained optimization problem that can be solved effici
 
 1. Explicitly accounts for both **enrichment and spatial characteristics** of open chromatin signals to capture the full extent of peaks;
 1. **No arbitrary thresholds** on the minimum number of supporting samples/replicates;
-1. Is efficient for **large numbers of samples** with an asymptotic time complexity independent of sample count;
-1. **Does not require training data** or initial candidate peak regions which are hard to define given the lack of a priori sets of open chromatin regions;
-1. Employs a **mathematically tractable model** permitting guarantees of performance and efficiency.
+1. Is efficient for **large numbers of samples** with an asymptotic time complexity independent of sample size;
+2. **Does not require training data** or initial candidate peak regions
+3. Employs a **mathematically tractable model** permitting guarantees of performance and efficiency
 
 ## Getting Started
 
-ROCCO is written for compatibility with any unix variant: MacOS, linux, etc.
+ROCCO is written for compatibility with -nix variants: MacOS, linux, etc.
 
 
 **Install ROCCO with pip** ([PyPI](https://pypi.org/project/rocco/))
@@ -27,11 +27,12 @@ ROCCO can be installed with pip:
   pip install rocco --upgrade
   ```
 
-System Dependencies: *samtools, bedtools, [UCSC KentUtils](http://hgdownload.soe.ucsc.edu/admin/exe/): bigWigToWig, wigToBigWig, bigWigCat*
+System Dependencies: *samtools, bedtools, [UCSC KentUtils](http://hgdownload.soe.ucsc.edu/admin/exe/): bigWigToWig, wigToBigWig, bigWigCat*. All of these are available on conda.  Alternatively, for details
+on manual installation, see [environment.md](https://github.com/nolan-h-hamilton/ROCCO/blob/main/docs/environment.md)
 
 **Conda**
 
-If using [conda](https://anaconda.org), ROCCO and all dependencies can be installed in a virtual environment specified in [rocco_conda.yml](https://github.com/nolan-h-hamilton/ROCCO/blob/main/rocco_conda.yml):
+If using [conda](https://anaconda.org), ROCCO and all core/optional dependencies can be installed in a virtual environment specified in [rocco_conda.yml](https://github.com/nolan-h-hamilton/ROCCO/blob/main/rocco_conda.yml):
 
 ```
 conda env create -n rocco --file rocco_conda.yml
@@ -40,15 +41,14 @@ conda env create -n rocco --file rocco_conda.yml
 load via: `conda activate rocco`.
 
 #### Quick Start Demo
-For a quick intro, refer to the interactive demonstration: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb).
+For a quick intro, refer to the interactive demonstration: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb). Includes a walkthrough using publicly available ENCODE ATAC-seq alignments.
 
 ## Documentation
 API Reference: https://nolan-h-hamilton.github.io/ROCCO/index.html
 
 ## Testing
-See the `Tests` GitHub Action which runs [test_rocco.py](https://github.com/nolan-h-hamilton/ROCCO/blob/main/tests/test_rocco.py) using pytest.
-
-In this workflow, ENCODE ATAC-seq data is used to simulate test data on which the functionality of the software is verified.
+[test_rocco.py](https://github.com/nolan-h-hamilton/ROCCO/blob/main/tests/test_rocco.py) is run via GitHub Actions at each release in the [`Tests`](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml) workflow. Simulates data from ENCODE ATAC-seq data and ensures functionality of fundamental tasks. To run
+locally, `cd` in to the `tests` directory and run `pytest test_rocco.py`.
 
 ## Citation
 ```

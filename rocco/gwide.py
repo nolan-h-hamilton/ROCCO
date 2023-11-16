@@ -17,10 +17,10 @@ Parameters:
     --c2 (float): g_2 coefficient in score function (dispersion penalty) used for each chromosome with a `NULL` entry observed in `--param_file` (default: 1.0).
     --c3 (float): g_3 coefficient in score function (local shift) used for each chromosome with a `NULL` entry observed in `--param_file` (default: 1.0).
     -N, --rr_iter (int): Number of RR iterations (default: 50).
-    --solver (str): Optimization software used to solve the main LP. `ECOS` is used by default (default: "ECOS").
+    --solver (str): Optimization software used to solve the main LP. `CLARABEL` is used by default (default: "CLARABEL").
     --bed_format (int): Specifies BED3 or BED6 format. Default is BED6. Generate BED3 output with --bed_format 3 (default: 6).
     --identifiers (str): (Optional) a filename containing identifiers for samples to include in the experiment. Each identifier should be a uniquely-identifying substring of the respective `.wig` sample. If not specified, all samples are used (default: None).
-    --outdir (str): Directory in which to store output bed files from the calls to rocco chrom (default: current directory).
+    --outdir (str): Directory in which to store output bed files from the calls to rocco chrom (default: None, create tmp dir.).
     --combine (str): If not None, combine output bed files and store in the file specified with this parameter. For example, `--combine bedname.bed` concatenates the chromosome-specific bedfiles into `bedname.bed` (default: None).
     --multi (int): Run `--multi` rocco chrom jobs simultaneously to improve speed. May increase peak memory use (default: 1).
     --verbose (bool): Set to `True` for verbose logging (default: False).
@@ -131,7 +131,7 @@ def call_rocco(chrom, wig_path, budget, gamma, tau, c1, c2, c3, solver,
             $\texttt{floor\_eps}$ procedure is applied...
             See `Loci.run_rr()`
         verbose_ (bool): Verbosity flag for the solver
-        solver (str): the solver to use--either "ECOS" or "MOSEK"
+        solver (str): the solver to use--either "CLARABEL" or "MOSEK"
     Returns:
         str: a formatted rocco chrom command with the appropriate parameters.
         substituted.
@@ -163,9 +163,10 @@ def main(args):
     chrom_args = get_params(args['param_file'], args['budget'],
                             args['gamma'], args['tau'], args['c1'],
                             args['c2'], args['c3'])
-
-    args['outdir'] = rocco_aux.trim_path(args['outdir'])
-    if not os.path.exists(args['outdir']):
+    if args['outdir'] is None:
+        args['outdir'] = tempfile.mkdtemp(dir=os.getcwd())
+        print(f"--outdir not specified, storing chromosome-specific BED files in {args['outdir']}")
+    if args['outdir'] is not None and not os.path.exists(args['outdir']):
         os.mkdir(args['outdir'])
 
     tmp = tempfile.NamedTemporaryFile(mode="w+")
@@ -214,9 +215,9 @@ if __name__ == "__main__":
     parser.add_argument('--c2', type=float, default=1.0, help='g_2 coefficient in score function (dispersion penalty) used for each chromosome  with a `NULL` entry observed in `--param_file`')
     parser.add_argument('--c3', type=float, default=1.0, help='g_3 coefficient in score function (local shift) used for each chromosome  with a `NULL` entry observed in `--param_file`')
     parser.add_argument('-N', '--rr_iter', type=int, default=50, help = 'number of RR iterations')
-    parser.add_argument('--solver', default="ECOS",
+    parser.add_argument('--solver', default="CLARABEL",
                         help="Optimization software used to solve the \
-                        main LP. `ECOS` is used by default.")
+                        main LP. `CLARABEL` is used by default.")
     parser.add_argument('--bed_format', type=int, default=3,
                         help="Specifies BED3 or BED6 format.\
                         Default is BED6. Generate BED3 output with \
@@ -227,7 +228,7 @@ if __name__ == "__main__":
                           fier should be a uniquely-identifying substring of\
                           the respective `.wig` sample. If not specified, all\
                           samples are used.")
-    parser.add_argument('--outdir', default='.',
+    parser.add_argument('--outdir', default=None,
                         help="directory in which to store output bed files from the calls to rocco chrom")
     parser.add_argument('--combine', default=None, help="if not None, combine\
                         output bed files and store in the file specified\
@@ -240,6 +241,5 @@ if __name__ == "__main__":
     parser.add_argument('--group_column', default='group', help='column in coldata file containing group labels. Only used if --coldata is not None')
     parser.add_argument('--sample_column', default='sample', help='column in coldata file containing sample labels. Only used if --coldata is not None')
     parser.add_argument('--split_sex', default=None, help='column in coldata file containing sex labels. Only used if --coldata is not None')
-
     args = vars(parser.parse_args())
     main(args)

@@ -11,20 +11,24 @@ this will create a conda environment `rocco` with dependencies that can be loade
 
 ## Manual Installation
 
-```pip install rocco```
+```pip install rocco --upgrade```
 
 ### Dependencies
+The dependencies can be obtained through [Bioconda](https://bioconda.github.io) or downloaded at the links listed below.
+
 **samtools**
 
-samtools (https://www.htslib.org/download/) v1.17
+samtools (https://www.htslib.org/download/)
 
+Bioconda: `samtools`
 
 ***bedtools***
 
-bedtools (https://bedtools.readthedocs.io/en/latest/) v2.30.0 
+bedtools (https://bedtools.readthedocs.io/en/latest/)
 
+Bioconda: `bedtools`
 
-***ucsctools***
+***UCSC Binary Utilities***
 
 https://hgdownload.soe.ucsc.edu/admin/exe/
 
@@ -32,4 +36,11 @@ https://hgdownload.soe.ucsc.edu/admin/exe/
 bigWigToWig
 bigWigCat
 wigToBigWig
+```
+
+Bioconda:
+```
+ucsc-bigwigtowig
+ucsc-wigtobigwig
+ucsc-bigwigcat
 ```

@@ -5,7 +5,9 @@ create test data
 import copy
 import sys
 import os
+import random
 import numpy as np
+
 
 def read_wig_sim(wig_file, start=0, end=10**10, locus_size=50):
     loci = []
@@ -44,9 +46,8 @@ for i in range(int(sys.argv[3])):
     orig = copy.copy(orig_)
     for j in range(0,len(orig)):
         if orig[j] > 0:
-            orig[j] = max(int(0),int(orig[j] + np.random.normal(0,float(sys.argv[2]),size=1)))
-        else:
-            orig[j] = 0
+            if random.random() < .10:
+                orig[j] = max(int(0),int(orig[j] + np.random.normal(0,float(sys.argv[2]),size=1)))
     fname = sys.argv[1] + f'.c{str(i)}.wig'
     f_ = open(fname,'w',encoding='utf-8')
     for x,y in zip(loci,orig):
