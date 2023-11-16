@@ -6,8 +6,9 @@ import os
 import subprocess
 import shutil
 
+solver = 'ECOS'
 peakfile_minsize = 100
-jaccard_min = .80
+jaccard_min = .85
 rr_iter = '250'
 chr19_start = '20000000'
 chr19_end = '40000000'
@@ -91,7 +92,7 @@ def test_chrom_chr19():
     """
     # check if command returns exit code '0'
     assert subprocess.run(['rocco', 'chrom','--chrom', 'chr19', '--wig_path',  os.path.dirname(tracks_chrom19_wig),
-                           '--budget', chr19_budget, '-N', rr_iter, '--start', chr19_start, '--end', chr19_end],
+                           '--budget', chr19_budget, '-N', rr_iter, '--start', chr19_start, '--end', chr19_end, '--solver', solver],
                           capture_output=True, encoding='utf-8').returncode == 0, 'rocco chrom returncode != 0'
     # check if output file was created properly
     assert chr19_outfile in os.listdir()
@@ -105,7 +106,7 @@ def test_chrom_chr20():
     """
     # check if command returns exit code '0'
     assert subprocess.run(['rocco', 'chrom', '--chrom', 'chr20', '--wig_path', os.path.dirname(tracks_chrom20_wig),
-                            '--budget', chr20_budget, '-N', rr_iter, '--start', chr20_start, '--end', chr20_end],
+                            '--budget', chr20_budget, '-N', rr_iter, '--start', chr20_start, '--end', chr20_end,  '--solver', solver],
                           capture_output=True, encoding='utf-8').returncode == 0,'rocco chrom returncode != 0'
     # check if output file was created properly
     assert chr20_outfile in os.listdir()
@@ -114,7 +115,7 @@ def test_chrom_chr20():
 
 def test_gwide():
     # check if command returns exit code '0'
-    assert subprocess.run(["rocco", "gwide", "-p", "test_params.csv","--outdir", gwide_outdir, "--combine", gwide_outfile, "-N", rr_iter],
+    assert subprocess.run(["rocco", "gwide", "-p", "test_params.csv","--outdir", gwide_outdir, "--combine", gwide_outfile, "-N", rr_iter,  '--solver', solver],
                           capture_output=True, encoding='utf-8').returncode == 0, 'rocco gwide returncode != 0'
     # check if output file was created properly
     assert gwide_outfile in os.listdir()

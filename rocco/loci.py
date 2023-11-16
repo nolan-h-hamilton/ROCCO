@@ -312,7 +312,8 @@ class Loci:
 
     def rocco_lp(self, budget: float = .035, tau: float = 0, gam: float = 1, c1: float = 1,
              c2: float = 1, c3: float = 1, verbose_: bool = False, solver: str = "ECOS",
-             N: int = 50, solver_reltol: float = 1e-4) -> cp.Problem:
+             N: int = 50, solver_reltol: float = 1e-8, solver_maxiter: float = 10000,
+             solver_feastol: float = 1e-8) -> cp.Problem:
         r"""
         Solve relaxed problem as an LP and assign binary accessibility
         prediction to each locus using the $\texttt{RR}$ or $\texttt{floor\_eps}$
@@ -351,7 +352,11 @@ class Loci:
         # https://www.cvxpy.org/tutorial/advanced/index.html
 
         if solver.lower() == "ecos":
-            problem.solve(solver=cp.ECOS, reltol=solver_reltol, verbose=verbose_)
+            problem.solve(solver=cp.ECOS,
+                          reltol=solver_reltol,
+                          max_iters=solver_maxiter,
+                          feastol=solver_feastol,
+                          verbose=verbose_)
 
         if solver.lower() == "mosek":
             # https://docs.mosek.com/latest/pythonapi/parameters.html
@@ -373,6 +378,13 @@ class Loci:
             except Exception as ex:
                 print("Ensure PDLP solver is available via ortools: `pip install ortools`")
                 raise ex
+
+        if solver.lower() == 'clarabel':
+            problem.solve(solver=cp.CLARABEL,
+                          tol_gap_rel=solver_reltol,
+                          tol_feas=solver_feastol,
+                          max_iter=solver_maxiter,
+                          verbose=verbose_)
 
         lp_sol = problem.variables()[0].value
         sol_rr  = self.run_rr(lp_sol, N, loci_scores, budget, gam)
