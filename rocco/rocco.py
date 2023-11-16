@@ -57,8 +57,10 @@ def parse_coldata(coldata_file: str, group_column: str, sample_column: str, spli
     These created textfiles are then used for the `--identifiers` argument of `rocco gwide`/`rocco chrom`
 
     *The entries in `sample_column` should uniquely identify the corresponding `.wig` files* generated with `rocco prep`.
-        Ideally, they are just the stripped names of the corresponding BAM files supplied to `rocco prep`.
-
+        Example:
+            Wiggle files: `[tracks_dir]/sample_12345_a.wig`, `[tracks_dir]/sample_12345_b.wig`
+            Good ID(s) in `sample_column`: `sample_12345_a`, `sample_12345_b`
+            Bad ID(s) in `sample_column`: `sample_12345`
     Args:
         coldata_file (str): path to the colData file in CSV format
         group_column (str):  column containing group label
@@ -152,7 +154,7 @@ def main():
     parser_subcommand_gwide.add_argument('--solver', type=str, default="ECOS")
     parser_subcommand_gwide.add_argument('--bed_format', type=int, default=3)
     parser_subcommand_gwide.add_argument('--identifiers', default=None)
-    parser_subcommand_gwide.add_argument('--outdir', default='.')
+    parser_subcommand_gwide.add_argument('--outdir', default=None, help='if `None`, a temporary directory will be created')
     parser_subcommand_gwide.add_argument('--combine', default=None)
     parser_subcommand_gwide.add_argument('--multi', default=1, type=int, help='number of simultaneous `rocco chrom` jobs to execute')
     parser_subcommand_gwide.add_argument('--verbose', default=False, action="store_true")

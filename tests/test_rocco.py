@@ -30,7 +30,7 @@ gwide_outdir = os.path.relpath('output/combined')
 gwide_ref_file = os.path.relpath('data/ref/ref_gwide.bed')
 
 
-def test_sim(var=1, samples=20):
+def test_sim(var=1, samples=10):
     """
     Add noise to existing wiggle file to generate varying tracks for testing purposes.
     `samples` signal tracks are generated.

@@ -20,7 +20,7 @@ Parameters:
     --solver (str): Optimization software used to solve the main LP. `ECOS` is used by default (default: "ECOS").
     --bed_format (int): Specifies BED3 or BED6 format. Default is BED6. Generate BED3 output with --bed_format 3 (default: 6).
     --identifiers (str): (Optional) a filename containing identifiers for samples to include in the experiment. Each identifier should be a uniquely-identifying substring of the respective `.wig` sample. If not specified, all samples are used (default: None).
-    --outdir (str): Directory in which to store output bed files from the calls to rocco chrom (default: current directory).
+    --outdir (str): Directory in which to store output bed files from the calls to rocco chrom (default: None, create tmp dir.).
     --combine (str): If not None, combine output bed files and store in the file specified with this parameter. For example, `--combine bedname.bed` concatenates the chromosome-specific bedfiles into `bedname.bed` (default: None).
     --multi (int): Run `--multi` rocco chrom jobs simultaneously to improve speed. May increase peak memory use (default: 1).
     --verbose (bool): Set to `True` for verbose logging (default: False).
@@ -163,9 +163,10 @@ def main(args):
     chrom_args = get_params(args['param_file'], args['budget'],
                             args['gamma'], args['tau'], args['c1'],
                             args['c2'], args['c3'])
-
-    args['outdir'] = rocco_aux.trim_path(args['outdir'])
-    if not os.path.exists(args['outdir']):
+    if args['outdir'] is None:
+        args['outdir'] = tempfile.mkdtemp(dir=os.getcwd())
+        print(f"--outdir not specified, storing results in {args['outdir']}")
+    if args['outdir'] is not None and not os.path.exists(args['outdir']):
         os.mkdir(args['outdir'])
 
     tmp = tempfile.NamedTemporaryFile(mode="w+")
@@ -227,7 +228,7 @@ if __name__ == "__main__":
                           fier should be a uniquely-identifying substring of\
                           the respective `.wig` sample. If not specified, all\
                           samples are used.")
-    parser.add_argument('--outdir', default='.',
+    parser.add_argument('--outdir', default=None,
                         help="directory in which to store output bed files from the calls to rocco chrom")
     parser.add_argument('--combine', default=None, help="if not None, combine\
                         output bed files and store in the file specified\
@@ -240,6 +241,5 @@ if __name__ == "__main__":
     parser.add_argument('--group_column', default='group', help='column in coldata file containing group labels. Only used if --coldata is not None')
     parser.add_argument('--sample_column', default='sample', help='column in coldata file containing sample labels. Only used if --coldata is not None')
     parser.add_argument('--split_sex', default=None, help='column in coldata file containing sex labels. Only used if --coldata is not None')
-
     args = vars(parser.parse_args())
     main(args)
