@@ -47,7 +47,7 @@ Refer to the interactive demonstration: [demo.ipynb](https://github.com/nolan-h-
 [Rocco API Reference](https://nolan-h-hamilton.github.io/ROCCO/rocco/rocco.html)
 
 ## Testing
-[test_rocco.py](https://github.com/nolan-h-hamilton/ROCCO/blob/main/tests/test_rocco.py) is run via GitHub Actions at each release in the [`Tests`](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml) workflow. Simulates data from ENCODE ATAC-seq data and ensures functionality of fundamental tasks. To run
+[test_rocco.py](https://github.com/nolan-h-hamilton/ROCCO/blob/main/tests/test_rocco.py) is run via GitHub Actions at each release in the [`Tests`](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml) workflow. Simulates test data using  ENCODE ATAC-seq alignments and ensures functionality of fundamental tasks. To run
 locally, `cd` in to the `tests` directory and run `pytest test_rocco.py`.
 
 ## Citation
