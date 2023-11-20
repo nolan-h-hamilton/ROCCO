@@ -5,22 +5,6 @@ import pysam
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
-
-def trim_path(fname: str) -> str:
-    """
-    Remove trailing `/`s from directory/file paths
-
-    Args:
-        fname (str): name
-
-    Returns:
-        str: trimmed name
-    """
-    while len(fname) > 1 and fname[-1] == '/':
-        fname = fname[:-1]
-    return fname
-
-
 def sort_combine_bed(outfile: str, dir_: str = '.', exclude_list: list = ['EBV', 'M', 'MT']):
     """
     Sorts and combines chromosome-specific peak files. Creates a new
@@ -32,12 +16,11 @@ def sort_combine_bed(outfile: str, dir_: str = '.', exclude_list: list = ['EBV',
             Default is the current directory ('.').
         exclude_list (list): list of chromosomes to exclude. (default: ['EBV', 'M', 'MT'])
 
-
     Notes:
         - this function assumes the bed files are named with the\
             same convention and delimiter '_'
     """
-    dir_ = trim_path(dir_)
+    dir_ = os.path.normpath(dir_)
 
     filenames = [f_ for f_ in os.listdir(dir_)
                  if f_.split('.')[-1] == 'bed' and 'ROCCO_out' in f_
@@ -52,11 +35,10 @@ def sort_combine_bed(outfile: str, dir_: str = '.', exclude_list: list = ['EBV',
     chr_index = [i for i in range(len(name_template)) if 'chr' in name_template[i][:3]][0]
     filenames = sorted(filenames,
                        key=lambda x: int(val) if (val := x.split('_')[chr_index][3:]).isnumeric() else ord(val))
-    filenames = [dir_ + '/' + fname for fname in filenames]
+    filenames = [os.path.join(dir_, fname) for fname in filenames]
     with open(outfile, mode='w', encoding='utf-8') as outfile_:
         for fname in filenames:
-            cat_process = subprocess.Popen(('cat', fname),
-                                           stdout=outfile_.fileno())
+            cat_process = subprocess.Popen(('cat', fname), stdout=outfile_.fileno())
             cat_process.wait()
 
 
@@ -88,6 +70,7 @@ def get_size_file(assembly='hg38', exclude_list=['EBV', 'M', 'MT']) -> str:
     assembly = assembly.lower()
     url = f"http://hgdownload.soe.ucsc.edu/goldenPath/{assembly}/bigZips/{assembly}.chrom.sizes"
     output_path = f"{assembly}.sizes"
+    print(f'\n{url} --> {output_path}\n')
     download_file(url, output_path)
     with open(output_path, 'r') as file_:
         lines = file_.readlines()
@@ -108,7 +91,11 @@ def parse_size_file(size_file, exclude_list=['EBV', 'M', 'MT']) -> dict:
     Returns:
         dict: a dictionary where chromosome names are keys and their sizes are values.
     """
-    df = pd.read_csv(size_file, sep='\t', header=None)
+    try:
+        df = pd.read_csv(size_file, sep='\t', header=None)
+    except Exception as ex:
+        print(f'\nrocco_aux.parse_size_file(): Could not parse {size_file}. Ensure it is a valid sizes file.\n')
+        raise
     size_dict = {key: val
                  for key, val in OrderedDict(zip(df.iloc[:, 0], df.iloc[:, 1])).items()
                     if key not in exclude_list}
@@ -125,14 +112,13 @@ def is_alignment(filepath) -> bool:
     Returns:
         bool: True if the file is an alignment file, False otherwise.
     """
-    if 'bam' == filepath.split('.')[-1]:
+    if filepath.split('.')[-1] in ['bam','sam']:
         try:
             pysam.head("-n 1", filepath)
             return True
         except pysam.SamtoolsError:
             return False
     return False
-
 
 def run_par(cmd_file, threads=-1, verbose=False):
     """
@@ -152,6 +138,7 @@ def run_par(cmd_file, threads=-1, verbose=False):
 
     commands = [cmd.strip() for cmd in commands][::-1]
 
+
     def run_command(command, verbose=verbose):
         if not verbose:
             process = subprocess.Popen(command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -168,7 +155,6 @@ def run_par(cmd_file, threads=-1, verbose=False):
     if verbose:
         for command, returncode in results[::-1]:
             print(f"cmd: {command}\nretval: {returncode}\n")
-
 
 def has_reads(bamfile, min_reads=1, chrom='chrY') -> bool:
     """

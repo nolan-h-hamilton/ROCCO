@@ -48,7 +48,8 @@ for i in range(int(sys.argv[3])):
         if orig[j] > 0:
             if random.random() < .10:
                 orig[j] = max(int(0),int(orig[j] + np.random.normal(0,float(sys.argv[2]),size=1)))
-    fname = sys.argv[1] + f'.c{str(i)}.wig'
+    chrom = os.path.basename(sys.argv[1]).split('_')[0]
+    fname = f'data/tracks_{chrom}/{chrom}_samp{str(i+1)}.wig'
     f_ = open(fname,'w',encoding='utf-8')
     for x,y in zip(loci,orig):
         f_.write(f'{int(x)}\t{int(y)}\n')

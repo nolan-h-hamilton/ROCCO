@@ -1,4 +1,4 @@
-"""
+r"""
 Runs multiple [`rocco chrom`](https://nolan-h-hamilton.github.io/ROCCO/rocco/chrom.html) jobs,
 which execute ROCCO on individual chromosomes. Chromosome-specific parameters are collected in a
 CSV file specified with argument `-p --param_file`. See example `--param_file` below for hg38.
@@ -7,19 +7,36 @@ If any parameter entry in the CSV file `--param_file` is set to `NULL`, the scri
 specified with the command-line arguments.
 
 Parameters:
-    -p, --param_file (str, required): Path to the parameter file containing per-chromosome parameters. Required.
-        See https://github.com/nolan-h-hamilton/ROCCO/blob/main/hg38_params.csv for an example with chromosome-specific budgets on hg38.
-        `rocco budgets` can also be used to compute chromosome-specific budgets and produces a valid `-p/--param_file`.
-    -b, --budget (float): Budget parameter (upper-bound on the fraction of base pairs selected as 'open' in a given chrom.) used for each chromosome with a `NULL` entry observed in `--param_file` (default: 0.035).
-    -g, --gamma (float): Gamma parameter (discontinuity penalty weight) used for each chromosome with a `NULL` entry observed in `--param_file` (default: 1.0).
-    -t, --tau (float): Tau parameter (enrichment threshold) used for each chromosome with a `NULL` entry observed in `--param_file` (default: 0.0).
-    --c1 (float): g_1 coefficient in score function (enrichment reward) used for each chromosome with a `NULL` entry observed in `--param_file` (default: 1.0).
-    --c2 (float): g_2 coefficient in score function (dispersion penalty) used for each chromosome with a `NULL` entry observed in `--param_file` (default: 1.0).
-    --c3 (float): g_3 coefficient in score function (local shift) used for each chromosome with a `NULL` entry observed in `--param_file` (default: 1.0).
-    -N, --rr_iter (int): Number of RR iterations (default: 50).
-    --solver (str): Optimization software used to solve the main LP. `CLARABEL` is used by default (default: "CLARABEL").
-    --bed_format (int): Specifies BED3 or BED6 format. Default is BED6. Generate BED3 output with --bed_format 3 (default: 6).
-    --identifiers (str): (Optional) a filename containing identifiers for samples to include in the experiment. Each identifier should be a uniquely-identifying substring of the respective `.wig` sample. If not specified, all samples are used (default: None).
+    -p, --param_file (str): Path to the parameter file containing per-chromosome parameters or `hg_params`, `mm_params`
+        See hg38_params.csv in the repository for an example CSV file using chromosome-specific budgets.
+        `--param_file hg_params` (or `mm_params`) can be used for suggested chromosome-specific parameters.
+    -b, --budget (float): Upper-bounds the fraction of loci selected as open.
+        Defines the budget constraint (Default: 0.035)
+    -g, --gamma (float): $\gamma$ fragmentation penalty in objective func. (Default: 1.0)
+    -t, --tau (float): $\tau$ parameter (enrichment threshold) (Default: 0.0).
+    --c1 (float): $c_1$ coefficient in the score function (enrichment reward) (Default: 1.0).
+    --c2 (float): $c_2$ coefficient in the score function (dispersion penalty) (Default: 1.0).
+    --c3 (float): $c_3$ coefficient in the score function (local shift) (Default: 1.0).
+    --start (int): Beginning nucleotide position (Default: infer from wiggle files).
+    --end (int): Ending nucleotide position (Default: infer from wiggle files).
+    -N, --rr_iter (int): Number of RR iterations. $N$ in the paper. (Default: 50).
+    --verbose (bool): invoke for verbose logging
+    --solver (str): Solver used for the underlying optimization problem of ROCCO (Default: "CLARABEL").
+        Other solvers:
+            - `MOSEK`: fast, commercial grade solver. Users can instantly obtain a free academic\
+                license or generous trial commericial license at
+                https://www.mosek.com/products/academic-licenses
+
+            - `PDLP`: first-order solver suitable for very large problems or limited computing environments.
+                Uses a primal-dual hybrid gradient approach.
+
+            - `ECOS`: Lightweight second-order conic solver. One of CVXPY's solvers included with the
+                default installation, though there are plans to migrate to `CLARABEL`:
+                (https://www.cvxpy.org/updates/index.html#ecos-deprecation)
+    --bed_format (int): BED format, `3` for BED3 format and `6` for BED6 format (Default: 6).
+    --identifiers (str): text file containing a subset of sample IDs, one on each line, for samples\
+        to include in the experiment. If not invoked, defaults to `None`, and *all* samples with
+        wig files in `--wig_path` are used.
     --outdir (str): Directory in which to store output bed files from the calls to rocco chrom (default: None, create tmp dir.).
     --combine (str): If not None, combine output bed files and store in the file specified with this parameter. For example, `--combine bedname.bed` concatenates the chromosome-specific bedfiles into `bedname.bed` (default: None).
     --multi (int): Run `--multi` rocco chrom jobs simultaneously to improve speed. May increase peak memory use (default: 1).
@@ -28,9 +45,11 @@ Parameters:
     --group_column (str): Column in coldata file containing group labels. Only used if --coldata is not None (default: 'group').
     --sample_column (str): Column in coldata file containing sample labels. Only used if --coldata is not None (default: 'sample').
     --split_sex (str): Column in coldata file containing sex labels. Only used if --coldata is not None (default: None).
+    --tracks_path (str): location of `tracks_chr[]` subdirectories generated by `rocco prep` if full path not given in `--param_file` 
+    --exclude_chroms (str): comma-separated list of chromosomes to ignore
 
+Example `--param_file` for hg38 with chromosome-specific budgets:
 
-`hg38_params.csv` with chromosome-specific budgets:
     ```
     chromosome,input_path,budget,gamma,tau,c1,c2,c3
     chr1,tracks_chr1,0.035,NULL,NULL,NULL,NULL,NULL
@@ -51,7 +70,7 @@ Parameters:
     chr16,tracks_chr16,0.04,NULL,NULL,NULL,NULL,NULL
     chr17,tracks_chr17,0.055,NULL,NULL,NULL,NULL,NULL
     chr18,tracks_chr18,0.025,NULL,NULL,NULL,NULL,NULL
-    chr19,tracks_chr19,0.06,NULL,NULL,NULL,NULL,NULL
+    chr19,tracks_chr19,0.05,NULL,NULL,NULL,NULL,NULL
     chr20,tracks_chr20,0.04,NULL,NULL,NULL,NULL,NULL
     chr21,tracks_chr21,0.03,NULL,NULL,NULL,NULL,NULL
     chr22,tracks_chr22,0.04,NULL,NULL,NULL,NULL,NULL
@@ -59,11 +78,31 @@ Parameters:
     chrY,tracks_chrY,0.01,NULL,NULL,NULL,NULL,NULL
     ```
 
-Examples [from demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb):
-    ```
-    rocco gwide -p ../hg38_params.csv --outdir demo_outdir --combine demo_out.bed
-    rocco gwide -p ../hg38_params.csv --coldata coldata.csv --sample_column sample --group_column group
-    ```
+Examples:
+    - Run ROCCO genome-wide with default chromosome-specific parameters for hg38 and using all samples for input:
+        ```
+        rocco gwide --param_file hg_params
+        ```
+        `hg_params` and `mm_params` correspond to `hg38_params.csv` and `mm10_params.csv` in the ROCCO GitHub repository, respectively.
+        Feel free to tweak these templates/default parameters depending on your specific experimental context.
+
+    - Run ROCCO genome-wide with default chromosome-specific parameters for hg38 on a subset of samples listed in `identifiers.txt`:
+        ```
+        rocco gwide --param_file hg_params --identifiers identifiers.txt
+        ```
+        For instance, samples are named `sample1, sample2, sample3, ..., sampleK` and `identifiers.txt`
+        contains:
+        ```
+        sample1
+        sample2
+        sample3
+        ```
+        Then the command above will ignore sample4,...,sampleK during peak calling.
+
+    - Run ROCCO on human autosomal chromosomes:
+        ```
+        rocco gwide --param_file hg_params --exclude_chroms chrX,chrY
+        ```
 """
 
 import os
@@ -71,8 +110,11 @@ import sys
 import argparse
 import subprocess
 import tempfile
+import pkg_resources
 import pandas as pd
+import warnings
 from . import rocco_aux
+from . import chrom
 
 def get_params(param_file: str, budget: float, gamma: float, tau: float,
                c1: float, c2: float, c3: float) -> list:
@@ -159,21 +201,53 @@ def call_rocco(chrom, wig_path, budget, gamma, tau, c1, c2, c3, solver,
         cli_args.remove(identifiers)
     return ' '.join(cli_args)
 
+def get_params_path(assembly):
+    """
+    Get the path to the params file for hg38 or mm10
+    """
+    if 'hg' in assembly:
+        return pkg_resources.resource_filename(__name__, 'hg38_params.csv')
+    if 'mm' in assembly:
+        return pkg_resources.resource_filename(__name__, 'mm10_params.csv')
+
 def main(args):
+    default_chrom_spec_params = False
+    if args['param_file'] == 'hg_params' and not os.path.exists('hg_params'):
+        args['param_file'] = get_params_path('hg38')
+        default_chrom_spec_params = True
+    if args['param_file'] == 'mm_params' and not os.path.exists('mm_params'):
+        args['param_file'] = get_params_path('mm10')
+        default_chrom_spec_params = True
+    if default_chrom_spec_params and args['tracks_path'] is None:
+        print('gwide: `--tracks_path` is `None`...assuming `tracks_chr[]` subdirs are in current directory')
+
+    if args['tracks_path'] is not None:
+        args['tracks_path'] = os.path.relpath(args['tracks_path'])
+
+    ignored_chroms = []
+    if args['exclude_chroms'] is not None:
+        ignored_chroms = args['exclude_chroms'].split(',')
+
     chrom_args = get_params(args['param_file'], args['budget'],
                             args['gamma'], args['tau'], args['c1'],
                             args['c2'], args['c3'])
     if args['outdir'] is None:
         args['outdir'] = tempfile.mkdtemp(dir=os.getcwd())
-        print(f"--outdir not specified, storing chromosome-specific BED files in {args['outdir']}")
+        print(f"gwide: --outdir not specified, storing chromosome-specific BED files in {args['outdir']}")
     if args['outdir'] is not None and not os.path.exists(args['outdir']):
         os.mkdir(args['outdir'])
 
     tmp = tempfile.NamedTemporaryFile(mode="w+")
     for i, arglist in enumerate(chrom_args):
+        print(f'\ngwide: chromosome {arglist[0]}')
         arglist = [str(x) for x in arglist]
+        if args['tracks_path'] is not None:
+            arglist[1] = os.path.join(args['tracks_path'], arglist[1])
+        if arglist[0] in ignored_chroms:
+            print(f'gwide: skipping --exclude_chroms: {arglist[0]}')
+            continue
         if not os.path.exists(arglist[1]) or not len(os.listdir(arglist[1])) > 0:
-            print(f'directory {arglist[1]} does not exist or is empty...skipping')
+            print(f'gwide: directory {arglist[1]} does not exist or is empty...skipping')
             continue
         cmd = call_rocco(arglist[0], arglist[1], arglist[2], arglist[3],
                          arglist[4], arglist[5], arglist[6], arglist[7],
@@ -185,49 +259,47 @@ def main(args):
             try:
                 seq_process = subprocess.run(cmd.split(' '),
                                          capture_output=True, text=True, check=True)
-                print(seq_process.stdout)
+                if args['verbose']:
+                    print(f'{seq_process.stdout}')
             except Exception as ex:
-                print(ex)
                 raise ex
 
         tmp.write(str(cmd + '\n'))
-
     tmp.flush()
+
     if args['multi'] > 1:
         rocco_aux.run_par(tmp.name, threads=args['multi'], verbose=args['verbose'])
     tmp.close()
 
-    if args['combine'] is not None:
-        print('combining output files --> {}'.format(args['combine']))
+    bed_ct = len([x for x in os.listdir(args['outdir']) if x.split('.')[-1] == 'bed'])
+
+    if bed_ct == 0:
+        warnings.warn(f"gwide: output directory {args['outdir']} does not contain any bed files")
+    elif args['combine'] is not None:
+        print('gwide: combining output files --> {}'.format(args['combine']))
         rocco_aux.sort_combine_bed(args['combine'], dir_=args['outdir'])
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-p', '--param_file',
-                        required=True, help='Path to the parameter file containing per-chromosome parameters. Required.\
-                        \nSee https://github.com/nolan-h-hamilton/ROCCO/blob/main/hg38_params.csv for an example with chromosome-specific budgets on hg38.\n\
-                        `rocco budgets` can also be used to compute chromosome-specific budgets given the input wig files and produces a valid -p/--param_file.')
-    parser.add_argument('-b', '--budget', type=float, default=.035, help='budget parameter (largest allowed fraction of selected bp) used for each chromosome with a `NULL` entry observed in `--param_file`')
-    parser.add_argument('-g', '--gamma', type=float, default=1.0, help='gamma parameter (discontig. penalty weight) used for each chromosome  with a `NULL` entry observed in `--param_file`')
-    parser.add_argument('-t', '--tau', type=float, default=0.0, help='tau parameter (enrichment threshold) used for each chromosome  with a `NULL` entry observed in `--param_file`')
-    parser.add_argument('--c1', type=float, default=1.0, help='g_1 coefficient in score function (enrichment reward) used for each chromosome  with a `NULL` entry observed in `--param_file`')
-    parser.add_argument('--c2', type=float, default=1.0, help='g_2 coefficient in score function (dispersion penalty) used for each chromosome  with a `NULL` entry observed in `--param_file`')
-    parser.add_argument('--c3', type=float, default=1.0, help='g_3 coefficient in score function (local shift) used for each chromosome  with a `NULL` entry observed in `--param_file`')
+    parser.add_argument('-p', '--param_file', help='Path to the parameter file containing per-chromosome parameters.\
+                        \nSee https://github.com/nolan-h-hamilton/ROCCO/blob/main/rocco/hg38_params.csv for an example with chromosome-specific budgets on hg38.\
+                        \n`--param_file hg_params` can be used for suggested chromosome-specific parameters in human samples.\n')
     parser.add_argument('-N', '--rr_iter', type=int, default=50, help = 'number of RR iterations')
+    parser.add_argument('--verbose', default=False, action="store_true", help='set to `True` for verbose logging')
+    parser.add_argument('-b', '--budget', type=float, default=.035, help='Upper-bounds the fraction of loci selected as open. Defines the budget constraint (Default: 0.035)')
+    parser.add_argument('-g', '--gamma', type=float, default=1.0, help='fragmentation penalty in objective func. (Default: 1.0)')
+    parser.add_argument('-t', '--tau', type=float, default=0.0, help='tau parameter (enrichment threshold)')
+    parser.add_argument('--c1', type=float, default=1.0, help='c_1 coefficient in score function (enrichment reward)')
+    parser.add_argument('--c2', type=float, default=1.0, help='c_2 coefficient in score function (dispersion penalty) ')
+    parser.add_argument('--c3', type=float, default=1.0, help='c_3 coefficient in score function (local shift)')
     parser.add_argument('--solver', default="CLARABEL",
                         help="Optimization software used to solve the \
                         main LP. `CLARABEL` is used by default.")
     parser.add_argument('--bed_format', type=int, default=3,
-                        help="Specifies BED3 or BED6 format.\
-                        Default is BED6. Generate BED3 output with \
-                        --bed_format 3")
+                        help="Specifies BED[3] or BED[6] format.")
     parser.add_argument('--identifiers', default=None,
-                        help="(optional) a filename containing identifiers\
-                          for samples to include in experiment. Each identi\
-                          fier should be a uniquely-identifying substring of\
-                          the respective `.wig` sample. If not specified, all\
-                          samples are used.")
+                        help="text file containing a subset of sample IDs, one on each line, for samples to include in the experiment. If not invoked, defaults to `None`, and *all* samples with wig files in `--wig_path` are used. Ignore if using the metadata/coldata parameters.")
     parser.add_argument('--outdir', default=None,
                         help="directory in which to store output bed files from the calls to rocco chrom")
     parser.add_argument('--combine', default=None, help="if not None, combine\
@@ -241,5 +313,7 @@ if __name__ == "__main__":
     parser.add_argument('--group_column', default='group', help='column in coldata file containing group labels. Only used if --coldata is not None')
     parser.add_argument('--sample_column', default='sample', help='column in coldata file containing sample labels. Only used if --coldata is not None')
     parser.add_argument('--split_sex', default=None, help='column in coldata file containing sex labels. Only used if --coldata is not None')
+    parser.add_argument('--tracks_path', default=None, help='location of `tracks_chr[]` subdirectories generated by `rocco prep` if full path not given in `--param_file`')
+    parser.add_argument('--exclude_chroms', default=None, help='comma-separated list of chromosomes to ignore. e.g., `--exclude_chroms chr1,chr2,chr5` or `--exclude_chroms chr11`')
     args = vars(parser.parse_args())
     main(args)

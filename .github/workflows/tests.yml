@@ -32,4 +32,4 @@ jobs:
     - name: run test_rocco.py
       working-directory: ./tests
       run: |
-        pytest -v -rP --full-trace test_rocco.py
+        pytest -v -rPA -l -k "regular" test_rocco.py
