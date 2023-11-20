@@ -1,4 +1,4 @@
-"""
+r"""
 # ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization.
 Underlying ROCCO is a constrained optimization problem that can be solved efficiently to predict consensus regions of open chromatin across many samples.
 
