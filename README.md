@@ -44,7 +44,7 @@ load via: `conda activate rocco`.
 Refer to the interactive demonstration: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb). Includes a walkthrough using publicly available ENCODE ATAC-seq alignments.
 
 ## Documentation
-[Rocco API Reference](https://nolan-h-hamilton.github.io/ROCCO/rocco/rocco.html)
+See the [Rocco API Reference](https://nolan-h-hamilton.github.io/ROCCO/rocco/rocco.html) for a more in-depth treatment of technical aspects as well as several usage examples, parameter descriptions, etc.
 
 ## Testing
 [test_rocco.py](https://github.com/nolan-h-hamilton/ROCCO/blob/main/tests/test_rocco.py) is run via GitHub Actions at each release in the [`Tests`](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml) workflow. Simulates test data using  ENCODE ATAC-seq alignments and ensures functionality of fundamental tasks. To run
