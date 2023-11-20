@@ -1,43 +1,37 @@
 """
 Obtain ROCCO conformable input from BAM files
 
-This script is a ROCCO-specific wrapper for the PEPATAC (github.com/databio/pepatac)
-tool `bamSitesToWig.py`. BAM files for each sample/replicate in `bamdir` are used to
-create smooth, fixed-step bigwig signal tracks. These signal tracks are split by
-chromosome, converted to human-readable .wig format, and then placed into directories
-à la [this flowchart](https://github.com/nolan-h-hamilton/ROCCO/blob/main/docs/bamsig_flowchart.png).
+BAM files for each sample/replicate in `bamdir` are used to create fixed-step bigwig signal tracks.
+These signal tracks are then split by chromosome into wiggle files in `tracks_chr[]`.
 
 The resulting `tracks_chr[]` directories can then be supplied to rocco chrom
-via `--wig_path` to construct the signal matrix $\mathbf{S}_{chr}$.
+via `--wig_path` to construct the matrix $\mathbf{S}_{chr}$.
 
-Arguments:
-    - `-i, --bamdir (str, default='.')`:
+Parameters:
+    -i, --bamdir (str, default='.'):
         Path to the directory containing BAM files.
-
-    - `-o, --outdir (str, default='.')`:
+    -o, --outdir (str, default='.')`:
         Output directory.
-
-    - `-s, --sizes (str, default='hg38')`:
-        A path to a chromosome sizes file or an assembly name.
-
-    - `-L, --interval_length (int, default=50)`:
-        Wiggle track fixed interval length.
-
-    - `-c, --cores (int, default=1)`:
+    -s, --sizes (str, default='hg38'):
+        A path to a chromosome sizes file OR an assembly name.
+    -L, --interval_length (int, default=50)`:
+        Wiggle track fixed step size
+    -c, --cores (int, default=1)`:
         The `bamSitesToWig.py` cores parameter. Altering this parameter to use >1 core may cause issues on Mac OS.
 
-    - `--multi (bool, default=True)`:
-        Set to `False` to run `bamSitesToWig` jobs sequentially. Note that this definition of `--multi` differs from `ROCCO_gwide.py`. 
-
-    - `--index (int, default=1)`:
-        Deprecated - backwards compatibility. Now, if BAM files are not indexed, pysam.index() is called by default. Before, this behavior was specified with this argument.
-
-
-Example [from demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb):
-    ```
-    rocco prep --bamdir . --outdir . -s hg38
-    ```
-
+Examples:
+    - create input `tracks_chr[]` directories for the hg38 assembly, no sizes file available:
+        ```
+        rocco prep -s hg38 --bamdir [/path/to/bamfiles]
+        ```
+    - create input `tracks_chr[]` directories from BAM files using a locally available sizes file:
+        ```
+        rocco prep -s [/path/to/sizefile] --bamdir [path/to/bamfiles]
+        ```
+    - create input`tracks_chr[]` directories from hg19 BAM files in the current directory:
+        ```
+        rocco prep -s hg19 --bamdir .
+        ```
 """
 
 import os
@@ -51,13 +45,18 @@ import tempfile
 def main(args):
     # process command line arguments
     cwd = os.getcwd()
-    args['bamdir'] = rocco_aux.trim_path(os.path.abspath(args['bamdir']))
-    args['outdir'] = rocco_aux.trim_path(os.path.abspath(args['outdir']))
+    args['bamdir'] = os.path.abspath(args['bamdir'])
+    args['outdir'] = os.path.abspath(args['outdir'])
 
     if not os.path.exists(args['sizes']):
         # if args['sizes'] is not a locally available file,
         # check UCSC for the assembly's sizes file
-        args['sizes'] = rocco_aux.get_size_file(args['sizes'])
+        try:
+            downloaded_size_file = rocco_aux.get_size_file(args['sizes'])
+        except Exception as ex:
+            print(f'prep: {args["sizes"]} could not be found locally as a file (e.g. `hg38.sizes`) or on UCSC server as an assembly name (e.g. `hg38`).')
+            raise
+        args['sizes'] = downloaded_size_file
 
     chroms = list(rocco_aux.parse_size_file(args['sizes']).keys())
     bigwig_files = []
@@ -73,10 +72,10 @@ def main(args):
             try:
                 aln.check_index()
             except ValueError:
-                print(f'no index file available for {fname}, calling pysam.index()')
+                print(f'prep: no index file available for {fname}, calling pysam.index()')
                 pysam.index(fname)
 
-            print('{}: running bamSitesToWig.py'.format(aln.filename.decode()))
+            print('prep: {}'.format(aln.filename.decode()))
             bstw_path = os.path.join(os.path.dirname(__file__), "bamSitesToWig.py")
             bstw_cmd = ['python3', bstw_path,
                         '-i', aln.filename.decode(),
@@ -129,15 +128,15 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='BAM preprocessing')
-    parser.add_argument('-i','--bamdir', default='.', type=str, help='path to directory containing BAM files')
-    parser.add_argument('-o', '--outdir', default= '.', help='output directory')
+    parser.add_argument('-i','--bamdir', default='.', type=str, help='Path to the directory containing BAM files.')
+    parser.add_argument('-o', '--outdir', default= '.', help='Output directory')
     parser.add_argument('-s', '--sizes',
                         default='hg38',
                         help="A path to a chromosome sizes file. OR\
                         an assembly name")
     parser.add_argument('-L', '--interval_length',
                         default=50,
-                        help="wiggle track fixed interval length")
+                        help="wiggle track fixed step size")
     parser.add_argument('-c', '--cores',
                         type=int,
                         default=1,
@@ -145,13 +144,6 @@ if __name__ == '__main__':
                         Altering this parameter to use >1 core\
                         may cause issues on Mac OS")
     parser.add_argument('--multi',
-                         default=True,
-                         help='Set to `False` to run `bamSitesToWig` jobs\
-                         sequentially.')
-    parser.add_argument('--index',
-                        type=int,
-                        default=1,
-                        help="Deprecated -- backwards compatibility")
-    parser.add_argument('--bstw_path', default=None, help="Deprecated -- backwards compatibility")
+                         default=True)
     args = vars(parser.parse_args())
     main(args)
