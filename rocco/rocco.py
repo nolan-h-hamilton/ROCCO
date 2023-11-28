@@ -27,12 +27,11 @@ General Notation and Terminology:
     - $\ell \in [0,1]^n$ (relaxed) or $\ell \in \mathbb{Z}^n_{0,1}$ (unrelaxed): solutions to the optimization problem, $\ell$, specify which loci are accessible ($\ell_i = 1$) and which are closed ($\ell_i = 0$)
     - objective function $f$: $f(\mathbf{\ell}) = -\mathcal{S}^{T}\mathbf{\ell} + \gamma \sum_{i=1}^{n-1}|\ell_i - \ell_{i+1}|$
         - the first term represents the sum of scores, $\sum_i \mathcal{S}(i)$, over selected loci
-        - the second term controls fragmentation of solutions and accounts for the trajectory in the enrichment signals.
+        - the second term induces sparsity and controls fragmentation of selected regions
     - budget constraint: $\sum_{i=1}^{n}\ell_i \leq [nb]$. Upper bounds the proportion of loci selected as accessible.
     - Relaxed optimization problem to obtain initial solution:
         $$\text{Minimize: } \ell \in [0,1]^n, f(\mathbf{\ell}) = -\mathcal{S}^{T}\mathbf{\ell} + \gamma \sum_{i=1}^{n-1}|\ell_i - \ell_{i+1}|$$
         $$\text{Subject to: }\sum_{i=1}^{n}\ell_i \leq [nb]$$
-        - Reward high scores, induce sparsity and control fragmentation of selected regions with $\gamma$ term
     - `RR`: iterative randomization procedure described in the paper to derive integral solutions (open chromatin annotations) from the relaxed solution as:
         $$\ell^{\textsf{rand}}_i \sim \text{Bernoulli}(\ell_i)$$
         `--rr_iter` such solutions are generated, after which the best feasible solution is selected to determine the final annotation.
