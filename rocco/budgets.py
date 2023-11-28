@@ -1,4 +1,5 @@
 """
+## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/): budgets.py
 Compute chromosome-specific budgets from sample data based on relative read densities.
 
 

@@ -1,4 +1,5 @@
 """
+## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/): prep.py 
 Obtain ROCCO conformable input from BAM files
 
 BAM files for each sample/replicate in `bamdir` are used to create fixed-step bigwig signal tracks.

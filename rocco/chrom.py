@@ -1,4 +1,5 @@
 r"""
+## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/): chrom.py 
 Run ROCCO on chromosome `--chrom` with samples' count/signal data in `tracks_chr[]`
 
 This script is the workhorse for [`rocco gwide`](https://nolan-h-hamilton.github.io/ROCCO/rocco/gwide.html) which generates and combines

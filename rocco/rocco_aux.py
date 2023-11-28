@@ -1,3 +1,7 @@
+"""
+## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/): rocco_aux.py 
+Miscellaneous helper functions
+"""
 import os
 import subprocess
 import pandas as pd
