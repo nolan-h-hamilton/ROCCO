@@ -1,3 +1,6 @@
+"""
+## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/): locus.py 
+"""
 class Locus:
     r"""
     `Locus` objects are the $n \approx \frac{|\mathscr{L}|}{L}$ nodes

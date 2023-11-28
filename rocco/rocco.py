@@ -27,7 +27,7 @@ General Notation and Terminology:
     - $\ell \in [0,1]^n$ (relaxed) or $\ell \in \mathbb{Z}^n_{0,1}$ (unrelaxed): solutions to the optimization problem, $\ell$, specify which loci are accessible ($\ell_i = 1$) and which are closed ($\ell_i = 0$)
     - objective function $f$: $f(\mathbf{\ell}) = -\mathcal{S}^{T}\mathbf{\ell} + \gamma \sum_{i=1}^{n-1}|\ell_i - \ell_{i+1}|$
         - the first term represents the sum of scores, $\sum_i \mathcal{S}(i)$, over selected loci
-        - the second term controls fragmentation of solutions and accounts for the trajectory in the enrichment signals.
+        - the second term induces sparsity and controls fragmentation of selected regions
     - budget constraint: $\sum_{i=1}^{n}\ell_i \leq [nb]$. Upper bounds the proportion of loci selected as accessible.
     - Relaxed optimization problem to obtain initial solution:
         $$\text{Minimize: } \ell \in [0,1]^n, f(\mathbf{\ell}) = -\mathcal{S}^{T}\mathbf{\ell} + \gamma \sum_{i=1}^{n-1}|\ell_i - \ell_{i+1}|$$

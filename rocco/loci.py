@@ -1,5 +1,5 @@
 r"""
-
+## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/): loci.py 
 ROCCO creates a Locus object (see `Locus.py`) for each
 $\ell_i, \forall i = 1 \ldots n$. These Locus objects are then linked
 together as a Loci object, defined in this code.
