@@ -1,12 +1,15 @@
 """
-## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/): prep.py 
+## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/): prep.py
 Obtain ROCCO conformable input from BAM files
 
 BAM files for each sample/replicate in `bamdir` are used to create fixed-step bigwig signal tracks.
-These signal tracks are then split by chromosome into wiggle files in `tracks_chr[]`.
+These signal tracks are then split by chromosome into wiggle files in the subdirectories `tracks_chr[]`.
+This tool assumes a suitable QC protocol has already been applied.
 
 The resulting `tracks_chr[]` directories can then be supplied to rocco chrom
 via `--wig_path` to construct the matrix $\mathbf{S}_{chr}$.
+
+External utilities, e.g. [`deepTools'`](https://deeptools.readthedocs.io/en/latest/) bamCoverage, can also generate track data from samples' BAM files but have not been tested.
 
 Parameters:
     -i, --bamdir (str, default='.'):
