@@ -78,6 +78,7 @@ Example `--param_file` for hg38 with chromosome-specific budgets:
     chrX,tracks_chrX,0.02,NULL,NULL,NULL,NULL,NULL
     chrY,tracks_chrY,0.01,NULL,NULL,NULL,NULL,NULL
     ```
+where `tracks_chr[]` are the directories created with [`rocco prep`](https://nolan-h-hamilton.github.io/ROCCO/rocco/prep.html)
 
 Example `--param_file` for hg38 with the same budget `--budget` for all chromosomes :
 
@@ -112,14 +113,14 @@ Example `--param_file` for hg38 with the same budget `--budget` for all chromoso
 Examples:
     - Run ROCCO genome-wide with default chromosome-specific parameters for hg38 and using all samples for input:
         ```
-        rocco gwide --param_file hg_params
+        rocco gwide --param_file hg_params --combine results_allsamples.bed
         ```
         `hg_params` and `mm_params` correspond to `hg38_params.csv` and `mm10_params.csv` in the ROCCO GitHub repository, respectively.
         Feel free to tweak these templates/default parameters depending on your specific experimental context.
 
     - Run ROCCO genome-wide with default chromosome-specific parameters for hg38 on a subset of samples listed in `identifiers.txt`:
         ```
-        rocco gwide --param_file hg_params --identifiers identifiers.txt
+        rocco gwide --param_file hg_params --identifiers identifiers.txt --combine results_subsample.bed
         ```
         For instance, samples are named `sample1, sample2, sample3, ..., sampleK` and `identifiers.txt`
         contains:
@@ -132,7 +133,7 @@ Examples:
 
     - Run ROCCO on human autosomal chromosomes:
         ```
-        rocco gwide --param_file hg_params --exclude_chroms chrX,chrY
+        rocco gwide --param_file hg_params --exclude_chroms chrX,chrY --combine results_noXY.bed
         ```
 
     - Run ROCCO on human autosomal chromosomes where the `tracks_chr[]` directories are not in the current working dir.
