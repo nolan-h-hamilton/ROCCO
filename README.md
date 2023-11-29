@@ -52,7 +52,13 @@ locally, `cd` in to the `tests` directory and run `pytest test_rocco.py`.
 
 ## Citation
 ```
-ROCCO: A Robust Method for Detection of Open Chromatin via Convex Optimization
-Nolan H. Hamilton, Terrence S. Furey
-bioRxiv 2023.05.24.542132; doi: https://doi.org/10.1101/2023.05.24.542132
+@article{10.1093/bioinformatics/btad725,
+    author = {Hamilton, Nolan H and Furey, Terrence S},
+    title = "{ROCCO: A Robust Method for Detection of Open Chromatin via Convex Optimization}",
+    journal = {Bioinformatics},
+    pages = {btad725},
+    year = {2023},
+    month = {11},
+    doi = {10.1093/bioinformatics/btad725},
+}
 ```
