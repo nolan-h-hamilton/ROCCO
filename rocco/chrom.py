@@ -404,7 +404,7 @@ def main(args):
         for loc in InitLoci:
             assert loc.size > 0
             if loc.accessible == 1:
-                loc_score = round(np.sum(loc.sig_data)/(loc.size))
+                loc_score = round((args['locus_size']*np.sum(loc.sig_data))/(loc.size))
                 if args['scale_bedscores']:
                     # scale for shading in ucsc genome browser
                     loc_score = int(500 * emp_cdf(np.sum(loc.sig_data) / loc.size,
@@ -444,7 +444,7 @@ if __name__ == "__main__":
                         main LP. `CLARABEL` is used by default.')
     parser.add_argument('--bed_format', type=int, default=6,
                         help="`3` for BED3 format and `6` for BED6 format")
-    parser.add_argument('--scale_bedscores', type=bool, action='store_true', default=False,
+    parser.add_argument('--scale_bedscores', action='store_true', default=False,
                         help="if `True`, BED6 scores are scaled by rank into the interval [500, 1000] for visualization in the UCSC browser")
     parser.add_argument('--identifiers', default=None,
                         help="text file containing a subset of sample IDs, one on each line, for samples to include in the experiment. If not invoked, defaults to `None`, and *all* samples with wig files in `--wig_path` are used.")

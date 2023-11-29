@@ -20,14 +20,5 @@ The quick start demo is an interactive Jupyter Notebook showcasing ROCCO's funct
 API Reference: https://nolan-h-hamilton.github.io/ROCCO/index.html
 
 ## Citation
-```
-@article{10.1093/bioinformatics/btad725,
-    author = {Hamilton, Nolan H and Furey, Terrence S},
-    title = "{ROCCO: A Robust Method for Detection of Open Chromatin via Convex Optimization}",
-    journal = {Bioinformatics},
-    pages = {btad725},
-    year = {2023},
-    month = {11},
-    doi = {10.1093/bioinformatics/btad725},
-}
-```
+If using ROCCO in your research, please cite the [corresponding paper](https://doi.org/10.1093/bioinformatics/btad725) in *Bioinformatics*.
+

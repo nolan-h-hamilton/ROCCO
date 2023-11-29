@@ -6,7 +6,7 @@ Underlying ROCCO is a constrained optimization problem that can be solved effici
 
 #### Demo: https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb
 
-#### Paper: https://doi.org/10.1101/2023.05.24.542132
+#### Paper: https://doi.org/10.1093/bioinformatics/btad725
 
 
 Subcommand Documentation:
@@ -132,7 +132,7 @@ def subcommand_budgets(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ROCCO: [R]obust [O]pen [C]hromatin Dection via [C]onvex [O]ptimization.\n\nPyPI : https://pypi.org/project/rocco/ \nGitHub: https://github.com/nolan-h-hamilton/ROCCO/ \nDemo: https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb \nPaper: https://doi.org/10.1101/2023.05.24.542132\n", add_help=True, formatter_class=argparse.RawTextHelpFormatter)
+    parser = argparse.ArgumentParser(description="ROCCO: [R]obust [O]pen [C]hromatin Dection via [C]onvex [O]ptimization.\n\nPyPI : https://pypi.org/project/rocco/ \nGitHub: https://github.com/nolan-h-hamilton/ROCCO/ \nDemo: https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb \nPaper: https://doi.org/10.1093/bioinformatics/btad725 \n", add_help=True, formatter_class=argparse.RawTextHelpFormatter)
     subparsers = parser.add_subparsers(dest="command")
 
     # 'gwide' subcommand parameters
@@ -175,6 +175,7 @@ def main():
     parser_subcommand_chrom.add_argument('--c3', type=float, default=1.0)
     parser_subcommand_chrom.add_argument('--solver', type=str,default="CLARABEL")
     parser_subcommand_chrom.add_argument('--bed_format', type=int, default=6)
+    parser_subcommand_chrom.add_argument('--scale_bedscores', action='store_true', default=False)
     parser_subcommand_chrom.add_argument('--identifiers', default=None)
     parser_subcommand_chrom.add_argument('--outdir', type=str, default='.')
     parser_subcommand_chrom.add_argument('-N', '--rr_iter', type=int, default=50)
