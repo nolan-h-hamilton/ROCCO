@@ -11,7 +11,7 @@ Arguments:
     peakfile (str): (`-i`) BED-formatted peak file
     metadata (str, optional): (`-m`) path to sample metadata file. Assumed
             structure is a TSV file with a row for each sample
-            and column [SAMPLE_COLUMN]. If this argument is
+            and a column [SAMPLE_COLUMN]. If this argument is
             not specified, this script will use all samples with
             BAM files in `bamdir` to construct the count matrix.
     bamdir (str): path to directory containing samples' BAM alignments.
@@ -23,7 +23,6 @@ import argparse
 import pandas as pd
 import multiprocessing
 from pybedtools import BedTool
-import rocco_aux
 
 def proc_bed(bedfile, header=False):
     """
@@ -132,7 +131,11 @@ def peak_count_matrix(bedfile, metadata, bamdir='.', sample_column='sample'):
         if not os.path.exists(ID):
             for fname in os.listdir(bdir):
                 fname = f'{bdir}/{fname}'
-                if ID in fname and rocco_aux.is_alignment(fname):
+                try:
+                    fname.split('.')[-1]
+                except:
+                    continue
+                if ID in fname and fname.split('.')[-1] == 'bam':
                     IDs[i] = fname
     bamfiles = IDs
 
