@@ -160,6 +160,8 @@ def main():
     parser_subcommand_gwide.add_argument('--split_sex', default=None, help='column in coldata file containing sex labels. Only used if --coldata is not None')
     parser_subcommand_gwide.add_argument('--tracks_path', default=None)
     parser_subcommand_gwide.add_argument('--exclude_chroms', default=None)
+    parser_subcommand_gwide.add_argument('--fixedStep', default=False, action="store_true")
+    
     # 'chrom' subcommand parameters
     parser_subcommand_chrom = subparsers.add_parser("chrom", help='run ROCCO on a single chromosome (chrom.py)')
     parser_subcommand_chrom.add_argument('--start', type=int, default=-1)
