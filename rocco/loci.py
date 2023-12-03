@@ -1,5 +1,6 @@
 r"""
-## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/): loci.py 
+## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/)
+### loci.py
 ROCCO creates a Locus object (see `Locus.py`) for each
 $\ell_i, \forall i = 1 \ldots n$. These Locus objects are then linked
 together as a Loci object, defined in this code.
@@ -217,7 +218,6 @@ class Loci:
             c2 (float): weight for second term in $\mathcal{S}(i)$,
                 (MAD dispersion) $g_2$
             c3 (float): weight for third term in  $\mathcal{S}(i)$, $g_3$
-            eps_l (float): prevent unnecessary selections in interior-point solutions
 
         Returns:
             np.ndarray: the $n$-dimensional score vector $\mathcal{S}(i), \forall i = 1 \ldots n$
@@ -248,7 +248,8 @@ class Loci:
                 s_vec[i] = 0
         return s_vec - eps_l
 
-    def run_rr(self, lp_sol, N, loci_scores, budget, gam, eps = 1e-8) -> np.ndarray:
+
+    def run_rr(self, lp_sol, N, loci_scores, budget, gam, eps = 1e-8, sumsq_penalty=None) -> np.ndarray:
         r"""
         Carry out the $\texttt{RR}$ rounding procedure to return a
         'good' integral solution with reference to the LP solution
@@ -262,10 +263,21 @@ class Loci:
             gam (float): weight for $\sum_{i=1}^{i=n-1} |\ell_i - \ell_{i+1}|$ (discontig.) penalty
             eps (float): `init_sol = np.floor(lp_sol + eps)`. Decreased iteratively if initial `eps` does
                 not yield a feasible solution.
+            sumsq_penalty: Experimental. If not `None`, add $$\mathsf{sumsq\_penalty}\cdot \mathbf{\ell}^{T}\mathbf{\ell}$$ to
+                the objective function. In this case, the $f(\mathbf{\ell})$ becomes strongly convex and the
+                relaxed solution is guaranteed unique. Can be viewed as a penalty on the number of selections
+                in supplement to the "hard" budget constraint.
 
         Returns:
         np.ndarray: the integral $\texttt{RR}$ solution, OR $\texttt{floor\_eps}$ solution if $N \leq 0$.
     """
+        def obj(sol, loci_scores, gam, sumsq_penalty=sumsq_penalty):
+            n = len(loci_scores)
+            if sumsq_penalty is None:
+                return (-loci_scores@sol
+                       + gam*np.sum(np.abs(np.diff(sol,1))))
+            return (-loci_scores@sol
+                       + gam*np.sum(np.abs(np.diff(sol,1))) + sumsq_penalty*(sol@sol.T))
         n = len(loci_scores)
         eps_cpy = eps
         # initialize as floor_eps solution
@@ -277,8 +289,7 @@ class Loci:
         if N <= 0:
             return init_sol
 
-        init_score = (-loci_scores@init_sol
-                       + gam*np.sum(np.abs(np.diff(init_sol,1))))
+        init_score = obj(sol=init_sol, loci_scores=loci_scores, gam=gam, sumsq_penalty=sumsq_penalty)
 
         nonint_loci = [i for i in range(len(lp_sol)) if lp_sol[i] > 0 and lp_sol[i] < 1]
         rr_sol = init_sol
@@ -292,8 +303,7 @@ class Loci:
                 else:
                     ell_rand_n[idx] = 0
 
-            score = (-loci_scores@ell_rand_n
-                       + gam*np.sum(np.abs(np.diff(ell_rand_n,1))))
+            score = obj(sol=ell_rand_n, loci_scores=loci_scores, gam=gam, sumsq_penalty=sumsq_penalty)
 
             is_feas = (np.sum(ell_rand_n) <= math.floor(n*budget))
             if is_feas and score < best_score:
@@ -304,7 +314,7 @@ class Loci:
     def rocco_lp(self, budget: float = .035, tau: float = 0, gam: float = 1, c1: float = 1,
              c2: float = 1, c3: float = 1, verbose_: bool = False, solver: str = "CLARABEL",
              N: int = 50, solver_reltol: float = 1.0e-8, solver_maxiter: float = 10000,
-             solver_feastol: float = 1e-8) -> cp.Problem:
+             solver_feastol: float = 1e-8, sumsq_penalty=None) -> cp.Problem:
         r"""
         Solve the LP-relaxation and apply the randomization procedure,
         $\texttt{RR}$ ($N > 0$), or $\texttt{floor\_eps}$ ($N \leq 0$) for an
@@ -324,6 +334,10 @@ class Loci:
             solver_feastol (float): the solver will consider solutions within `solver_feastol`
                 of the constraint boundaries as feasible
             solver_maxiter (int): bounds the number of solving iterations before terminating
+            sumsq_penalty: Experimental. If not `None`, add $$\mathsf{sumsq\_penalty}\cdot \mathbf{\ell}^{T}\mathbf{\ell}$$ to
+                the objective function. In this case, the $f(\mathbf{\ell})$ becomes strongly convex and the
+                relaxed solution is guaranteed unique. Can be viewed as a penalty on the number of selections
+                in supplement to the "hard" budget constraint.
         Returns:
             cp.Problem: a CVXPY problem object
     """
@@ -337,7 +351,11 @@ class Loci:
                           cp.sum(ell) <= math.floor(budget*n),
                           z >= cp.diff(ell,1),
                           z >= -1*cp.diff(ell,1)]
-        problem = cp.Problem(cp.Minimize(-loci_scores@ell + gam*cp.sum(z)),
+        if sumsq_penalty is None:
+            problem = cp.Problem(cp.Minimize(-loci_scores@ell + gam*cp.sum(z)),
+                             constraints)
+        else:
+            problem = cp.Problem(cp.Minimize(-loci_scores@ell + gam*cp.sum(z) + sumsq_penalty*cp.sum_squares(ell)),
                              constraints)
 
         # Refer to `Solve method options` at
@@ -381,7 +399,7 @@ class Loci:
                 \nProblem status: {problem.status}.\n')
 
         lp_sol = problem.variables()[0].value
-        sol_rr  = self.run_rr(lp_sol, N, loci_scores, budget, gam)
+        sol_rr  = self.run_rr(lp_sol, N, loci_scores, budget, gam, sumsq_penalty=sumsq_penalty)
 
         head_ = self.head
         i = 0

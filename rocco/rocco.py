@@ -180,6 +180,7 @@ def main():
     parser_subcommand_chrom.add_argument('--outdir', type=str, default='.')
     parser_subcommand_chrom.add_argument('-N', '--rr_iter', type=int, default=50)
     parser_subcommand_chrom.add_argument('--verbose', default=False, action="store_true")
+    parser_subcommand_chrom.add_argument('--fixedStep', default=False, action="store_true")
 
     # 'prep' subcommand parameters
     parser_subcommand_prep = subparsers.add_parser("prep", help='Preprocess BAM files (prep.py)')
