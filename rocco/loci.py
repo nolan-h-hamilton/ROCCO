@@ -1,7 +1,6 @@
 r"""
-## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/)
-### loci.py
-ROCCO creates a Locus object (see `Locus.py`) for each
+# loci.py
+ROCCO creates a Locus object (see `locus.py`) for each
 $\ell_i, \forall i = 1 \ldots n$. These Locus objects are then linked
 together as a Loci object, defined in this code.
 
@@ -11,6 +10,7 @@ Optimization: `Loci.rocco_lp()`
 
 Integral solutions: `Loci.run_rr()`
 
+#### [Project Homepage](https://github.com/nolan-h-hamilton/ROCCO/)
 """
 
 import copy
@@ -272,12 +272,16 @@ class Loci:
         np.ndarray: the integral $\texttt{RR}$ solution, OR $\texttt{floor\_eps}$ solution if $N \leq 0$.
     """
         def obj(sol, loci_scores, gam, sumsq_penalty=sumsq_penalty):
+            """
+            Return numeric value of objective function given solution `sol`
+            """
             n = len(loci_scores)
             if sumsq_penalty is None:
                 return (-loci_scores@sol
                        + gam*np.sum(np.abs(np.diff(sol,1))))
             return (-loci_scores@sol
                        + gam*np.sum(np.abs(np.diff(sol,1))) + sumsq_penalty*(sol@sol.T))
+
         n = len(loci_scores)
         eps_cpy = eps
         # initialize as floor_eps solution
@@ -336,7 +340,7 @@ class Loci:
             solver_maxiter (int): bounds the number of solving iterations before terminating
             sumsq_penalty: Experimental. If not `None`, add $$\mathsf{sumsq\_penalty}\cdot \mathbf{\ell}^{T}\mathbf{\ell}$$ to
                 the objective function. In this case, the $f(\mathbf{\ell})$ becomes strongly convex and the
-                relaxed solution is guaranteed unique. Can be viewed as a penalty on the number of selections
+                relaxed *solution* is thus guaranteed unique. Can be viewed as a soft penalty on the number of selections
                 in supplement to the "hard" budget constraint.
         Returns:
             cp.Problem: a CVXPY problem object

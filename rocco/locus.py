@@ -1,5 +1,7 @@
 """
-## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/): locus.py 
+# locus.py
+
+#### [Project Homepage](https://github.com/nolan-h-hamilton/ROCCO/)
 """
 class Locus:
     r"""

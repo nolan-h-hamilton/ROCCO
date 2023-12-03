@@ -1,7 +1,9 @@
 """
-## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/)
-### rocco_aux.py
+# rocco_aux.py
+
 Miscellaneous helper functions
+
+#### [Project Homepage](https://github.com/nolan-h-hamilton/ROCCO/)
 """
 import os
 import subprocess

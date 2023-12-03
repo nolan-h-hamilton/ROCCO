@@ -1,15 +1,18 @@
 """
-## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/): prep.py
-Obtain ROCCO conformable input from BAM files
+# prep.py
 
-BAM files for each sample/replicate in `bamdir` are used to create fixed-step bigwig signal tracks.
+Obtain ROCCO conformable input from samples' BAM files.
+
+BAM files for each sample in `--bamdir` are used to create fixed-step bigwig signal tracks.
 These signal tracks are then split by chromosome into wiggle files in the subdirectories `tracks_chr[]`.
 This tool assumes a suitable QC protocol has already been applied.
 
-The resulting `tracks_chr[]` directories can then be supplied to rocco chrom
-via `--wig_path` to construct the matrix $\mathbf{S}_{chr}$.
+The resulting `tracks_chr[]` directories can be listed in the `--param_file` parsed by [rocco gwide](https://nolan-h-hamilton.github.io/ROCCO/rocco/gwide.html)
 
-External utilities, e.g. [`deepTools'`](https://deeptools.readthedocs.io/en/latest/) bamCoverage, can also generate track data from samples' BAM files but have not been tested.
+Alternatively, if running [rocco chrom](https://nolan-h-hamilton.github.io/ROCCO/rocco/chrom.html) manually, e.g.,
+    ```
+    rocco chrom --chrom chr11 --wig_path tracks_chr11 [...]
+    ```
 
 Parameters:
     -i, --bamdir (str, default='.'):
@@ -21,7 +24,7 @@ Parameters:
     -L, --interval_length (int, default=50)`:
         Wiggle track fixed step size
     -c, --cores (int, default=1)`:
-        The `bamSitesToWig.py` cores parameter. Altering this parameter to use >1 core may cause issues on Mac OS.
+        PEPATAC's `bamSitesToWig.py` cores parameter. Altering this parameter to use >1 core may cause issues on Mac OS.
 
 Examples:
     - create input `tracks_chr[]` directories for the hg38 assembly, no sizes file available:
@@ -32,10 +35,26 @@ Examples:
         ```
         rocco prep -s [/path/to/sizefile] --bamdir [path/to/bamfiles]
         ```
-    - create input`tracks_chr[]` directories from hg19 BAM files in the current directory:
+    - create input`tracks_chr[]` directories from hg19 BAM files in the current directory, no sizes file available:
         ```
         rocco prep -s hg19 --bamdir .
         ```
+
+Note:
+    External utilities such as [`deepTools bamCoverage`](https://deeptools.readthedocs.io/en/develop/content/tools/bamCoverage.html) can also be used to
+    generate track data from BAM files, e.g.,
+        ```
+        bamCoverage -b sample.bam --binSize 50 -o sample.bam.bw [...]
+        ```
+        Then, to structure input using UCSC's `bigWigToWig` :
+        ```
+        bigWigToWig sample.bam.bw tracks_chr[]/chr[]_sample.bam.bw.wig -chrom=chr[]
+        ```
+    Such utilities offer several additional features that users may find helpful in
+    their respective experimental settings and preprocessing pipelines. But note that
+    ROCCO has not been tested using these protocols.
+
+#### [Project Homepage](https://github.com/nolan-h-hamilton/ROCCO/)
 """
 
 import os

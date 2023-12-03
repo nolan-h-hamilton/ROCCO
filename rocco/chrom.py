@@ -1,7 +1,7 @@
 r"""
-## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/)
-### chrom.py
-Run ROCCO on chromosome `--chrom` with samples' count/signal data in `tracks_chr[]`
+# chrom.py
+
+Run ROCCO on chromosome `--chrom` with samples' track data in `--wig_path`
 
 This script is the workhorse for [`rocco gwide`](https://nolan-h-hamilton.github.io/ROCCO/rocco/gwide.html) which generates and combines
 results for multiple chromosomes
@@ -37,7 +37,8 @@ Parameters:
     --identifiers (str): text file containing a subset of sample IDs, one on each line, for samples\
         to include in the experiment. If not invoked, defaults to `None`, and *all* samples with
         wig files in `--wig_path` are used.
-    --scale_bedscores (bool): if `True`, the BED6 scores are scaled by rank into the interval [500, 1000] for visualization in the UCSC browser 
+    --scale_bedscores (bool): if `True`, the BED6 scores are scaled by rank into the interval [500, 1000] for visualization in the UCSC browser
+    --fixedStep (bool): invoke if input wig tracks are in fixedStep format.
 
 Input:
     A `tracks_chr[]` directory containing samples wiggle tracks created by [`rocco prep`](https://nolan-h-hamilton.github.io/ROCCO/rocco/prep.html).
@@ -69,6 +70,8 @@ Examples:
         ```
         rocco chrom --wig_path tracks_chr21 --chrom chr21 --budget 0.02
         ```
+        
+#### [Project Homepage](https://github.com/nolan-h-hamilton/ROCCO/)
 """
 
 import os
