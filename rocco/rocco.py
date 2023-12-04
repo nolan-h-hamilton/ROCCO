@@ -1,6 +1,6 @@
 r"""
 # ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization.
-Underlying ROCCO is a constrained optimization problem that can be solved efficiently to predict consensus regions of open chromatin across many samples.
+Underlying ROCCO is a constrained optimization problem that can be solved efficiently to **predict consensus regions of open chromatin across many samples.**
 
 #### GitHub (Homepage): https://github.com/nolan-h-hamilton/ROCCO/
 
@@ -160,6 +160,8 @@ def main():
     parser_subcommand_gwide.add_argument('--split_sex', default=None, help='column in coldata file containing sex labels. Only used if --coldata is not None')
     parser_subcommand_gwide.add_argument('--tracks_path', default=None)
     parser_subcommand_gwide.add_argument('--exclude_chroms', default=None)
+    parser_subcommand_gwide.add_argument('--fixedStep', default=False, action="store_true")
+    
     # 'chrom' subcommand parameters
     parser_subcommand_chrom = subparsers.add_parser("chrom", help='run ROCCO on a single chromosome (chrom.py)')
     parser_subcommand_chrom.add_argument('--start', type=int, default=-1)
@@ -180,6 +182,7 @@ def main():
     parser_subcommand_chrom.add_argument('--outdir', type=str, default='.')
     parser_subcommand_chrom.add_argument('-N', '--rr_iter', type=int, default=50)
     parser_subcommand_chrom.add_argument('--verbose', default=False, action="store_true")
+    parser_subcommand_chrom.add_argument('--fixedStep', default=False, action="store_true")
 
     # 'prep' subcommand parameters
     parser_subcommand_prep = subparsers.add_parser("prep", help='Preprocess BAM files (prep.py)')

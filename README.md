@@ -44,11 +44,11 @@ load via: `conda activate rocco`.
 Refer to the interactive demonstration: [demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb). Includes a walkthrough using publicly available ENCODE ATAC-seq alignments.
 
 ## Documentation
-See the [Rocco API Reference](https://nolan-h-hamilton.github.io/ROCCO/rocco/rocco.html) for a more in-depth treatment of technical aspects as well as several usage examples, parameter descriptions, etc.
+See the [ROCCO Documentation](https://nolan-h-hamilton.github.io/ROCCO/rocco/rocco.html) for a more in-depth treatment of technical aspects as well as several usage examples, parameter descriptions, etc.
 
 ## Testing
-[test_rocco.py](https://github.com/nolan-h-hamilton/ROCCO/blob/main/tests/test_rocco.py) is run via GitHub Actions at each release in the [`Tests`](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml) workflow. Simulates test data using  ENCODE ATAC-seq alignments and ensures functionality of fundamental tasks. To run
-locally, `cd` in to the `tests` directory and run `pytest test_rocco.py`.
+The [`Tests`](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml) GitHub action is executed following each commit to ensure functionality. To run locally, run  `pytest test_rocco.py`
+in the `tests/` directory of the repository.
 
 ## Citation
 If using ROCCO in your research, please cite the [corresponding paper](https://doi.org/10.1093/bioinformatics/btad725) in *Bioinformatics*.

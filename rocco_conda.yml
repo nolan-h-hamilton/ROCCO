@@ -19,7 +19,6 @@ dependencies:
     - cvxpy
     - clarabel
     - ecos
-    - ortools
     - pandas
     - pararead
     - logmuse

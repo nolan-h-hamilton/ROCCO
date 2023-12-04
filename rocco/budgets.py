@@ -1,5 +1,5 @@
 """
-## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/): budgets.py
+# budgets.py
 Compute chromosome-specific budgets from sample data based on relative read densities.
 
 
@@ -17,11 +17,7 @@ Input:
 Output:
     CSV file that can be supplied as the parameter file for `rocco gwide --param_file`
 
-Example [from demo.ipynb](https://github.com/nolan-h-hamilton/ROCCO/blob/main/demo/demo.ipynb):
-    ```
-    rocco budgets --wigdir . -s hg38.sizes --smean .035 --samp_rate .20 -o params.csv
-    ```
-
+#### [Project Homepage](https://github.com/nolan-h-hamilton/ROCCO/)
 """
 
 import os

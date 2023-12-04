@@ -1,6 +1,7 @@
 r"""
-## [ROCCO](https://github.com/nolan-h-hamilton/ROCCO/): chrom.py 
-Run ROCCO on chromosome `--chrom` with samples' count/signal data in `tracks_chr[]`
+# chrom.py
+
+Run ROCCO on chromosome `--chrom` with samples' track data in `--wig_path`
 
 This script is the workhorse for [`rocco gwide`](https://nolan-h-hamilton.github.io/ROCCO/rocco/gwide.html) which generates and combines
 results for multiple chromosomes
@@ -36,7 +37,8 @@ Parameters:
     --identifiers (str): text file containing a subset of sample IDs, one on each line, for samples\
         to include in the experiment. If not invoked, defaults to `None`, and *all* samples with
         wig files in `--wig_path` are used.
-    --scale_bedscores (bool): if `True`, the BED6 scores are scaled by rank into the interval [500, 1000] for visualization in the UCSC browser 
+    --scale_bedscores (bool): if `True`, the BED6 scores are scaled by rank into the interval [500, 1000] for visualization in the UCSC browser
+    --fixedStep (bool): invoke if input wig tracks are in fixedStep format.
 
 Input:
     A `tracks_chr[]` directory containing samples wiggle tracks created by [`rocco prep`](https://nolan-h-hamilton.github.io/ROCCO/rocco/prep.html).
@@ -68,6 +70,8 @@ Examples:
         ```
         rocco chrom --wig_path tracks_chr21 --chrom chr21 --budget 0.02
         ```
+        
+#### [Project Homepage](https://github.com/nolan-h-hamilton/ROCCO/)
 """
 
 import os
@@ -75,157 +79,13 @@ import sys
 import gc
 import argparse
 import warnings
-import subprocess
 import numpy as np
 import pandas as pd
 from .locus import Locus
 from .loci import Loci
+from .rocco_aux import get_start_end, read_wig, get_locus_size
 
-
-def get_locus_size(wig_path) -> int:
-    """
-    Infers step size from replicates` wig files.
-
-    Args:
-        wig_path (str) : path to *directory* containing wig files
-
-
-    Returns:
-        int: an integer locus/step size used in the wig files
-    """
-    i = 0
-    pos1 = 0
-    pos2 = 0
-    wig_file = [x for x in os.listdir(wig_path) if '.wig' in x][0]
-    with open(wig_path + '/' + wig_file, mode='r', encoding='utf-8') as wig:
-        for line in wig:
-            line = line.strip()
-            if line.replace('\t', '').replace(' ', '').isnumeric():
-                if i == 0:
-                    pos1 = int(line.split('\t')[0])
-                if i == 1:
-                    pos2 = int(line.split('\t')[0])
-                if pos2 - pos1 > 0:
-                    break
-                i += 1
-    return pos2 - pos1
-
-def get_start_end(wig_path):
-    """
-    Infers starting and ending nucleotide position common to the
-    multiple signal tracks
-
-    To infer a reasonable genomic region over which to run ROCCO,
-    this function returns the median starting point and endpoints
-    among the multiple replicates' signal files in `wig_path`.
-
-    Args:
-        wig_path (str) : path to *directory* containing wig files
-
-    Returns:
-        start (int): median starting position
-        end (int): median ending position
-    """
-    starts = []
-    ends = []
-
-    def get_start(track):
-        with open(track, mode='r', encoding='utf-8') as wig:
-            for line in wig:
-                line = line.strip()
-
-                if line.replace('\t', '').replace(' ', '').isnumeric():
-                    start = int(line.split('\t')[0])
-                    return start
-        return None
-
-    def get_end(track):
-        with subprocess.Popen(["tail", "-n1", track],
-                              stdout=subprocess.PIPE) as proc:
-            for line in proc.stdout:
-                line = line.decode()
-                line = line.strip()
-                return int(line.split('\t')[0])
-        return None
-
-    wig_files = [x for x in os.listdir(wig_path) if '.wig' in x]
-    for wig_file in wig_files:
-        starts.append(get_start(wig_path + '/' + wig_file))
-        ends.append(get_end(wig_path + '/' + wig_file))
-    return sorted(starts)[len(starts) // 2], sorted(ends)[len(ends) // 2]
-
-
-def read_wig(wig_file, start=0, end=10**10, locus_size=50):
-    r"""
-    Processes a wig file for inclusion in the signal matrix $\mathbf{S}_{chr}$
-
-    This function prepares signal data for to fit in a constant-sized
-    $K \times n$ matrix. If a wig file begins at a position < `start`,
-    it will be padded with zeros. Likewise if a wig file ends at a
-    position > `end`, the extra values are ignored. Gaps between `start`
-    and `end` are replaced with a zero-entry.
-
-    Args:
-        wig_file (str): path to wiggle formatted signal track
-        start (int): inferred or manually-specified starting nucleotide
-          position
-        end (int): inferred or manually-specified ending nucleotide
-          position
-        locus_size (int): interval/locus size. Each wig file will have
-          signal values at every `start + i*locus_size` nucleotide pos.
-          for i = 0,1,2,...
-
-    Returns:
-        loci: list of starting nucleotide positions for each locus
-        signal: enrichment signal value at each locus in `loci`
-    """
-    print("reading: {}".format(wig_file))
-    loci = []
-    signal = []
-    with open(wig_file, mode='r', encoding='utf-8') as wig:
-        for line in wig:
-            line = line.strip()
-            try:
-                line = line.split('\t')
-                line[0] = int(line[0])
-                line[1] = float(line[1])
-                if line[1] < 0:
-                    line[1] = 0
-                # case: wig begins after specified `start`
-                if start < line[0] and len(loci) == 0:
-                    for loc in range(start, line[0], locus_size):
-                        loci.append(loc)
-                        signal.append(0)
-                    loci.append(line[0])
-                    signal.append(line[1])
-                    continue
-                if line[0] < start:
-                    continue
-                if line[0] > end:
-                    break
-                # case: loci not contiguous
-                if len(loci) > 0 and line[0] - loci[-1] > locus_size:
-                    loci.append(loci[-1] + locus_size)
-                    signal.append(0)
-                    continue
-
-                loci.append(line[0])
-                signal.append(line[1])
-
-            except ValueError:
-                continue
-            except IndexError:
-                continue
-    # case: wig ends prematurely
-    if loci[-1] < end:
-        for loc in range(loci[-1] + locus_size, end + locus_size, locus_size):
-            loci.append(loc)
-            signal.append(0)
-
-    return loci, signal
-
-
-def collect_wigs(wig_files, start=0, end=10**10, locus_size=50) -> pd.DataFrame:
+def collect_wigs(wig_files, start=0, end=10**10, locus_size=50, fixedStep=False) -> pd.DataFrame:
     r"""
     creates a $K \times n$ dataframe of signals derived from wig files
 
@@ -235,13 +95,14 @@ def collect_wigs(wig_files, start=0, end=10**10, locus_size=50) -> pd.DataFrame:
         end (int): ending nucleotide position of wig files
         locus_size (int): initial size (in nucleotides) of Locus objects.
             Corresponds to $L$ in paper.
+        fixedStep (bool): True if wig files are in one-column fixedStep format
 
     Returns:
         pd.DataFrame: $K \times n$ dataframe of individuals' signals.
     """
     loci = [x for x in range(start, end + locus_size, locus_size)]
     all_wigs = pd.DataFrame(
-        np.array([read_wig(x, start, end, locus_size)[1]
+        np.array([read_wig(x, start, end, locus_size, fixedStep=fixedStep)[1]
                   for x in wig_files],dtype=np.float32),
         columns=loci, index=None)
     return all_wigs
@@ -303,25 +164,14 @@ def tags(fname) -> list:
     return tags_
 
 
-
 def main(args):
-    if args['verbose']:
-        print(f'chrom: initial args\n{args}')
+
     if args['locus_size'] == -1:
-        args['locus_size'] = get_locus_size(args['wig_path'])
+        args['locus_size'] = get_locus_size(args['wig_path'], fixedStep=args['fixedStep'])
 
     args['outdir'] = os.path.normpath(args['outdir'])
     if not os.path.exists(args['outdir']):
         os.mkdir(args['outdir'])
-
-    if args['start'] == -1 or args['end'] == -1:
-        args['start'], args['end'] = get_start_end(args['wig_path'])
-    if args['bed_format'] not in [3, 6]:
-        warnings.warn('Only BED3 and BED6 are supported--setting to BED6')
-        args['bed_format'] = 6
-    if args['verbose']:
-        print(f'chrom: inferred args\n{args}')
-
 
     wig_files = [
         os.path.join(args['wig_path'], fname)
@@ -355,12 +205,19 @@ def main(args):
     if len(wig_files) == 0:
         warnings.warn(f"chrom: did not any find wig files for the given samples + {args['chrom']}")
         sys.exit(0)
+    if args['start'] == -1 or args['end'] == -1:
+        args['start'], args['end'] = get_start_end(args['wig_path'],fixedStep=args['fixedStep'])
+    if args['bed_format'] not in [3, 6]:
+        warnings.warn(f'Ignoring `--bed_format`: {args["bed_format"]} and using default')
+        args['bed_format'] = 6
+
 
     # create a dataframe of signal values for `K` replicates and `n` loci
     signal_matrix = collect_wigs(wig_files,
                                  start=args['start'],
                                  end=args['end'],
-                                 locus_size=args['locus_size'])
+                                 locus_size=args['locus_size'],
+                                 fixedStep = args['fixedStep'])
 
     InitLoci = Loci()
     for i, loc in enumerate(signal_matrix.columns):
@@ -449,6 +306,6 @@ if __name__ == "__main__":
     parser.add_argument('--identifiers', default=None,
                         help="text file containing a subset of sample IDs, one on each line, for samples to include in the experiment. If not invoked, defaults to `None`, and *all* samples with wig files in `--wig_path` are used.")
     parser.add_argument('--outdir', type=str, default='.', help="directory in which to store output bed file")
-
+    parser.add_argument('--fixedStep', default=False, action='store_true', help='invoke if the tracks in `wig_path` are in fixedStep format')
     args = vars(parser.parse_args())
     main(args)

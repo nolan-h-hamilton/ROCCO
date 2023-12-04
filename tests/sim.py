@@ -41,6 +41,13 @@ def read_wig_sim(wig_file, start=0, end=10**10, locus_size=50):
 
 loci_,orig_ = read_wig_sim(sys.argv[1])
 
+locus_size=50
+try:
+    locus_size = loci_[1]-loci_[0]
+except:
+    print(f'sim.py: using default locus size {locus_size}')
+    pass
+
 for i in range(int(sys.argv[3])):
     loci = copy.copy(loci_)
     orig = copy.copy(orig_)
@@ -49,9 +56,22 @@ for i in range(int(sys.argv[3])):
             if random.random() < .10:
                 orig[j] = max(int(0),int(orig[j] + np.random.normal(0,float(sys.argv[2]),size=1)))
     chrom = os.path.basename(sys.argv[1]).split('_')[0]
-    fname = f'data/tracks_{chrom}/{chrom}_samp{str(i+1)}.wig'
+    odir = os.path.dirname(sys.argv[1])
+    fname = f'{odir}/{chrom}_samp{str(i+1)}.wig'
     f_ = open(fname,'w',encoding='utf-8')
-    for x,y in zip(loci,orig):
-        f_.write(f'{int(x)}\t{int(y)}\n')
-    f_.close()
+    fixedStep = False
+    try:
+        if sys.argv[4] == 'fs':
+            fixedStep = True
+    except:
+        pass
+    if fixedStep:
+        f_.write(f'fixedStep chrom={chrom} start={str(loci[0])} step={locus_size}\n')
+        for x,y in zip(loci,orig):
+            f_.write(f'{int(y)}\n')
+        f_.close()
+    else:
+        for x,y in zip(loci,orig):
+            f_.write(f'{int(x)}\t{int(y)}\n')
+        f_.close()
 
