@@ -5,7 +5,8 @@ Obtain ROCCO conformable input from samples' BAM files.
 
 BAM files for each sample in `--bamdir` are used to create fixed-step bigwig signal tracks.
 These signal tracks are then split by chromosome into wiggle files in the subdirectories `tracks_chr[]`.
-This tool assumes a suitable QC protocol has already been applied.
+This tool assumes comparable experimental protocols and a suitable QC procedure was applied to generate
+the BAM files used as input.
 
 The resulting `tracks_chr[]` directories can be listed in the `--param_file` parsed by [rocco gwide](https://nolan-h-hamilton.github.io/ROCCO/rocco/gwide.html)
 
@@ -50,9 +51,10 @@ Note:
         ```
         bigWigToWig sample.bam.bw tracks_chr[]/chr[]_sample.bam.bw.wig -chrom=chr[]
         ```
-    Such utilities offer several additional features that users may find helpful in
-    their respective experimental settings and preprocessing pipelines. But note that
-    ROCCO has not been tested using these protocols.
+    Such utilities offer several additional features that users may find helpful for
+    normalization, sample comparison, visualization/plotting, etc. but ROCCO has not
+    been tested rigorously on the signals generated from these tools.
+
 
 #### [Project Homepage](https://github.com/nolan-h-hamilton/ROCCO/)
 """
