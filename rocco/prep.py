@@ -3,29 +3,38 @@
 
 Obtain ROCCO conformable input from samples' BAM files.
 
+ROCCO accepts multiple samples' coverage tracks that are assumed to have been generated following comparable
+experimental, alignment, QC, etc. protocols. Though ROCCO is generally robust to deviations from this assumption,
+we divide the BAM->WIG step and ROCCO itself so that users can, if necessary, apply their own preprocessing
+protocol to the alignment files for computing coverage, normalization, etc. as their experimental context
+and goals dictate. This general utility for generating ROCCO conformable input (coverage tracks) from
+BAM files is offered as part of the ROCCO package as a subcommand `prep` for convenience and has produced
+sufficient results across various tested scenarios.
+
 BAM files for each sample in `--bamdir` are used to create fixed-step bigwig signal tracks.
-These signal tracks are then split by chromosome into wiggle files in the subdirectories `tracks_chr[]`.
-This tool assumes comparable experimental protocols and a suitable QC procedure was applied to generate
-the BAM files used as input.
+These signal tracks are then split by chromosome into wig files in the subdirectories `tracks_chr[]`.
 
 The resulting `tracks_chr[]` directories can be listed in the `--param_file` parsed by [rocco gwide](https://nolan-h-hamilton.github.io/ROCCO/rocco/gwide.html)
 
 Alternatively, if running [rocco chrom](https://nolan-h-hamilton.github.io/ROCCO/rocco/chrom.html) manually, e.g.,
     ```
-    rocco chrom --chrom chr11 --wig_path tracks_chr11 [...]
+    rocco chrom --chrom chr11 --wig_path tracks_chr11
     ```
 
 Parameters:
     -i, --bamdir (str, default='.'):
         Path to the directory containing BAM files.
-    -o, --outdir (str, default='.')`:
+    -o, --outdir (str, default='.'):
         Output directory.
     -s, --sizes (str, default='hg38'):
         A path to a chromosome sizes file OR an assembly name.
-    -L, --interval_length (int, default=50)`:
+    -L, --interval_length (int, default=50):
         Wiggle track fixed step size
-    -c, --cores (int, default=1)`:
+    -c, --cores (int, default=1):
         PEPATAC's `bamSitesToWig.py` cores parameter. Altering this parameter to use >1 core may cause issues on Mac OS.
+    --scale_factor_file (str,default=None):
+        Path to a tab-separated file with two columns: samples' alignment filenames and the other for their respective scale factors as computed with an external method.
+        For instance, an output file from [deepTools](https://deeptools.readthedocs.io/en/develop/content/tools/multiBamSummary.html) `multiBamSummary --scalingFactors` command.
 
 Examples:
     - create input `tracks_chr[]` directories for the hg38 assembly, no sizes file available:
@@ -55,16 +64,16 @@ Note:
     normalization, sample comparison, visualization/plotting, etc. but ROCCO has not
     been tested rigorously on the signals generated from these tools.
 
-
-#### [Project Homepage](https://github.com/nolan-h-hamilton/ROCCO/)
 """
 
 import os
 import argparse
 import subprocess
+import pandas as pd
 import pysam
 from . import rocco_aux
 import tempfile
+import warnings
 
 
 def main(args):
@@ -72,6 +81,11 @@ def main(args):
     cwd = os.getcwd()
     args['bamdir'] = os.path.abspath(args['bamdir'])
     args['outdir'] = os.path.abspath(args['outdir'])
+    sf_dict = None
+    if args['scale_factor_file'] is not None:
+        aln_names = pd.read_csv(args['scale_factor_file'],sep='\t',header=None)[0]
+        scale_factors = pd.read_csv(args['scale_factor_file'],sep='\t',header=None)[1]
+        sf_dict = dict(zip(aln_names,scale_factors))
 
     if not os.path.exists(args['sizes']):
         # if args['sizes'] is not a locally available file,
@@ -88,6 +102,15 @@ def main(args):
     tf = tempfile.NamedTemporaryFile(mode='w', delete=False)
 
     for fname in os.listdir(args['bamdir']):
+        fname_sf = 1.0
+        try:
+            if args['scale_factor_file'] is not None:
+                fname_sf = float(sf_dict[fname])
+        except:
+            warnings.warn(
+                f'prep: unable to parse scale factor for {fname} in {args["scale_factor_file"]}...setting to 1.0')
+            fname_sf = 1.0
+
         fname = os.path.join(args['bamdir'], fname)
         fname = os.path.abspath(fname)
 
@@ -101,9 +124,10 @@ def main(args):
                 pysam.index(fname)
 
             print('prep: {}'.format(aln.filename.decode()))
-            bstw_path = os.path.join(os.path.dirname(__file__), "bamSitesToWig.py")
+            bstw_path = os.path.join(os.path.dirname(__file__), "bamSitesToWig.py") 
             bstw_cmd = ['python3', bstw_path,
                         '-i', aln.filename.decode(),
+                        '--scale', fname_sf,
                         '-c', args['sizes'],
                         '-w', args['outdir'] + '/' + aln.filename.decode().split('/')[-1] + '.bw',
                         '-r', str(args['interval_length']),
@@ -168,6 +192,9 @@ if __name__ == '__main__':
                         help="`bamSitesToWig.py`'s cores  parameter.\
                         Altering this parameter to use >1 core\
                         may cause issues on Mac OS")
+    parser.add_argument('--scale_factor_file', default=None, help="Path to a tab-separated file with two columns:\
+                        the first for samples' alignment filenames and the other for their respective scale factors.\
+                        e.g., the output file from deepTools `multiBamSummary --scalingFactors` command.")
     parser.add_argument('--multi',
                          default=True)
     args = vars(parser.parse_args())

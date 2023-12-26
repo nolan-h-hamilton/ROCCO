@@ -37,8 +37,9 @@ Parameters:
     --identifiers (str): text file containing a subset of sample IDs, one on each line, for samples\
         to include in the experiment. If not invoked, defaults to `None`, and *all* samples with
         wig files in `--wig_path` are used.
-    --scale_bedscores (bool): if `True`, the BED6 scores are scaled by rank into the interval [500, 1000] for visualization in the UCSC browser
+    --scale_peakscores (bool): if `True`, the peak scores are scaled by rank into the interval [500, 1000] for visualization in the UCSC browser
     --fixedStep (bool): invoke if input wig tracks are in fixedStep format.
+    --filter_by_score (float): only include peaks with peak scores above. Defaults to 0.
 
 Input:
     A `tracks_chr[]` directory containing samples wiggle tracks created by [`rocco prep`](https://nolan-h-hamilton.github.io/ROCCO/rocco/prep.html).
@@ -261,20 +262,25 @@ def main(args):
         for loc in InitLoci:
             assert loc.size > 0
             if loc.accessible == 1:
-                loc_score = round((args['locus_size']*np.sum(loc.sig_data))/(loc.size))
+                peak_score = round((args['locus_size']*np.sum(loc.sig_data))/(loc.size))
+                if peak_score < args['filter_by_score']:
+                    continue
                 if args['scale_bedscores']:
                     # scale for shading in ucsc genome browser
-                    loc_score = int(500 * emp_cdf(np.sum(loc.sig_data) / loc.size,
+                    peak_score = int(500 * emp_cdf(np.sum(loc.sig_data) / loc.size,
                                               sorted_sel_sig) + 500)
                 loc_name = args['chrom'] + '_' + str(loc_count)
                 output += "{}\t{}\t{}\t{}\t{}\t{}\n".format(
                     args['chrom'], loc.position, loc.position + loc.size,
-                    loc_name, loc_score, '.')
+                    loc_name, peak_score, '.')
                 loc_count += 1
 
     if args['bed_format'] == 3:
         for loc in InitLoci:
             if loc.accessible == 1:
+                peak_score = round((args['locus_size']*np.sum(loc.sig_data))/(loc.size))
+                if peak_score < args['filter_by_score']:
+                    continue
                 output += "{}\t{}\t{}\n".format(
                     args['chrom'], loc.position, loc.position + loc.size)
 
@@ -303,6 +309,7 @@ if __name__ == "__main__":
                         help="`3` for BED3 format and `6` for BED6 format")
     parser.add_argument('--scale_bedscores', action='store_true', default=False,
                         help="if `True`, BED6 scores are scaled by rank into the interval [500, 1000] for visualization in the UCSC browser")
+    parser.add_argument('--filter_by_score', type=float, default = 0.0, help='only include peaks with peak scores above `--filter_by_score`')
     parser.add_argument('--identifiers', default=None,
                         help="text file containing a subset of sample IDs, one on each line, for samples to include in the experiment. If not invoked, defaults to `None`, and *all* samples with wig files in `--wig_path` are used.")
     parser.add_argument('--outdir', type=str, default='.', help="directory in which to store output bed file")

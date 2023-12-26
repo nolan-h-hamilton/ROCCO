@@ -270,7 +270,7 @@ class Loci:
             sumsq_penalty: Experimental. `None` by default. If not `None`, add $$\mathsf{sumsq\_penalty}\cdot \mathbf{\ell}^{T}\mathbf{\ell}$$ to
                 the objective function. In this case, the $f(\mathbf{\ell})$ becomes strongly convex and the
                 relaxed solution is guaranteed unique. Can be viewed as a penalty on the number of selections
-                in supplement to the "hard" budget constraint.
+                in supplement to the "hard" budget constraint $\sum_ \ell_i \leq [nb]$
 
         Returns:
         np.ndarray: the integral $\texttt{RR}$ solution, OR $\texttt{floor\_eps}$ solution if $N \leq 0$.

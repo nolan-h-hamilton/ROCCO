@@ -13,7 +13,7 @@ chr19_budget= '0.035'
 chr20_start = '20000000'
 chr20_end = '50000000'
 chr20_budget = '0.035'
-
+filter_min_score = '50'
 group_A_bedfile = 'group_A.bed'
 group_B_bedfile = 'group_B.bed'
 
@@ -154,6 +154,27 @@ def test_run_chrom_chr19_identifiers():
         assert samp_tag in id_wig_match_dict.keys(), f'no wig file found for sample {samp_tag}'
     assert len(id_wig_match_dict) == len(identifier_tags), f'a sample was missed or included erroneously:\n{str(id_wig_match_dict)}'
     assert len(list(set(id_wig_match_dict.values()))) == len(list(id_wig_match_dict.values())), f'multiple distinct samples erroneously matching to same wig file:\n{str(id_wig_match_dict)}'
+
+@pytest.mark.regular
+def test_run_chrom_chr19_filtered():
+    """
+    Ensure 'rocco chrom' runs successfully for chr19 with a minimum peak score filter
+    """
+    # check if command returns exit code '0'
+    assert subprocess.run(['rocco', 'chrom','--chrom', 'chr19', '--wig_path',  os.path.dirname(tracks_chrom19_wig),
+                           '--budget', chr19_budget, '-N', rr_iter, '--start', chr19_start, '--end', chr19_end,
+                           '--solver', solver, '--filter_by_score', filter_min_score],
+                          capture_output=True, encoding='utf-8').returncode == 0, 'rocco chrom returncode != 0'
+    # check if output file was created properly
+    assert chr19_outfile in os.listdir()
+    # ensure output file is nonempty (at least 'x' bytes)
+    assert os.stat(chr19_outfile).st_size > peakfile_minsize
+    with open(chr19_outfile,'r') as filtered_chr19_out:
+        for line in filtered_chr19_out:
+            line = line.strip()
+            if line:
+                line = line.split('\t')
+                assert float(line[4]) >= float(filter_min_score)
 
 @pytest.mark.regular
 def test_run_chrom_chr20():

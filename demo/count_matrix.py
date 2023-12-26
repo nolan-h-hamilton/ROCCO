@@ -1,6 +1,7 @@
 """
-Create a CSV/TSV count matrix file with rows corresponding to peaks (samples)
-and columns corresponding to samples (peaks).
+Generate a count matrix over a ROCCO-generated peak file. Included for convenience,
+feel free to use an alternative external tool to generate the count matrix for the
+ROCCO bed/peak file and samples' alignments.
 
 Usage:
     `count_matrix.py [-h] [-i PEAKFILE] [-m METADATA] [--bamdir BAMDIR] [--sample_column SAMPLE_COLUMN] [-o OUTFILE] [--delimiter DELIMITER] [--samples_by_peaks]`

@@ -16,15 +16,13 @@ Subcommand Documentation:
 
     [`prep`](https://nolan-h-hamilton.github.io/ROCCO/rocco/prep.html)
 
-    [`budgets`](https://nolan-h-hamilton.github.io/ROCCO/rocco/budgets.html)
-
 General Notation and Terminology:
     - $\mathscr{L}$: genomic region, e.g., a chromosome
     - $L$: size of loci in bp, i.e., fixed step size in wiggle tracks
     - $n$: number of loci in the given chromosome, defined by $n \approx |\mathscr{L}|/L$.
     - $\mathcal{S}(i)$: score for $i$th locus:
         $$c_1 g_1(i) - c_2 g_2(i) + c_3 g_3(i)$$
-    - $\ell \in [0,1]^n$ (relaxed) or $\ell \in \mathbb{Z}^n_{0,1}$ (unrelaxed): solutions to the optimization problem, $\ell$, specify which loci are accessible ($\ell_i = 1$) and which are closed ($\ell_i = 0$)
+    - $\ell \in [0,1]^n$ (real solution to relaxed problem) or $\ell \in \mathbb{Z}^n_{0,1}$ (integral solution unrelaxed IP): solutions to the optimization problem, $\ell$, specify which loci are accessible ($\ell_i = 1$) and which are closed ($\ell_i = 0$)
     - objective function $f$: $f(\mathbf{\ell}) = -\mathcal{S}^{T}\mathbf{\ell} + \gamma \sum_{i=1}^{n-1}|\ell_i - \ell_{i+1}|$
         - the first term represents the sum of scores, $\sum_i \mathcal{S}(i)$, over selected loci
         - the second term induces sparsity and controls fragmentation of selected regions
@@ -34,7 +32,9 @@ General Notation and Terminology:
         $$\text{Subject to: }\sum_{i=1}^{n}\ell_i \leq [nb]$$
     - `RR`: iterative randomization procedure described in the paper to derive integral solutions (open chromatin annotations) from the relaxed solution as:
         $$\ell^{\textsf{rand}}_i \sim \text{Bernoulli}(\ell_i)$$
-        `--rr_iter` such solutions are generated, after which the best feasible solution is selected to determine the final annotation.
+        `--rr_iter` such solutions are generated, each of which is optimal in expectation, and the best feasible solution is selected to determine the final annotation.
+    - Peak score: For a given peak, the sum of coverage over the region across all samples, divided by the number of loci comprising the peak,
+        and then multiplied by args['locus_size'] for a score in units of rds/bp. Can be used to filter results via `--filter_by_score`.
 
 """
 
@@ -161,7 +161,8 @@ def main():
     parser_subcommand_gwide.add_argument('--tracks_path', default=None)
     parser_subcommand_gwide.add_argument('--exclude_chroms', default=None)
     parser_subcommand_gwide.add_argument('--fixedStep', default=False, action="store_true")
-    
+    parser_subcommand_gwide.add_argument('--filter_by_score', type=float, default = 0.0)
+
     # 'chrom' subcommand parameters
     parser_subcommand_chrom = subparsers.add_parser("chrom", help='run ROCCO on a single chromosome (chrom.py)')
     parser_subcommand_chrom.add_argument('--start', type=int, default=-1)
@@ -183,6 +184,7 @@ def main():
     parser_subcommand_chrom.add_argument('-N', '--rr_iter', type=int, default=50)
     parser_subcommand_chrom.add_argument('--verbose', default=False, action="store_true")
     parser_subcommand_chrom.add_argument('--fixedStep', default=False, action="store_true")
+    parser_subcommand_chrom.add_argument('--filter_by_score', type=float, default = 0.0)
 
     # 'prep' subcommand parameters
     parser_subcommand_prep = subparsers.add_parser("prep", help='Preprocess BAM files (prep.py)')
@@ -192,7 +194,7 @@ def main():
     parser_subcommand_prep.add_argument('-L', '--interval_length', default=50)
     parser_subcommand_prep.add_argument('-c', '--cores', type=int, default=1)
     parser_subcommand_prep.add_argument('--multi', default=True)
-    parser_subcommand_prep.add_argument('--bstw_path', default=None, help='deprecated')
+    parser_subcommand_prep.add_argument('--scale_factor_file', default=None)
 
     # 'budgets' subcommand parameters
     parser_subcommand_budgets = subparsers.add_parser("budgets", help='Compute a budget for each chromosome ranked by read density (budgets.py). ')
