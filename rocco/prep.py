@@ -127,7 +127,7 @@ def main(args):
             bstw_path = os.path.join(os.path.dirname(__file__), "bamSitesToWig.py") 
             bstw_cmd = ['python3', bstw_path,
                         '-i', aln.filename.decode(),
-                        '--scale', fname_sf,
+                        '--scale', str(fname_sf),
                         '-c', args['sizes'],
                         '-w', args['outdir'] + '/' + aln.filename.decode().split('/')[-1] + '.bw',
                         '-r', str(args['interval_length']),
