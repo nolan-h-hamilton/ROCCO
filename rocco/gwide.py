@@ -50,73 +50,12 @@ Parameters:
     --exclude_chroms (str): comma-separated list of chromosomes to ignore
     --filter_by_score (float): only include peaks with peak scores above. Defaults to 0.
 
-Example `--param_file` for hg38 with chromosome-specific budgets:
-
-    ```
-    chromosome,input_path,budget,gamma,tau,c1,c2,c3
-    chr1,tracks_chr1,0.035,NULL,NULL,NULL,NULL,NULL
-    chr2,tracks_chr2,0.025,NULL,NULL,NULL,NULL,NULL
-    chr3,tracks_chr3,0.025,NULL,NULL,NULL,NULL,NULL
-    chr4,tracks_chr4,0.02,NULL,NULL,NULL,NULL,NULL
-    chr5,tracks_chr5,0.025,NULL,NULL,NULL,NULL,NULL
-    chr6,tracks_chr6,0.025,NULL,NULL,NULL,NULL,NULL
-    chr7,tracks_chr7,0.03,NULL,NULL,NULL,NULL,NULL
-    chr8,tracks_chr8,0.03,NULL,NULL,NULL,NULL,NULL
-    chr9,tracks_chr9,0.03,NULL,NULL,NULL,NULL,NULL
-    chr10,tracks_chr10,0.025,NULL,NULL,NULL,NULL,NULL
-    chr11,tracks_chr11,0.04,NULL,NULL,NULL,NULL,NULL
-    chr12,tracks_chr12,0.04,NULL,NULL,NULL,NULL,NULL
-    chr13,tracks_chr13,0.025,NULL,NULL,NULL,NULL,NULL
-    chr14,tracks_chr14,0.03,NULL,NULL,NULL,NULL,NULL
-    chr15,tracks_chr15,0.035,NULL,NULL,NULL,NULL,NULL
-    chr16,tracks_chr16,0.035,NULL,NULL,NULL,NULL,NULL
-    chr17,tracks_chr17,0.05,NULL,NULL,NULL,NULL,NULL
-    chr18,tracks_chr18,0.025,NULL,NULL,NULL,NULL,NULL
-    chr19,tracks_chr19,0.05,NULL,NULL,NULL,NULL,NULL
-    chr20,tracks_chr20,0.035,NULL,NULL,NULL,NULL,NULL
-    chr21,tracks_chr21,0.025,NULL,NULL,NULL,NULL,NULL
-    chr22,tracks_chr22,0.35,NULL,NULL,NULL,NULL,NULL
-    chrX,tracks_chrX,0.02,NULL,NULL,NULL,NULL,NULL
-    chrY,tracks_chrY,0.01,NULL,NULL,NULL,NULL,NULL
-    ```
-where `tracks_chr[]` are the directories created with [`rocco prep`](https://nolan-h-hamilton.github.io/ROCCO/rocco/prep.html)
-
-Example `--param_file` for hg38 with the same budget `--budget` for all chromosomes :
-
-    ```
-    chromosome,input_path,budget,gamma,tau,c1,c2,c3
-    chr1,tracks_chr1,NULL,NULL,NULL,NULL,NULL,NULL
-    chr2,tracks_chr2,NULL,NULL,NULL,NULL,NULL,NULL
-    chr3,tracks_chr3,NULL,NULL,NULL,NULL,NULL,NULL
-    chr4,tracks_chr4,NULL,NULL,NULL,NULL,NULL,NULL
-    chr5,tracks_chr5,NULL,NULL,NULL,NULL,NULL,NULL
-    chr6,tracks_chr6,NULL,NULL,NULL,NULL,NULL,NULL
-    chr7,tracks_chr7,NULL,NULL,NULL,NULL,NULL,NULL
-    chr8,tracks_chr8,NULL,NULL,NULL,NULL,NULL,NULL
-    chr9,tracks_chr9,NULL,NULL,NULL,NULL,NULL,NULL
-    chr10,tracks_chr10,NULL,NULL,NULL,NULL,NULL,NULL
-    chr11,tracks_chr11,NULL,NULL,NULL,NULL,NULL,NULL
-    chr12,tracks_chr12,NULL,NULL,NULL,NULL,NULL,NULL
-    chr13,tracks_chr13,NULL,NULL,NULL,NULL,NULL,NULL
-    chr14,tracks_chr14,NULL,NULL,NULL,NULL,NULL,NULL
-    chr15,tracks_chr15,NULL,NULL,NULL,NULL,NULL,NULL
-    chr16,tracks_chr16,NULL,NULL,NULL,NULL,NULL,NULL
-    chr17,tracks_chr17,NULL,NULL,NULL,NULL,NULL,NULL
-    chr18,tracks_chr18,NULL,NULL,NULL,NULL,NULL,NULL
-    chr19,tracks_chr19,NULL,NULL,NULL,NULL,NULL,NULL
-    chr20,tracks_chr20,NULL,NULL,NULL,NULL,NULL,NULL
-    chr21,tracks_chr21,NULL,NULL,NULL,NULL,NULL,NULL
-    chr22,tracks_chr22,NULL,NULL,NULL,NULL,NULL,NULL
-    chrX,tracks_chrX,NULL,NULL,NULL,NULL,NULL,NULL
-    chrY,tracks_chrY,NULL,NULL,NULL,NULL,NULL,NULL
-    ```
-
 Examples:
     - Run ROCCO genome-wide with default chromosome-specific parameters for hg38 and using all samples for input:
         ```
         rocco gwide --param_file hg_params --combine results_allsamples.bed
         ```
-        `hg_params` and `mm_params` correspond to `hg38_params.csv` and `mm10_params.csv` in the ROCCO GitHub repository, respectively.
+        **`hg_params` and `mm_params` correspond to `hg38_params.csv` and `mm10_params.csv` in the ROCCO GitHub repository**, respectively.
         Feel free to tweak these templates/default parameters depending on your specific experimental context.
 
     - Run ROCCO genome-wide with default chromosome-specific parameters for hg38 on a subset of samples listed in `identifiers.txt`:
