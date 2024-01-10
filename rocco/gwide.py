@@ -175,7 +175,7 @@ def call_rocco(chrom, wig_path, budget, gamma, tau, c1, c2, c3, solver,
                 '--rr_iter', N,
                 '--identifiers', identifiers,
                 '--fixedStep',
-                '--filter_by_score',
+                '--filter_by_score', str(filter_by_score),
                 '--verbose']
 
     if not verbose:

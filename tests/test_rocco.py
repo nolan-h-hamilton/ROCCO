@@ -202,7 +202,7 @@ def test_comp_ref_chr20():
     jaccard_chr20 = float(data.split("\t")[2])
     assert jaccard_chr20 >= jaccard_min
 
-@pytest.mark.extra
+@pytest.mark.regular
 def test_run_gwide():
     """
     Ensure `rocco gwide -p test_params.csv` runs successfully
@@ -218,7 +218,7 @@ def test_run_gwide():
     # ensure outdir contains chromosome-specific BED files
     assert len(chrom_files) == 2
 
-@pytest.mark.extra
+@pytest.mark.regular
 def test_comp_ref_gwide():
     """
     Ensure the generated BED files are reasonably consistent with constant references.
