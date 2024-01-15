@@ -6,7 +6,7 @@ on:
       - '**.py'
       - '**.yml'
     branches:
-      - dev
+      - dev_
 jobs:
   build:
     runs-on: ubuntu-latest
