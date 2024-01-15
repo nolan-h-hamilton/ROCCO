@@ -1,5 +1,3 @@
-include README_PyPI.md
-include PEPATAC
-recursive-include rocco *.csv
-recursive-include rocco *.bed
-recursive-include rocco *.pl
+include *.md
+include *.rst
+recursive-include docs *.png
