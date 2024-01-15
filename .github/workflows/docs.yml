@@ -24,14 +24,14 @@ jobs:
       - run: pip install numpy
       - run: pip install scipy==1.10.0
       - run: pip install cvxpy
+      - run: pip install sphinx myst_parser
       - run: pip install pandas
-      - run: pip install pararead
-      - run: pip install logmuse
+      - run: pip install pybedtools
+      - run: pip install pyBigWig
       - run: pip install pysam
-      - run: pip install pdoc
       - run: sudo apt-get install -y bedtools
       - run: sudo apt-get install -y samtools
-      - run: pdoc rocco/locus.py rocco/loci.py rocco/rocco.py rocco/chrom.py rocco/gwide.py rocco/rocco_aux.py rocco/budgets.py rocco/prep.py --math -d google -o docs/ --logo "https://github.com/nolan-h-hamilton/ROCCO/assets/57746191/4e662eda-4899-46fa-ac9f-998e28f592c1"
+      - run: sphinx-build docs docs/build_
       - uses: actions/upload-pages-artifact@v1
         with:
           path: docs/
