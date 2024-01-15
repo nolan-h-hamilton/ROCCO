@@ -1,9 +1,10 @@
 name: API
 
-# build the documentation whenever there are new commits on main
+# build the documentation whenever there are new commits in dev,main
 on:
   push:
     branches:
+      - dev
       - main
     paths:
       - '**.py'
@@ -13,38 +14,22 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  docs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v3
+      - name: Install dependencies
+        run: |
+          pip install sphinx myst_parser pytest pybedtools pysam numpy scipy pandas pyBigWig
+      - name: Sphinx build
+        run: |
+          sphinx-build doc docs/_build
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         with:
-          python-version: '3.8'
-      - run: pip install --upgrade pip
-      - run: pip install numpy
-      - run: pip install scipy==1.10.0
-      - run: pip install cvxpy
-      - run: pip install sphinx myst_parser
-      - run: pip install pandas
-      - run: pip install pybedtools
-      - run: pip install pyBigWig
-      - run: pip install pysam
-      - run: sudo apt-get install -y bedtools
-      - run: sudo apt-get install -y samtools
-      - run: sphinx-build docs docs/build_
-      - uses: actions/upload-pages-artifact@v1
-        with:
-          path: docs/
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v2
+          publish_branch: gh-pages
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs/_build/
+          force_orphan: true

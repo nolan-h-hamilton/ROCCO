@@ -50,6 +50,7 @@ autodoc_default_options = {
     'undoc-members': True,
     'show-inheritance': True,
 }
-add_module_names = False
+add_module_names = True
 # -- Options for napoleon extension ------------------------------------------
-napoleon_sphinx_docstring = False
+napoleon_sphinx_docstring = True
+html_sidebars = { '**': ['searchbox.html'] }
