@@ -156,15 +156,9 @@ Run pytest unit tests
 Notes/Miscellaneous
 ======================
 
-* If using BedGraph or BigWig input, ensure contiguous intervals within each chromosome (no gaps)
-    * Such gaps can be filled with zeros.
+* Users may consider tweaking the default chromosome-specific :math:`b,\gamma,\tau` parameters using a custom `--chrom_param_file` or filtering peaks by score with the `--peak_score_filter` argument.
 
-
-* Users may consider tweaking the default chromosome-specific :math:`b,\gamma,\tau` parameters or filtering peaks by score with
-    the `--peak_score_filter` argument.
-
-
-* Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. A suitable peak score cutoff can be evaluated by viewing the output histogram of peak scores. In many cases a cutoff around 100.0 is a reasonable starting point.
+* Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. A suitable peak score cutoff can be evaluated by viewing the output histogram of peak scores.
 
 
 """
@@ -228,8 +222,6 @@ class Sample:
     :type skip_chroms: list, optional
     :param proc_num: Number of processes to use when computing chromosome-specific coverage tracks
     :type proc_num: int, optional
-    :param samtools_threads: Number of threads to use for samtools operations
-    :type samtools_threads: int, optional
     :param step: Step size for coverage tracks. This is overwritten and inferred from the data if a bedgraph file is used as input
     :type step: int, optional
     :param weight: Weight to scale coverage values by. Defaults to 1.0
@@ -256,7 +248,6 @@ class Sample:
         self.genome_file = os.path.relpath(genome_file)
 
         self.proc_num = kwargs.get('proc_num', max(multiprocessing.cpu_count()-1,1))
-        self.samtools_threads = kwargs.get('samtools_threads', 1)
         if self.get_input_type() == 'bam':
             self.step = kwargs.get('step', 50)
         self.weight = kwargs.get('weight', 1.0)
@@ -300,11 +291,6 @@ class Sample:
             attributes[attr] = value
         return pformat(attributes)
 
-    def delete_tempfiles(self):
-        for fname in self.tempfiles:
-            if os.path.exists(fname):
-                os.remove(fname)
-
 
     def get_input_type(self):
         r"""
@@ -330,71 +316,14 @@ class Sample:
         return file_type
 
 
-    def split_bam_by_chrom(self):
-        r"""
-        split_bam_by_chrom Divide an input BAM file by chromosome for multiprocessing
-
-        :return: a dictionary {chrom: (chrom_bamfile, chom_bamfile_idx)}
-        :rtype: dict(str: tuple)
-        """
-        bam_dict = {}
-        for i, chrom in enumerate(self.chrom_sizes_dict.keys()):
-            chrom_bamfile = f'{file_basename(self.input_file)}_{chrom}_temp.bam'
-            chrom_bamfile_idx = chrom_bamfile + '.bai'
-            self.tempfiles.append(chrom_bamfile)
-            self.tempfiles.append(chrom_bamfile + '.bai')
-
-            rd_cmd = ['samtools', 'view', '-b', '-o', chrom_bamfile, self.input_file, chrom, '-@', str(self.samtools_threads)]
-            subprocess.run(rd_cmd, check=True)
-
-            idx_cmd = ['samtools','index', chrom_bamfile, '-@', str(self.samtools_threads)]
-            subprocess.run(idx_cmd, check=True)
-
-            bam_dict[chrom] = (chrom_bamfile, chrom_bamfile_idx)
-
-        return bam_dict
-
-
-    def get_chrom_coverage_track(self,params):
-        r"""
-        get_chrom_coverage_track Generate a chromosome-specific coverage track for a sample
-
-        Coverage is determined via ``pysam.count()`` over contiguous loci (bins)
-
-        :param params: tuple of relevant parameters
-        :type params: tuple
-        :return: chromosome-specific coverage track encoded as a tuple
-        :rtype: tuple(str, np.ndarray, np.ndarray)
-        """
-        chrom_bamfile, chromosome, chrom_start, chrom_end, step = params
-        aln = pysam.AlignmentFile(chrom_bamfile,'rb', threads=self.samtools_threads)
-        chrom_loci = []
-        chrom_cov_arr = []
-        chrom_loci = np.array([chrom_start + i*step for i in range(((chrom_end-chrom_start)//step) - 1)],dtype=int)
-        chrom_cov_arr = np.array([aln.count(chromosome, chrom_locus, (chrom_locus + step)-1, read_callback='all') for chrom_locus in chrom_loci], dtype=np.float32)
-        aln.close()
-        return (chromosome, chrom_loci, self.weight*chrom_cov_arr)
-
-
     def gen_coverage(self):
-        r"""
-        gen_coverage Creates a genome-wide coverage track from a sample's BAM file
-
-        Calls ``self.get_chrom_coverage_track()`` to generate chromosome-specific tracks in parallel. Updates
-        self.coverage_dict.
-        """
-        split_bam_dict = self.split_bam_by_chrom()
-        cmds = []
-        for chrom in [x for x  in split_bam_dict.keys() if x not in self.skip_chroms]:
-            cmds.append((split_bam_dict[chrom][0], chrom, 0, self.chrom_sizes_dict[chrom], self.step))
-        results = None
-        with multiprocessing.Pool(processes=self.proc_num) as pool:
-            results = pool.imap(self.get_chrom_coverage_track, cmds)
-            for idx, chrom_result in enumerate(results):
-                if chrom_result is not None:
-                    self.coverage_dict.update({chrom_result[0]: dict(zip(chrom_result[1],chrom_result[2]))})
-        self.delete_tempfiles()
-
+        rd_cmd = ['bamCoverage', '--bam', self.input_file,
+                  '--binSize', str(self.step),
+                  '-o', f"{self.input_file + '.bw'}",
+                  '-p', str(self.proc_num)]
+        subprocess.run(rd_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.bigwig_to_coverage_dict(input_=f"{self.input_file + '.bw'}")
+        os.remove(f"{self.input_file + '.bw'}")
 
     def bedgraph_to_coverage_dict(self):
         r"""
@@ -417,18 +346,22 @@ class Sample:
                 loci.append(int(feature[1]))
                 vals.append(float(feature[3]))
                 iter_idx += 1
+            loci = np.array(loci)
+            vals = self.weight*np.array(vals)
             self.coverage_dict.update({chrom: dict(zip(loci,vals))})
 
 
-    def bigwig_to_coverage_dict(self):
+    def bigwig_to_coverage_dict(self, input_=None):
         r"""
         bigwig_to_coverage_dict Parse a bigwig file and store chromosome-specific coverage data in self.coverage_dict
 
         """
+        if input_ is None:
+            input_ = self.input_file
         try:
-            input_bw = pbw.open(self.input_file)
+            input_bw = pbw.open(input_)
         except:
-            logging.info(f"Could not read {self.input_file} as a BigWig via pyBigWig")
+            logging.info(f"Could not read {input_} as a BigWig via pyBigWig")
             raise
         for chrom in self.chroms:
             loci = []
@@ -436,6 +369,8 @@ class Sample:
             for interval in input_bw.intervals(chrom,0, self.chrom_sizes_dict[chrom]):
                 loci.append(interval[0])
                 vals.append(interval[2])
+            loci = np.array(loci)
+            vals = self.weight*np.array(vals)
             self.coverage_dict.update({chrom: dict(zip(loci,vals))})
 
 
@@ -460,6 +395,7 @@ class Sample:
                 for chrom in self.chroms:
                     for key,val in self.coverage_dict[chrom].items():
                         outfile.write(f"{chrom}\t{key}\t{key+self.step}\t{chrom + '_' + str(key) + '_' + str(key+self.step)}\t{round(val)}\t{'.'}\n")
+
 
     def get_chrom_loci(self,chromosome):
         r"""
@@ -500,10 +436,8 @@ class Sample:
 class Rocco:
 
     r"""
-    :param input_files: List of input BAM files, OR list of input bedgraph files
+    :param input_files: a list of samples' BAM files, or a list of samples' BigWig, or a list of samples' BedGraph files
     :type input_files: list
-    
-
     :param genome_file: Path to the genome sizes file containing chromosome sizes
     :type genome_file: str
     :param chrom_param_file: Path to the chromosome parameter file
@@ -512,9 +446,7 @@ class Rocco:
     :type skip_chroms: list, optional
     :param proc_num: Number of processes to use when computing chromosome-specific coverage tracks
     :type proc_num: int, optional
-    :param samtools_threads: Number of threads to use for samtools operations
-    :type samtools_threads: int, optional
-    :param step: Step size for coverage tracks
+    :param step: Step size for coverage tracks. Inferred from the intervals if bedgraph/bigwig input is supplied.
     :type step: int, optional
     :param sample_weights: List/array of weights used to scale the coverage tracks for each sample. Defaults to np.ones()
     :type sample_weights: numpy array, optional
@@ -615,7 +547,6 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         self.peak_score_filter = kwargs.get('peak_score_filter', 0.0)
 
         self.proc_num = kwargs.get('proc_num', max(multiprocessing.cpu_count()-1,1))
-        self.samtools_threads = kwargs.get('samtools_threads', 1)
         # NOTE: self.step will be overwritten and inferred from the data if bedgraph input is used
         self.step = kwargs.get('step', 50)
         self.sample_weights = kwargs.get('sample_weights')
@@ -669,7 +600,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
         samples = []
         for j,input_file in enumerate(self.input_files):
-            samples.append(Sample(input_file, self.genome_file, weight=self.sample_weights[j], step=self.step, proc_num=self.proc_num, samtools_threads=self.samtools_threads))
+            samples.append(Sample(input_file, self.genome_file, weight=self.sample_weights[j], step=self.step, proc_num=self.proc_num))
         self.samples = samples
         self.step = samples[0].step
         self.outfile = kwargs.get('outfile', f"rocco_peaks_{self.curr_time}.bed")
@@ -995,7 +926,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
                     outfile.write(f"{chromosome}\t{loc}\t{loc+step}\t{chromosome + '_' + str(loc) + '_' + str(loc+step)}\t{sample_cov_func(Smat_chr[:,iter_idx])}\t{'.'}\n")
                 iter_idx += 1
         try:
-            if len(pr_bed) > 0 and os.path.exists(pr_bed):
+            if pr_bed is not None and len(pr_bed) > 0 and os.path.exists(pr_bed):
                 cleaned_bed = pybedtools.BedTool(tmpfile).subtract(pr_bed)
                 cleaned_bed.saveas(tmpfile)
         except Exception as ex:
@@ -1019,7 +950,10 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             self.solve_chrom(chrom)
         bedtools_list = [pybedtools.BedTool(file_path) for file_path in self.tempfiles]
         first = pybedtools.BedTool(bedtools_list[0])
-        pb = first.cat(*bedtools_list[1:],postmerge=False)
+        if len(bedtools_list) < 2:
+            pb = first
+        else:
+            pb = first.cat(*bedtools_list[1:],postmerge=False)
         merged_bed = pb.sort().merge(c=5, o='sum')
         peak_scores = []
         with open(self.outfile, 'w') as outfile:
@@ -1050,10 +984,8 @@ def main():
     parser.add_argument('--sample_weights', nargs='+', type=float, default=None)
     parser.add_argument('--pr_bed', type=str, help="BED file of problematic regions to exclude from peak annotation", default=None)
     parser.add_argument('--proc_num', '-p', default=max(multiprocessing.cpu_count()-1,1), type=int,
-                        help='Number of processes to run simultaneously when generating coverage signals')
-    parser.add_argument('--samtools_threads', default=1, type=int,
-                        help='Specifies the number of threads used by samtools utilities')
-    parser.add_argument('--step', default=50, type=int, help='step size in coverage signal tracks. This argument is overwritten and inferred from the data if bedgraph input is supplied')
+                        help='Number of processes to run simultaneously when generating coverage signals from BAM files')
+    parser.add_argument('--step', default=50, type=int, help='step size in coverage signal tracks. This argument is overwritten and inferred from the intervals if bedgraph/bigwig input is supplied')
     parser.add_argument('--rand_iter', '-N', type=int, default=100, help = 'Number of RR iterations')
     parser.add_argument('--solver', default='CLARABEL', type=str, help='Optimization software used to solve the relaxation')
     parser.add_argument('--solver_maxiter', default=10000, type=int, help='Maximum number of solver iterations')
@@ -1071,7 +1003,6 @@ def main():
           genome_file=args['genome_file'],
           chrom_param_file=args['chrom_param_file'],
           skip_chroms=args['skip_chroms'],
-          samtools_threads=args['samtools_threads'],
           proc_num=args['proc_num'],
           step=args['step'],
           solver=args['solver'],

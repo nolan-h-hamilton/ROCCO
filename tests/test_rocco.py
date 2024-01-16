@@ -3,7 +3,7 @@ import pytest
 import rocco
 
 MIN_JACCARD = 0.95
-PEAK_SCORE_MIN = 100
+PEAK_SCORE_MIN = 200
 
 @pytest.mark.regular
 def test_rocco_base():

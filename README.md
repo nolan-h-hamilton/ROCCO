@@ -47,10 +47,6 @@ See `rocco --help` for a full list of argument descriptions. Wildcards and regul
 rocco --input_files sample1.bam sample2.bam sample3.bam --genome_file genome.sizes --chrom_param_file hg38
 ```
 
-If BAM input is supplied, [`pysam`](https://pysam.readthedocs.io/en/stable/) is used to compute the coverage tracks marking
-the number of reads aligning to each bin/locus at interals of size `--step`. This can require substantial computing time. See
-`--proc_num` and `--samtools_threads` for multiprocessing options.
-
 
 ### Example 2
 
@@ -126,12 +122,10 @@ Run unit tests
 
 
 * If using BedGraph or BigWig input, ensure contiguous intervals within each chromosome (no gaps)
-    * Such gaps can be filled with zeros.
 
-* Users may consider tweaking the default chromosome-specific $b,\gamma,\tau$ parameters or filtering peaks by score with
-    the `--peak_score_filter` argument.
+* Users may consider tweaking the default chromosome-specific $b,\gamma,\tau$ parameters or filtering peaks by score with the `--peak_score_filter` argument.
 
-* Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. A suitable peak score cutoff can be evaluated by viewing the output histogram of peak scores. In many cases a cutoff around 100.0 is a reasonable starting point.
+* Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. A suitable peak score cutoff can be evaluated by viewing the output histogram of peak scores.
 
 
 # Version History

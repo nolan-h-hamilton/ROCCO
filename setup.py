@@ -10,7 +10,8 @@ core_dependencies = [
     'pandas',
     'pybedtools',
     'matplotlib',
-    'pyBigWig'
+    'pyBigWig',
+    'deeptools'
 ]
 
 optional_feature_dependencies = {
@@ -30,7 +31,7 @@ long_description += "\n\n" + optional_dependencies_message
 
 setup(
     name='rocco',
-    version='0.8.0',
+    version='0.8.2',
     author='Nolan Holt Hamilton',
     author_email='nolan.hamilton@unc.edu',
     description='Robust ATAC-seq Peak Calling for Many Samples via Convex Optimization',
