@@ -1,9 +1,10 @@
 name: API
 
-# build the documentation whenever there are new commits on main
+# build the documentation whenever there are new commits in dev,main
 on:
   push:
     branches:
+      - dev
       - main
     paths:
       - '**.py'
@@ -13,38 +14,22 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  docs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v3
+      - name: Install dependencies
+        run: |
+          pip install sphinx myst_parser pytest pybedtools pysam numpy scipy pandas pyBigWig cvxpy matplotlib
+      - name: Sphinx build
+        run: |
+          sphinx-build docs docs/_build
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         with:
-          python-version: '3.8'
-      - run: pip install --upgrade pip
-      - run: pip install numpy
-      - run: pip install scipy==1.10.0
-      - run: pip install cvxpy
-      - run: pip install pandas
-      - run: pip install pararead
-      - run: pip install logmuse
-      - run: pip install pysam
-      - run: pip install pdoc
-      - run: sudo apt-get install -y bedtools
-      - run: sudo apt-get install -y samtools
-      - run: pdoc rocco/locus.py rocco/loci.py rocco/rocco.py rocco/chrom.py rocco/gwide.py rocco/rocco_aux.py rocco/budgets.py rocco/prep.py --math -d google -o docs/ --logo "https://github.com/nolan-h-hamilton/ROCCO/assets/57746191/4e662eda-4899-46fa-ac9f-998e28f592c1"
-      - uses: actions/upload-pages-artifact@v1
-        with:
-          path: docs/
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v2
+          publish_branch: gh-pages
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs/_build/
+          force_orphan: true

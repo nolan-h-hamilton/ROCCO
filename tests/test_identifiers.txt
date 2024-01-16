@@ -1,5 +1,0 @@
-samp1
-samp2
-samp5
-samp7
-samp10
