@@ -634,7 +634,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         self.rand_iter = kwargs.get('rand_iter', 100)
         self.verbose_solving = kwargs.get('verbose_solving', True)
         self.keep_chrom_bedfiles = kwargs.get('keep_chrom_bedfiles', False)
-        self.eps_l = 1e-4
+        self.eps_l = kwargs.get('eps_l', 1.0e-4)
 
         samples = []
         for j,input_file in enumerate(self.input_files):
