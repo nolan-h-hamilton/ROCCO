@@ -10,7 +10,7 @@ ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
 
 
 .. contents:: Table of Contents
-    :depth: 4
+    :depth: 5
 
 Underlying ROCCO is a constrained optimization problem that can be solved efficiently to predict consensus regions of open chromatin across multiple samples
 
@@ -141,6 +141,26 @@ Example Five
 Use a custom chromosome parameter file
 
 ``rocco --input_files tests/data/*.bw --genome_file tests/test_hg38.sizes --chrom_param_file tests/test_hg38_param_file.csv``
+
+Testing ROCCO
+===============
+
+.. code-block::
+
+    cd tests
+    pytest -v -rPA -l -k "regular" test_rocco.py
+
+
+Notes
+=================
+
+* If using BedGraph or BigWig input, ensure contiguous intervals within each chromosome (no gaps)
+    * Such gaps can be filled with zeros.
+
+* For best performance, you may consider tweaking the default :math:`b,\gamma,\tau` parameters or filtering peaks by score with
+    the `--peak_score_filter` argument. A suitable cutoff can be evaluated by viewing the output histogram of peak scores. In many
+    cases a cutoff around 100.0 is a reasonable starting point.
+
 """
 #!/usr/bin/env python
 import argparse
@@ -157,6 +177,7 @@ import subprocess
 import types
 
 import cvxpy as cp
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pysam
@@ -527,7 +548,7 @@ OR
     def __init__(self, input_files, genome_file, chrom_param_file, **kwargs):
         logging.basicConfig(level=logging.INFO, format='LOG: %(asctime)s - %(message)s')
         self.logger = logging.getLogger(__name__)
-
+        self.curr_time = datetime.now().strftime('%m%d%Y_%H%M%S')
         self.HG38_PARAMS =\
 """chrom,budget,gamma,tau,c_1,c_2,c_3
 chr1,0.03,1.0,0,1.0,1.0,1.0
@@ -599,7 +620,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
         self.chrom_param_file = chrom_param_file
         self.param_df = None
-        csvStringIO = None
+        csvStringIO = 'chrom,budget,gamma,tau,c_1,c_2,c_3'
         expected_columns = ['chrom','budget','gamma','tau','c_1','c_2','c_3']
         if self.chrom_param_file.lower() in ['hg', 'hg38', 'grch38']:
             csvStringIO = StringIO(self.HG38_PARAMS)
@@ -616,7 +637,10 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         self.param_df = pd.read_csv(csvStringIO, sep=",")
         selected_columns = list(set(expected_columns) & set(self.param_df.columns))
         for column, filler_value in self.filler_params.items():
-            self.param_df[column].fillna(filler_value, inplace=True)
+            if column not in self.param_df.columns:
+                self.param_df[column] = filler_value
+            else:
+                self.param_df[column].fillna(filler_value, inplace=True)
         self.param_df = self.param_df[~self.param_df['chrom'].isin(self.skip_chroms)]
         self.param_df = self.param_df[selected_columns]
 
@@ -641,7 +665,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             samples.append(Sample(input_file, self.genome_file, weight=self.sample_weights[j], step=self.step, proc_num=self.proc_num, samtools_threads=self.samtools_threads))
         self.samples = samples
         self.step = samples[0].step
-        self.outfile = kwargs.get('outfile', f"rocco_peaks_{datetime.now().strftime('%m%d%Y_%H%M%S')}.bed")
+        self.outfile = kwargs.get('outfile', f"rocco_peaks_{self.curr_time}.bed")
         self.tempfiles = []
         self.sample_cov_func = kwargs.get('sample_cov_func', np.mean)
         self.pr_bed = kwargs.get('pr_bed', '')
@@ -974,11 +998,12 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         return (chromosome, np.array(selected_loci))
 
 
-    def run(self):
+    def run(self, plot_hist=True):
         r"""
         run Execute Rocco over each given chromosome, merge and score results, and create an output BED file.
 
         """
+        kilobase_scale = 1000
         for chrom in self.chroms:
             logging.info(f"Evaluating {chrom}")
             self.solve_chrom(chrom)
@@ -986,11 +1011,23 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         first = pybedtools.BedTool(bedtools_list[0])
         pb = first.cat(*bedtools_list[1:],postmerge=False)
         merged_bed = pb.sort().merge(c=5, o='sum')
+        peak_scores = []
         with open(self.outfile, 'w') as outfile:
             for feature in merged_bed:
-                peak_score = round(float(feature[3])/(float(feature[2]) - float(feature[1])),4)
+                peak_score = round(kilobase_scale*float(feature[3])/(float(feature[2]) - float(feature[1])),2)
+                peak_scores.append(peak_score)
                 if peak_score >= self.peak_score_filter:
                     outfile.write(f"{feature[0]}\t{feature[1]}\t{feature[2]}\t{feature[0] + '_' + str(feature[1]) + '_' + str(feature[2])}\t{peak_score}\t.\n")
+
+        if plot_hist:
+            plt.hist(peak_scores, bins=50, color='blue', edgecolor='black', alpha=0.75, label='Peak score')
+            if self.peak_score_filter is not None and self.peak_score_filter > 0:
+                plt.axvline(self.peak_score_filter, color='orange', linestyle='dashed', alpha=0.75, label="User-Specified Cutoff")
+            plt.title(f"Peak Score (ARPKB) Histogram")
+            plt.legend()
+            plt.savefig(f"peak_score_hist_{self.curr_time}.pdf")
+            plt.close()
+
         if not self.keep_chrom_bedfiles:
             self.delete_tempfiles()
 

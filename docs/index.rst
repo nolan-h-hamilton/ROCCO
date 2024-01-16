@@ -1,5 +1,5 @@
 .. toctree::
-   :maxdepth: 4
+   :maxdepth: 5
    :caption: Contents:
 
 .. automodule:: rocco
