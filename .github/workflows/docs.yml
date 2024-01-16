@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-python@v3
       - name: Install dependencies
         run: |
-          pip install sphinx myst_parser pytest pybedtools pysam numpy scipy pandas pyBigWig
+          pip install sphinx myst_parser pytest pybedtools pysam numpy scipy pandas pyBigWig cvxpy matplotlib
       - name: Sphinx build
         run: |
           sphinx-build docs docs/_build
