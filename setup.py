@@ -9,6 +9,7 @@ core_dependencies = [
     'scipy',
     'pandas',
     'pybedtools',
+    'matplotlib',
     'pyBigWig'
 ]
 

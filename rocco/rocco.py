@@ -145,21 +145,27 @@ Use a custom chromosome parameter file
 Testing ROCCO
 ===============
 
+Run pytest unit tests
+
 .. code-block::
 
     cd tests
     pytest -v -rPA -l -k "regular" test_rocco.py
 
 
-Notes
-=================
+Notes/Miscellaneous
+======================
 
 * If using BedGraph or BigWig input, ensure contiguous intervals within each chromosome (no gaps)
     * Such gaps can be filled with zeros.
 
+
 * For best performance, you may consider tweaking the default :math:`b,\gamma,\tau` parameters or filtering peaks by score with
-    the `--peak_score_filter` argument. A suitable cutoff can be evaluated by viewing the output histogram of peak scores. In many
-    cases a cutoff around 100.0 is a reasonable starting point.
+    the `--peak_score_filter` argument.
+
+
+* Peak scores are computed as the average number of reads across sample over the given peak region, scaled to units of kilobases. A suitable peak score cutoff can be evaluated by viewing the output histogram of peak scores. In many cases a cutoff around 100.0 is a reasonable starting point.
+
 
 """
 #!/usr/bin/env python
@@ -531,6 +537,7 @@ class Rocco:
     :param sample_cov_func: This function is used in the peak score calculation and is applied to columns in :math:`\mathbf{S}_{chr}[i]`, ``Smat_chr[:,i]`` such that :math:`\ell_i = 1`. During the merge step, the resulting values are summed for overlapping features in the initial bed files and then divided by the merged feature length.
     :type verbose_solving: types.FunctionType, optional
 
+Example use:
 
 .. doctest::
 
@@ -1000,7 +1007,10 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
     def run(self, plot_hist=True):
         r"""
-        run Execute Rocco over each given chromosome, merge and score results, and create an output BED file.
+        Execute Rocco over each given chromosome, merge and score results, and create an output BED file.
+
+        :param plot_hist: if ``True`` plot and save a  histogram of peak scores
+        :type plot_hist: bool, optional
 
         """
         kilobase_scale = 1000
