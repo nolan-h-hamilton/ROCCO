@@ -108,6 +108,32 @@ rocco --input_files tests/data/sample1.bw tests/data/sample2.bw \
 >>> rocco_obj.run() # genome-wide output stored in BED6 file
 ```
 
+# Documentation
+
+ROCCO's complete documentation is available at https://nolan-h-hamilton.github.io/ROCCO/
+
+
+# Testing ROCCO
+
+Run unit tests
+
+  ```
+  cd tests
+  pytest -v -rPA -l -k "regular" test_rocco.py
+  ```
+
+# Notes/Miscellaneous
+
+
+* If using BedGraph or BigWig input, ensure contiguous intervals within each chromosome (no gaps)
+    * Such gaps can be filled with zeros.
+
+* Users may consider tweaking the default chromosome-specific $b,\gamma,\tau$ parameters or filtering peaks by score with
+    the `--peak_score_filter` argument.
+
+* Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. A suitable peak score cutoff can be evaluated by viewing the output histogram of peak scores. In many cases a cutoff around 100.0 is a reasonable starting point.
+
+
 # Version History
 
 Previous releases can be found at https://github.com/nolan-h-hamilton/ROCCO/tags

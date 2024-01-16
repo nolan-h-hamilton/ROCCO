@@ -160,11 +160,11 @@ Notes/Miscellaneous
     * Such gaps can be filled with zeros.
 
 
-* For best performance, you may consider tweaking the default :math:`b,\gamma,\tau` parameters or filtering peaks by score with
+* Users may consider tweaking the default chromosome-specific :math:`b,\gamma,\tau` parameters or filtering peaks by score with
     the `--peak_score_filter` argument.
 
 
-* Peak scores are computed as the average number of reads across sample over the given peak region, scaled to units of kilobases. A suitable peak score cutoff can be evaluated by viewing the output histogram of peak scores. In many cases a cutoff around 100.0 is a reasonable starting point.
+* Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. A suitable peak score cutoff can be evaluated by viewing the output histogram of peak scores. In many cases a cutoff around 100.0 is a reasonable starting point.
 
 
 """
