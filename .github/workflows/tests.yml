@@ -6,6 +6,7 @@ on:
       - '**.py'
     branches:
       - main
+      - dev
 jobs:
   build:
     runs-on: ubuntu-latest

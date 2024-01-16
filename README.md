@@ -36,121 +36,70 @@ ROCCO offers a command-line interface for convenience and also an API for greate
 
 ## CLI (Command-line Interface)
 
-See `rocco --help` for a full list of argument descriptions.
+See `rocco --help` for a full list of argument descriptions. Wildcards and regular expressions can be used to specify subsets of input files, chromosomes to skip, etc.
 
-### Example One
+### Example 1
 
-Run ROCCO with BAM input files for each sample using default
-chromosome-specific budget, gamma, etc. parameters for `hg38` assembly
-in `Rocco.HG38_PARAMS`
+* BAM input files
+* Default chromosome-specific parameters for hg38 (See code `Rocco.HG38_PARAMS`)
 
-   ```
-   rocco --input_files tests/data/*.bam --genome_file tests/test_hg38.sizes --chrom_param_file hg38
-   ```
+```
+rocco --input_files sample1.bam sample2.bam sample3.bam --genome_file genome.sizes --chrom_param_file hg38
+```
 
 If BAM input is supplied, [`pysam`](https://pysam.readthedocs.io/en/stable/) is used to compute the coverage tracks marking
-the number of reads aligning to each bin/locus at interals of size `--step`.
+the number of reads aligning to each bin/locus at interals of size `--step`. This can require substantial computing time. See
+`--proc_num` and `--samtools_threads` for multiprocessing options.
 
 
-### Example Two
+### Example 2
 
-Run ROCCO with bigwig input files for each sample using default
-chromosome-specific budget, gamma, etc. parameters for `hg38` assembly
-in `Rocco.HG38_PARAMS`
-
-For instance, if you wish to generate the coverage tracks with
-[deepTools
-bamCoverage](https://deeptools.readthedocs.io/en/develop/content/tools/bamCoverage.html)
-or another utility that produces bigwig signal files with additional
-features for normalization, smoothing, read extension, etc. You can
-supply the resulting bigwig files as input to ROCCO.
-
+* BigWig input files (Specified with a wildcard)
+* Default chromosome-specific parameters for hg38 (See code `Rocco.HG38_PARAMS`)
 
 ```
-rocco --input_files tests/data/*.bw --genome_file tests/test_hg38.sizes --chrom_param_file hg38
+rocco --input_files *.bw --genome_file genome.sizes --chrom_param_file hg38
 ```
 
-### Example Three
+This input format is useful if you have used, e.g., [deepTools
+bamCoverage](https://deeptools.readthedocs.io/en/develop/content/tools/bamCoverage.html),
+for normalization, smoothing, read extension, etc. the samples' initial BAM alignments.
 
-Run ROCCO with bedgraph input files for each sample using default
-chromosome-specific budget, gamma, etc. parameters for the `hg38`
-assembly in `Rocco.HG38_PARAMS`
+### Example 3
 
-```
-rocco --input_files tests/data/*.bg --genome_file tests/test_hg38.sizes --chrom_param_file hg38
-```
-
-### Example Four
-
-Scale coverage value of samples before calling peaks
+* BedGraph input files (Specified with a wildcard)
+* Default chromosome-specific parameters for hg38
 
 ```
-rocco --input_files tests/data/*.bw --genome_file tests/test_hg38.sizes --chrom_param_file hg38 --sample_weights 0.50 1.0 1.0
+rocco --input_files *.bg --genome_file genome.sizes --chrom_param_file hg38
 ```
 
-### Example Five
+### Example 4
 
-Use a custom chromosome parameter file
+* BAM input files
+* Default chromosome-specific parameters for hg38
+* Scale coverage tracks for each sample individually with `--sample_weights`
 
 ```
-rocco --input_files tests/data/*.bw --genome_file tests/test_hg38.sizes --chrom_param_file tests/test_hg38_param_file.csv
+rocco --input_files sample1.bam sample2.bam sample3.bam \
+      --genome_file genome.sizes --chrom_param_file hg38 \
+      --sample_weights 1.50 1.0 1.0
+```
+
+### Example 5
+
+* Use a custom chromosome parameter file (`tests/test_hg38_param_file.csv`)
+
+```
+rocco --input_files tests/data/sample1.bw tests/data/sample2.bw \
+      tests/data/sample3.bw --genome_file tests/test_hg38.sizes \
+      --chrom_param_file tests/test_hg38_param_file.csv
 ```
 
 ## API (Application Programmer Interface)
 
-### Example One
 
-Run ROCCO with BAM input files for each sample using default
-chromosome-specific budget, gamma, etc. parameters for `hg38` assembly
-in `Rocco.HG38_PARAMS`
-
-```
->>> import rocco
->>> bamfiles = ['tests/data/sample1.bam', 'tests/data/sample2.bam', 'tests/data/sample3.bam']
->>> rocco_obj = rocco.Rocco(input_files=bamfiles, genome_file='tests/test_hg38.sizes', chrom_param_file='hg38') # see Rocco.HG38_PARAMS
->>> rocco_obj.run() # genome-wide output stored in BED6 file
-```
-
-### Example Two
-
-Run ROCCO with bigwig input files for each sample using default
-chromosome-specific budget, gamma, etc. parameters for the `hg38`
-assembly in `Rocco.HG38_PARAMS`
-
-```
->>> import rocco
->>> bw_files = ['tests/data/sample1.bw', 'tests/data/sample2.bw', 'tests/data/sample3.bw']
->>> rocco_obj = rocco.Rocco(input_files=bw_files, genome_file='tests/test_hg38.sizes', chrom_param_file='hg38') # see Rocco.HG38_PARAMS
->>> rocco_obj.run() # genome-wide output stored in BED6 file
-```
-
-### Example Three
-
-Run ROCCO with bedgraph input files for each sample using default
-chromosome-specific budget, gamma, etc. parameters for the `hg38`
-assembly in `Rocco.HG38_PARAMS`
-
-```
->>> import rocco
->>> bedgraph_files = ['tests/data/sample1.bg', 'tests/data/sample2.bg', 'tests/data/sample3.bg']
->>> rocco_obj = rocco.Rocco(input_files=bedgraph_files, genome_file='tests/test_hg38.sizes', chrom_param_file='hg38') # see ROCCO.HG38_PARAMS
->>> rocco_obj.run() # genome-wide output stored in BED6 file
-```
-
-### Example Four
-
-Scale coverage value of sample1 before calling peaks
-
-```
->>> import rocco
->>> bw_files = ['tests/data/sample1.bw', 'tests/data/sample2.bw', 'tests/data/sample3.bw']
->>> rocco_obj = rocco.Rocco(input_files=bw_files, genome_file='tests/test_hg38.sizes', chrom_param_file='hg38', sample_weights=[0.50,1.0,1.0])
->>> rocco_obj.run() # genome-wide output stored in BED6 file
-```
-
-### Example Five
-
-Use a custom chromosome parameter file
+### Example 6
 
 ```
 >>> import rocco
@@ -158,3 +107,7 @@ Use a custom chromosome parameter file
 >>> rocco_obj = rocco.Rocco(input_files=bw_files, genome_file='tests/test_hg38.sizes', chrom_param_file='tests/test_hg38_param_file.csv')
 >>> rocco_obj.run() # genome-wide output stored in BED6 file
 ```
+
+# Version History
+
+Previous releases can be found at https://github.com/nolan-h-hamilton/ROCCO/tags
