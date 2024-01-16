@@ -27,7 +27,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install sphinx myst_parser pytest pybedtools pysam numpy scipy pandas pyBigWig cvxpy matplotlib
+          pip install sphinx myst_parser pytest pybedtools pysam numpy scipy pandas pyBigWig cvxpy matplotlib deeptools
 
       - name: Sphinx build
         run: |
