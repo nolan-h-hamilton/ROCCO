@@ -10,26 +10,42 @@ on:
       - '**.py'
       - '**.yml'
 
+
 permissions:
   contents: read
+  pages: write
 
 jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v3
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v3
+
       - name: Install dependencies
         run: |
           pip install sphinx myst_parser pytest pybedtools pysam numpy scipy pandas pyBigWig cvxpy matplotlib
+
       - name: Sphinx build
         run: |
-          sphinx-build docs docs/_build
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          sphinx-build docs docs/build_
+
+      - uses: actions/upload-pages-artifact@v1
         with:
-          publish_branch: main
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: docs/_build/
-          force_orphan: true
+          path: docs/build_/
+
+  deploy:
+    needs: docs
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v2
