@@ -12,7 +12,7 @@ ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
 .. contents:: Table of Contents
     :depth: 5
 
-Underlying ROCCO is a :ref:`constrained optimization problem <problem>` that can be solved efficiently to predict consensus regions of open chromatin across multiple samples
+Underlying ROCCO is a :ref:`constrained optimization problem <problem>` with solutions dictating accessible chromatin regions across multiple samples.
 
 
 GitHub (Homepage)
@@ -77,13 +77,22 @@ Scale coverage tracks of samples before calling peaks
 Example Four
 ^^^^^^^^^^^^^^^^
 
-Use a custom chromosome parameter file
+Use a custom parameter file to set chromosome-specific budgets, gamma, tau, etc.
+
+``custom_params.csv``
+
+.. code-block::
+
+    chrom,budget,gamma,tau,c_1,c_2,c_3
+    chr19,0.05,1.0,0,1.0,1.0,1.0
+    chr21,0.03,1.0,0,1.0,1.0,1.0
+
 
 .. doctest::
 
     >>> import rocco
     >>> bw_files = ['sample1.bam', 'sample2.bam', 'sample3.bam']
-    >>> rocco_obj = Rocco(input_files=bamfiles, genome_file='genome.sizes', chrom_param_file='tests/test_hg38_param_file.csv')
+    >>> rocco_obj = Rocco(input_files=bamfiles, genome_file='genome.sizes', chrom_param_file='custom_params.csv')
     >>> rocco_obj.run() # genome-wide output stored in BED6 file
 
 
@@ -122,7 +131,7 @@ Example Four
 
 Use a custom chromosome parameter (CSV) file
 
-``rocco --input_files sample1.bw sample2.bw sample3.bw --genome_file sizes.genome --chrom_param_file tests/test_hg38_param_file.csv``
+``rocco --input_files sample1.bw sample2.bw sample3.bw --genome_file genome.sizes --chrom_param_file custom_params.csv``
 
 
 Testing ROCCO
@@ -142,7 +151,6 @@ Notes/Miscellaneous
 * Users may consider tweaking the default chromosome-specific :math:`b,\gamma,\tau` parameters using a custom `--chrom_param_file` or filtering peaks by score with the `--peak_score_filter` argument.
 
 * Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. A suitable peak score cutoff can be evaluated by viewing the output histogram of peak scores.
-
 
 """
 #!/usr/bin/env python
@@ -205,21 +213,14 @@ class Sample:
     :type skip_chroms: list, optional
     :param proc_num: Number of processes to use when computing chromosome-specific coverage tracks
     :type proc_num: int, optional
-    :param step: Step size for coverage tracks. This is overwritten and inferred from the data if a bedgraph file is used as input
+    :param step: Step size for coverage tracks. This is overwritten and inferred from the data if a bigwig or bedgraph file is used as input
     :type step: int, optional
-    :param weight: Weight to scale coverage values by. Defaults to 1.0
+    :param weight: Weight to scale coverage values by. Can be used to apply scaling factor for normalization, etc. Defaults to 1.0
     :type weight: float, optional
     :param output_file: Used by ``Sample.write_track()``. Specifies a filepath to write the coverage track to, if at all
     :type output_file: str, optional
     :param out_prefix: Specifies a string to prepend to the output file. Defaults to ``out_``
     :type out_prefix: str, optional
-
-.. doctest::
-
-    >>> import sample
-    >>> bam_sample = sample.Sample(input_file='ENCFF009NCL.bam', genome_file='hg38.sizes', step=50)
-    >>> bw_sample = sample.Sample(input_file='ENCFF009NCL.bw', genome_file='hg38.sizes')
-
 
     """
     def __init__(self, input_file, genome_file, **kwargs):
@@ -233,6 +234,8 @@ class Sample:
         self.proc_num = kwargs.get('proc_num', max(multiprocessing.cpu_count()-1,1))
         if self.get_input_type() == 'bam':
             self.step = kwargs.get('step', 50)
+        self.bamcov_extra_args = kwargs.get('bamcov_extra_args', None)
+        self.bamcov_cmd = kwargs.get('bamcov_cmd', None)
         self.weight = kwargs.get('weight', 1.0)
 
         self.skip_chroms = kwargs.get('skip_chroms', [])
@@ -257,8 +260,8 @@ class Sample:
 
         # NOTE: The coverage track is computed genome-wide as part of the initialization, yielding a dictionary of form {chrom:{locus:coverage}}, but that this data is *not written to file* unless self.write_coverage() is called.
         if self.get_input_type() == 'bam':
-            logging.info(f"Calling gen_coverage(): {self.input_file}")
-            self.gen_coverage()
+            logging.info(f"Calling bam_to_coverage_dict(): {self.input_file}")
+            self.bam_to_coverage_dict(bamcov_cmd=self.bamcov_cmd, additional_args=self.bamcov_extra_args)
         if self.get_input_type() == 'bg':
             logging.info(f"Calling bedgraph_to_coverage_dict(): {self.input_file}")
             self.bedgraph_to_coverage_dict()
@@ -278,6 +281,9 @@ class Sample:
     def get_input_type(self):
         r"""
         get_input_type Determine if self.input_file is a BAM, bedgraph, or bigwig file
+
+        The file type is determined by the file extension: '.bam', '.bw', etc. and is not robust
+        to incorrectly labelled files.
 
         :raises ValueError: If file extension is not supported
         :return: a string (extension) representing the file type
@@ -299,14 +305,20 @@ class Sample:
         return file_type
 
 
-    def gen_coverage(self, rd_cmd=None):
-        if rd_cmd is None:
-            rd_cmd = ['bamCoverage', '--bam', self.input_file,
+    def bam_to_coverage_dict(self, bamcov_cmd=None, additional_args=None):
+        r"""
+        bam_to_coverage_dict Wraps deeptools' bamCoverage to generate a dictionary of chromosome-specific coverage tracks
+
+        """
+        if bamcov_cmd is None:
+            bamcov_cmd = ['bamCoverage', '--bam', self.input_file,
                     '--binSize', str(self.step),
                     '-o', f"{self.input_file + '.bw'}",
                     '-p', str(self.proc_num)]
+            if additional_args:
+                bamcov_cmd.extend(additional_args)
 
-        subprocess.run(rd_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(bamcov_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.bigwig_to_coverage_dict(input_=f"{self.input_file + '.bw'}")
         os.remove(f"{self.input_file + '.bw'}")
 
@@ -314,6 +326,7 @@ class Sample:
     def bedgraph_to_coverage_dict(self):
         r"""
         bedgraph_to_coverage_dict Parse a bedgraph file and store chromosome-specific coverage data in self.coverage_dict
+
         """
         pb = pybedtools.BedTool(self.input_file)
         for chrom in self.chroms:
@@ -396,7 +409,7 @@ class Sample:
         try:
             loci = [int(x) for x in self.coverage_dict[chromosome].keys()]
         except KeyError:
-            logging.info('coverage_dict has not been generated yet via gen_coverage() or bedgraph_to_coverage_dict()')
+            logging.info('coverage_dict has not been generated yet')
             # TODO: consider raising the exception
         return loci
 
@@ -415,7 +428,7 @@ class Sample:
         try:
             vals = [float(x) for x in self.coverage_dict[chromosome].values()]
         except KeyError:
-            logging.info('coverage_dict has not been generated yet via gen_coverage() or bedgraph_to_coverage_dict()')
+            logging.info('coverage_dict has not been generated yet')
             # TODO: consider raising the exception
         return vals
 
@@ -453,12 +466,10 @@ class Rocco:
     :type rand_iter: int, optional
     :param verbose_solving: Whether to print solver logging data
     :type verbose_solving: bool, optional
-    :param sample_cov_func: This function is used in the peak score calculation and is applied to columns in :math:`\mathbf{S}_{chr}[i]`, ``Smat_chr[:,i]`` such that :math:`\ell_i = 1`. During the merge step, the resulting values are summed for overlapping features in the initial bed files and then divided by the merged feature length.
-    :type verbose_solving: types.FunctionType, optional
 
 """
 
-    def __init__(self, input_files, genome_file, chrom_param_file, **kwargs):
+    def __init__(self, input_files, genome_file, chrom_param_file=None, **kwargs):
         logging.basicConfig(level=logging.INFO, format='LOG: %(asctime)s - %(message)s')
         self.logger = logging.getLogger(__name__)
         self.curr_time = datetime.now().strftime('%m%d%Y_%H%M%S')
@@ -533,10 +544,18 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         self.chrom_param_file = chrom_param_file
         self.param_df = None
         expected_columns = ['chrom','budget','gamma','tau','c_1','c_2','c_3']
-        if self.chrom_param_file is None or self.chrom_param_file.lower() in ['hg', 'hg38', 'grch38']:
+
+        if self.chrom_param_file is None:
+            csv_rows = ['chrom,budget,gamma,tau,c_1,c_2,c_3']
+            for chrom in self.chroms:
+                csv_rows.append(','.join([chrom] + [str(self.filler_params[param]) for param in ['budget', 'gamma', 'tau', 'c_1', 'c_2', 'c_3']]))
+            gen_csv = '\n'.join(csv_rows)
+            csvStringIO = StringIO(gen_csv)
+
+        elif self.chrom_param_file.lower() in ['hg', 'hg38', 'grch38']:
             csvStringIO = StringIO(self.HG38_PARAMS)
 
-        if self.chrom_param_file.lower() in ['mm','mm10','grcm38']:
+        elif self.chrom_param_file.lower() in ['mm','mm10','grcm38']:
             csvStringIO = StringIO(self.MM10_PARAMS)
 
         elif os.path.exists(self.chrom_param_file):
@@ -578,7 +597,6 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         self.step = samples[0].step
         self.outfile = kwargs.get('outfile', f"rocco_peaks_{self.curr_time}.bed")
         self.tempfiles = []
-        self.sample_cov_func = kwargs.get('sample_cov_func', np.mean)
         self.pr_bed = kwargs.get('pr_bed', '')
 
     def __str__(self):
@@ -589,6 +607,29 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
 
     def get_Smat(self, chromosome, samples=None):
+        r"""
+        get_Smat Generate a :math:`K \times n` coverage signal matrix :math:`\mathbf{S}_{chr}`
+
+        ..math::
+
+            \mathbf{S}_{chr} = \begin{pmatrix}
+            s_{1_1} & s_{2_1}  & \ldots & s_{n_1}\\
+            s_{1_2} & s_{2_2}  & \ldots & s_{n_2}\\
+            \ldots &\ldots&\ldots&\ldots\\
+            s_{1_k} & s_{2_k}  & \ldots & s_{n_K}
+            \end{pmatrix}=  \begin{pmatrix}
+            \mathbf{s_1} & \mathbf{s_2} & \ldots & \mathbf{s_n}
+            \end{pmatrix}
+
+
+        :param chromosome: Chromosome over which to compute :math:`\mathbf{S}_{chr}`
+        :type chromosome: str
+        :param samples: list of Sample objects
+        :type samples: list
+        :return: a matrix representing the coverage signals of each sample over common loci
+        :rtype: numpy.ndarray
+
+        """
         samples_loci = []
 
         if samples is None:
@@ -756,7 +797,6 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
               solver_maxiter=None,
               verbose_solving=None,
               step=None,
-              sample_cov_func=None,
               outfile=None,
               pr_bed=None):
         r"""
@@ -804,16 +844,16 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
         :notes:
 
-            The relaxed optimization problem is solved as an equivalent LP to the following convex problem:
+            ROCCO Optimization Problem
 
             .. math::
 
                 \begin{aligned}
-                & \underset{\mathbf{\ell}}{\text{Minimize:}}
-                & & f(\mathbf{\ell}) = \sum_{i=1}^{n}-\left(\mathcal{S}(i)\cdot\ell_i\right) + \gamma\sum_{i=1}^{n-1} |\ell_i - \ell_{i+1}| \\
-                & \text{Subject To:} & &  \text{(i)}~~\sum_{i=1}^{n}\ell_i \leq \lfloor nb\rfloor. \\
-                & & &  \text{(ii)}~~\ell_i \in [0,1], ~\forall i=1 \ldots n.
-                \end{aligned}
+                & \underset{\BELL}{\text{\small Minimize:}}
+                & & f_{\textup{\tiny{\texttt{IP}}}}(\BELL) = \sum_{i=1}^{n}-\left(\mathcal{S}(i)\cdot\ell_i\right) + \gamma\sum_{i=1}^{n-1} |\ell_i - \ell_{i+1}| \\
+                & \text{\small Subject To:} & &  \text{(i)}~~\sum_{i=1}^{n}\ell_i \leq \lfloor nb\rfloor \\
+                & & &  \text{(ii)}~~\ell_i \in \{0,1\}, ~\forall i=1 \ldots n.
+                \end{aligned}}
 
         """
         if Smat_chr or common_loci is None:
@@ -840,8 +880,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             step = self.step
         if outfile is None:
             outfile = self.outfile
-        if sample_cov_func is None:
-            sample_cov_func = self.sample_cov_func
+
         if pr_bed is None:
             pr_bed = self.pr_bed
 
@@ -898,7 +937,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             for loc,dec_var in zip(common_loci, rr_sol):
                 if dec_var > 0:
                     selected_loci.append(loc)
-                    outfile.write(f"{chromosome}\t{loc}\t{loc+step}\t{chromosome + '_' + str(loc) + '_' + str(loc+step)}\t{sample_cov_func(Smat_chr[:,iter_idx])}\t{'.'}\n")
+                    outfile.write(f"{chromosome}\t{loc}\t{loc+step}\t{chromosome + '_' + str(loc) + '_' + str(loc+step)}\t{np.mean(Smat_chr[:,iter_idx])}\t{'.'}\n")
                 iter_idx += 1
         try:
             if pr_bed is not None and len(pr_bed) > 0 and os.path.exists(pr_bed):
@@ -911,7 +950,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         return (chromosome, np.array(selected_loci))
 
 
-    def run(self, plot_hist=True):
+    def run(self, plot_hist=True, peak_score_scale = 1000.0):
         r"""
         Execute Rocco over each given chromosome, merge and score results, and create an output BED file.
 
@@ -919,30 +958,25 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         :type plot_hist: bool, optional
 
         """
-        kilobase_scale = 1000
         for chrom in self.chroms:
             logging.info(f"Evaluating {chrom}")
             self.solve_chrom(chrom)
         bedtools_list = [pybedtools.BedTool(file_path) for file_path in self.tempfiles]
         first = pybedtools.BedTool(bedtools_list[0])
-        if len(bedtools_list) < 2:
-            pb = first
-        else:
-            pb = first.cat(*bedtools_list[1:],postmerge=False)
+
+        pb = first.cat(*bedtools_list[0:],postmerge=False)
         merged_bed = pb.sort().merge(c=5, o='sum')
         peak_scores = []
         with open(self.outfile, 'w') as outfile:
             for feature in merged_bed:
-                peak_score = round(kilobase_scale*float(feature[3])/(float(feature[2]) - float(feature[1])),2)
+                peak_score = peak_score_scale*(float(feature[3])/(float(feature[2]) - float(feature[1])))
                 peak_scores.append(peak_score)
                 if peak_score >= self.peak_score_filter:
                     outfile.write(f"{feature[0]}\t{feature[1]}\t{feature[2]}\t{feature[0] + '_' + str(feature[1]) + '_' + str(feature[2])}\t{peak_score}\t.\n")
 
         if plot_hist:
             plt.hist(peak_scores, bins=50, color='blue', edgecolor='black', alpha=0.75, label='Peak score')
-            if self.peak_score_filter is not None and self.peak_score_filter > 0:
-                plt.axvline(self.peak_score_filter, color='orange', linestyle='dashed', alpha=0.75, label="User-Specified Cutoff")
-            plt.title(f"Peak Score (ARPKB) Histogram")
+            plt.title(f"Peak Score Histogram")
             plt.legend()
             plt.savefig(f"peak_score_hist_{self.curr_time}.pdf")
             plt.close()
@@ -957,9 +991,15 @@ def main():
     parser.add_argument('--skip_chroms', nargs='+', type=str, default=[], help="Skip these chromosomes")
     parser.add_argument('--genome_file', type=str, help="Genome sizes file")
     parser.add_argument('--sample_weights', nargs='+', type=float, default=None)
-    parser.add_argument('--pr_bed', type=str, help="BED file of problematic regions to exclude from peak annotation", default=None)
+    parser.add_argument('--pr_bed', type=str, help="BED file of blacklisted/problematic regions to exclude from peak annotation", default=None)
     parser.add_argument('--proc_num', '-p', default=max(multiprocessing.cpu_count()-1,1), type=int,
                         help='Number of processes to run simultaneously when generating coverage signals from BAM files')
+    parser.add_argument('--constant_budget', default=0.035, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables")
+    parser.add_argument('--constant_gamma', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables")
+    parser.add_argument('--constant_tau', default=0.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables")
+    parser.add_argument('--constant_c_1', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables")
+    parser.add_argument('--constant_c_2', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables")
+    parser.add_argument('--constant_c_3', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables")
     parser.add_argument('--step', default=50, type=int, help='step size in coverage signal tracks. This argument is overwritten and inferred from the intervals if bedgraph/bigwig input is supplied')
     parser.add_argument('--rand_iter', '-N', type=int, default=100, help = 'Number of RR iterations')
     parser.add_argument('--solver', default='CLARABEL', type=str, help='Optimization software used to solve the relaxation')
@@ -974,12 +1014,20 @@ def main():
     parser.add_argument('--verbose_solving', action='store_true', default=False)
     args = vars(parser.parse_args())
 
+    filler_params = {'budget':args['constant_budget'],
+                     'gamma':args['constant_gamma'],
+                     'tau':args['constant_tau'],
+                     'c_1':args['constant_c_1'],
+                     'c_2':args['constant_c_2'],
+                     'c_3':args['constant_c_3']}
+
     rocco_obj = Rocco(input_files=args['input_files'],
           genome_file=args['genome_file'],
           chrom_param_file=args['chrom_param_file'],
           skip_chroms=args['skip_chroms'],
           proc_num=args['proc_num'],
           step=args['step'],
+          filler_params=filler_params,
           solver=args['solver'],
           sample_weights=args['sample_weights'],
           solver_reltol=args['solver_reltol'],
