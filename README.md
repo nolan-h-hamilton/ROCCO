@@ -32,13 +32,31 @@ https://github.com/nolan-h-hamilton/ROCCO/
 
 # Documentation
 
-Complete documentation with example usage is available at https://nolan-h-hamilton.github.io/ROCCO/
+Documentation and example use demos are available at https://nolan-h-hamilton.github.io/ROCCO/
 
-# Minimal Working Example
+# Input
+ROCCO accepts samples' **BAM** alignments or **BigWig** coverage tracks as input.
 
-ROCCO accepts samples' BAM files or BigWig coverage tracks as input.
+# Output
+
+A **BED** file containing peak regions and scores.
+
+# Minimal Example
+
+Both an API and command-line interface are available to run ROCCO.
+
+## Command-line interface
+
+Run ROCCO on the test data included with this repository. Output will be stored in a BED6 file.
+
+   ```
+   rocco -i tests/data/*.bw --genome_file tests/test_hg38.sizes --chrom_param_file tests/test_hg38_param_file.csv
+   ```
 
 ## API
+
+Same as the above example, but using the API:
+
    ```
     >>> import rocco
     >>> bw_files = ['tests/data/sample1.bw', 'tests/data/sample2.bw', 'tests/data/sample3.bw', 'tests/data/sample4.bw', 'tests/data/sample5.bw']
@@ -47,15 +65,7 @@ ROCCO accepts samples' BAM files or BigWig coverage tracks as input.
     >>> rocco_obj.run() # genome-wide output stored in BED6 file
    ```
 
-## Command-line interface
-
-   ```
-   rocco -i tests/data/*.bw --genome_file tests/test_hg38.sizes --chrom_param_file tests/test_hg38_param_file.csv
-   ```
-
 # Testing ROCCO
-
-Run unit tests
 
   ```
   cd tests
@@ -64,12 +74,11 @@ Run unit tests
 
 # Notes/Miscellaneous
 
-
 * If using BedGraph or BigWig input, ensure contiguous intervals within each chromosome (no gaps)
 
 * Users may consider tweaking the default chromosome-specific $b,\gamma,\tau$ parameters or filtering peaks by score with the `--peak_score_filter` argument.
 
-* Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. A suitable peak score cutoff can be evaluated by viewing the output histogram of peak scores.
+* Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. If you wish to incorporate the peak score filter, a suitable cutoff can be evaluated by viewing the output histogram of peak scores.
 
 
 # Version History

@@ -844,16 +844,16 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
         :notes:
 
-            ROCCO Optimization Problem
+            ROCCO: Unrelaxed Optimization Problem
 
             .. math::
 
                 \begin{aligned}
-                & \underset{\BELL}{\text{\small Minimize:}}
-                & & f_{\textup{\tiny{\texttt{IP}}}}(\BELL) = \sum_{i=1}^{n}-\left(\mathcal{S}(i)\cdot\ell_i\right) + \gamma\sum_{i=1}^{n-1} |\ell_i - \ell_{i+1}| \\
-                & \text{\small Subject To:} & &  \text{(i)}~~\sum_{i=1}^{n}\ell_i \leq \lfloor nb\rfloor \\
+                & \underset{\ell}{\text{ Minimize:}}
+                & & f_{IP}(\ell) = \sum_{i=1}^{n}-\left(\mathcal{S}(i)\cdot\ell_i\right) + \gamma\sum_{i=1}^{n-1} |\ell_i - \ell_{i+1}| \\
+                & \text{Subject To:} & &  \text{(i)}~~\sum_{i=1}^{n}\ell_i \leq \lfloor nb\rfloor \\
                 & & &  \text{(ii)}~~\ell_i \in \{0,1\}, ~\forall i=1 \ldots n.
-                \end{aligned}}
+                \end{aligned}
 
         """
         if Smat_chr or common_loci is None:
