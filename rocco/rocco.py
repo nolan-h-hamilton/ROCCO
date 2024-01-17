@@ -608,17 +608,15 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
     def get_Smat(self, chromosome, samples=None):
         r"""
-        get_Smat Generate a :math:`K \times n` coverage signal matrix :math:`\mathbf{S}_{chr}`
+        get_Smat Generates a :math:`K \times n` coverage signal matrix :math:`\mathbf{S}_{chr}` from samples' data for input to ROCCO
 
-        ..math::
+        .. math::
 
             \mathbf{S}_{chr} = \begin{pmatrix}
             s_{1_1} & s_{2_1}  & \ldots & s_{n_1}\\
             s_{1_2} & s_{2_2}  & \ldots & s_{n_2}\\
             \ldots &\ldots&\ldots&\ldots\\
             s_{1_k} & s_{2_k}  & \ldots & s_{n_K}
-            \end{pmatrix}=  \begin{pmatrix}
-            \mathbf{s_1} & \mathbf{s_2} & \ldots & \mathbf{s_n}
             \end{pmatrix}
 
 
