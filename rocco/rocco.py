@@ -304,11 +304,11 @@ class Sample:
             rd_cmd = ['bamCoverage', '--bam', self.input_file,
                     '--binSize', str(self.step),
                     '-o', f"{self.input_file + '.bw'}",
-                    '-p', str(self.proc_num), '--region', 'chr19']
+                    '-p', str(self.proc_num)]
 
         subprocess.run(rd_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.bigwig_to_coverage_dict(input_=f"{self.input_file + '.bw'}")
-        #os.remove(f"{self.input_file + '.bw'}")
+        os.remove(f"{self.input_file + '.bw'}")
 
 
     def bedgraph_to_coverage_dict(self):
