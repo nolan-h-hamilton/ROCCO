@@ -18,7 +18,15 @@ multiple samples.
 
 # Paper
 
-If using ROCCO in your research, please cite the [original paper](https://doi.org/10.1093/bioinformatics/btad725) in *Bioinformatics*.
+If using ROCCO in your research, please cite the `original paper <https://doi.org/10.1093/bioinformatics/btad725>`_ in *Bioinformatics*
+
+
+   ```
+    Nolan H Hamilton, Terrence S Furey, ROCCO: a robust method for detection of open chromatin via convex optimization,
+    Bioinformatics, Volume 39, Issue 12, December 2023
+   ```
+
+**DOI**: ``10.1093/bioinformatics/btad725``
 
 # Installation
 
@@ -32,7 +40,7 @@ https://github.com/nolan-h-hamilton/ROCCO/
 
 # Documentation
 
-Documentation and example use demos are available at https://nolan-h-hamilton.github.io/ROCCO/
+Documentation and example usage are available at https://nolan-h-hamilton.github.io/ROCCO/
 
 # Input
 ROCCO accepts samples' **BAM** alignments or **BigWig** coverage tracks as input.
@@ -71,15 +79,6 @@ Same as the above example, but using the API:
   cd tests
   pytest -v -rPA -l -k "regular" test_rocco.py
   ```
-
-# Notes/Miscellaneous
-
-* If using BedGraph or BigWig input, ensure contiguous intervals within each chromosome (no gaps)
-
-* Users may consider tweaking the default chromosome-specific $b,\gamma,\tau$ parameters or filtering peaks by score with the `--peak_score_filter` argument.
-
-* Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. If you wish to incorporate the peak score filter, a suitable cutoff can be evaluated by viewing the output histogram of peak scores.
-
 
 # Version History
 

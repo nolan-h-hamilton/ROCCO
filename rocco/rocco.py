@@ -10,7 +10,7 @@ ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
 
 
 .. contents:: Table of Contents
-    :depth: 5
+    :depth: 3
 
 Underlying ROCCO is a :ref:`constrained optimization problem <problem>` with solutions dictating accessible chromatin regions across multiple samples.
 
@@ -18,12 +18,19 @@ Underlying ROCCO is a :ref:`constrained optimization problem <problem>` with sol
 GitHub (Homepage)
 ==================
 
-`GitHub Repository <https://github.com/nolan-h-hamilton/ROCCO/>`_
+https://github.com/nolan-h-hamilton/ROCCO/
 
 Paper
 ========
 
 If using ROCCO in your research, please cite the `original paper <https://doi.org/10.1093/bioinformatics/btad725>`_ in *Bioinformatics*
+
+.. code-block:: text
+
+    Nolan H Hamilton, Terrence S Furey, ROCCO: a robust method for detection of open chromatin via convex optimization,
+    Bioinformatics, Volume 39, Issue 12, December 2023
+
+**DOI**: ``10.1093/bioinformatics/btad725``
 
 
 Installation
@@ -31,20 +38,29 @@ Installation
 
 ``pip install rocco``
 
+Example Use
+==============
 
-Example Use (API)
+Both an API and command-line interface are available to run ROCCO. Analagous examples are given below for each.
+
+API Use
 ----------------------
 
 Example One
 ^^^^^^^^^^^^^^^^
 
-Run ROCCO with BAM input files for each sample using default chromosome-specific budget, gamma, etc. parameters for ``hg38`` assembly in ``Rocco.HG38_PARAMS``
+Run ROCCO with BAM input files for each sample using default chromosome-specific budget, gamma, etc. parameters for ``hg38`` assembly in ``Rocco.HG38_PARAMS``. Compute coverage tracks at over intervals of 100 base pairs (Default is 50).
+
 .. doctest::
 
     >>> import rocco
     >>> bamfiles = ['sample1.bam', 'sample2.bam', 'sample3.bam']
-    >>> rocco_obj = Rocco(input_files=bamfiles, genome_file='genome.sizes', chrom_param_file='hg38') # see Rocco.HG38_PARAMS
-    >>> rocco_obj.run() # genome-wide output stored in BED6 file
+    >>> rocco_obj = rocco.Rocco(
+    ...     input_files=bamfiles,
+    ...     genome_file='genome.sizes',
+    ...     chrom_param_file='hg38',
+    ...     step=100)
+    >>> rocco_obj.run()
 
 Example Two
 ^^^^^^^^^^^^^^^^
@@ -59,8 +75,11 @@ as input to ROCCO.
 
     >>> import rocco
     >>> bw_files = ['sample1.bw', 'sample2.bw', 'sample3.bw']
-    >>> rocco_obj = Rocco(input_files=bw_files, genome_file='genome.sizes', chrom_param_file='hg38') # see Rocco.HG38_PARAMS
-    >>> rocco_obj.run() # genome-wide output stored in BED6 file
+    >>> rocco_obj = rocco.Rocco(
+    ...     input_files=bw_files,
+    ...     genome_file='genome.sizes',
+    ...     chrom_param_file='hg38')
+    >>> rocco_obj.run()
 
 Example Three
 ^^^^^^^^^^^^^^^^
@@ -71,8 +90,13 @@ Scale coverage tracks of samples before calling peaks
 
     >>> import rocco
     >>> bamfiles = ['sample1.bam', 'sample2.bam', 'sample3.bam']
-    >>> rocco_obj = Rocco(input_files=bamfiles, genome_file='genome.sizes', chrom_param_file='hg38', sample_weights=[0.50 1.0 1.0])
-    >>> rocco_obj.run() # genome-wide output stored in BED6 file
+    >>> rocco_obj = rocco.Rocco(
+    ...     input_files=bamfiles,
+    ...     genome_file='genome.sizes',
+    ...     chrom_param_file='hg38',
+    ...     sample_weights=[0.50, 1.0, 1.0]
+    ... )
+    >>> rocco_obj.run()
 
 Example Four
 ^^^^^^^^^^^^^^^^
@@ -81,57 +105,89 @@ Use a custom parameter file to set chromosome-specific budgets, gamma, tau, etc.
 
 ``custom_params.csv``
 
-.. code-block::
+.. code-block:: text
 
     chrom,budget,gamma,tau,c_1,c_2,c_3
     chr19,0.05,1.0,0,1.0,1.0,1.0
     chr21,0.03,1.0,0,1.0,1.0,1.0
 
+.. doctest::
+
+    >>> import rocco
+    >>> bamfiles = ['sample1.bam', 'sample2.bam', 'sample3.bam']
+    >>> rocco_obj = rocco.Rocco(
+    ...     input_files=bamfiles,
+    ...     genome_file='genome.sizes',
+    ...     chrom_param_file='custom_params.csv')
+    >>> rocco_obj.run()
+
+Example Five
+^^^^^^^^^^^^^^^^
+
+Use constant, genome-wide parameters by setting ``chrom_param_file=None``. Can modify the genome-wide parameters via the ``constant_`` arguments.
 
 .. doctest::
 
     >>> import rocco
-    >>> bw_files = ['sample1.bam', 'sample2.bam', 'sample3.bam']
-    >>> rocco_obj = Rocco(input_files=bamfiles, genome_file='genome.sizes', chrom_param_file='custom_params.csv')
-    >>> rocco_obj.run() # genome-wide output stored in BED6 file
+    >>> bamfiles = ['sample1.bam', 'sample2.bam', 'sample3.bam']
+    >>> rocco_obj = rocco.Rocco(
+    ...     input_files=bamfiles,
+    ...     genome_file='genome.sizes',
+    ...     chrom_param_file=None,
+    ...     constant_budget=0.035,
+    ...     constant_gamma=1.0,
+    ...     constant_tau=0.0)
+    >>> rocco_obj.run()
 
 
-Example Use (CLI)
-----------------------
-See ``rocco.main()`` or call ``rocco --help`` for more details.
+CLI Use
+-------------------------------
+
+See :meth:`rocco.main` or run ``rocco --help`` at the command line for a full list of available arguments.
 
 Example One
 ^^^^^^^^^^^^^^^^
 
-Run ROCCO with BAM input files for each sample using default chromosome-specific budget, gamma, etc. parameters for ``hg38`` assembly in ``Rocco.HG38_PARAMS``
+.. code-block:: text
 
-``rocco -i sample1.bam sample2.bam sample3.bam --genome_file genome.sizes --chrom_param_file hg38``
+    rocco -i sample1.bam sample2.bam sample3.bam --genome_file genome.sizes --chrom_param_file hg38 --step 100
 
 ROCCO will also accept wildcard/regex filename patterns:
 
-``rocco -i *.bam --genome_file genome.sizes --chrom_param_file hg38``
+.. code-block:: text
+
+    rocco -i *.bam --genome_file genome.sizes --chrom_param_file hg38 --step 100
 
 Example Two
 ^^^^^^^^^^^^^^^^
 
-Run ROCCO with bigwig input files for each sample using default chromosome-specific budget, gamma, etc. parameters for ``hg38`` assembly in ``Rocco.HG38_PARAMS``
+.. code-block:: text
 
-``rocco -i sample1.bw sample2.bw sample3.bw --genome_file genome.sizes --chrom_param_file hg38``
+    rocco -i *.bw --genome_file genome.sizes --chrom_param_file hg38
 
 
 Example Three
 ^^^^^^^^^^^^^^^^^
 
-Scale coverage values of samples before calling peaks
+List the input files and weights explicitly to ensure the correct order
 
-``rocco -i sample1.bw sample2.bw sample3.bw --genome_file genome.sizes --chrom_param_file hg38 --sample_weights 0.50 1.0 1.0``
+.. code-block:: text
+
+    rocco -i sample1.bam sample2.bam sample3.bam --genome_file genome.sizes --chrom_param_file hg38 --sample_weights 0.50 1.0 1.0
 
 Example Four
+^^^^^^^^^^^^^^^^^
+
+.. code-block:: text
+
+    rocco -i sample1.bam sample2.bam sample3.bam --genome_file genome.sizes --chrom_param_file custom_params.csv
+
+Example Five
 ^^^^^^^^^^^^^^^^^^
 
-Use a custom chromosome parameter (CSV) file
+.. code-block:: text
 
-``rocco --input_files sample1.bw sample2.bw sample3.bw --genome_file genome.sizes --chrom_param_file custom_params.csv``
+    rocco -i *.bam --genome_file genome.sizes --constant_budget 0.035 --constant_gamma 1.0 --constant_tau 0.0
 
 
 Testing ROCCO
@@ -148,9 +204,9 @@ Run PyTest unit tests
 Notes/Miscellaneous
 ======================
 
-* Users may consider tweaking the default chromosome-specific :math:`b,\gamma,\tau` parameters using a custom `--chrom_param_file` or filtering peaks by score with the `--peak_score_filter` argument.
+* Default parameters (constant or chromosome-specific) generally provide strong results, but users may consider tweaking the default parameters or filtering peaks by score with the `--peak_score_filter` argument.
 
-* Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. A suitable peak score cutoff can be evaluated by viewing the output histogram of peak scores.
+* Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. A suitable peak score cutoff will depend on several experimental factors and may be evaluated by viewing the output histogram of peak scores.
 
 """
 #!/usr/bin/env python
@@ -186,7 +242,7 @@ def nearest_step_idx(val, step):
 
 def get_chroms_and_sizes(genome_file):
     r"""
-    get_chroms_and_sizes parse chromosomes and their sizes from `genome_file`
+    Parse chromosomes and their respective sizes in `genome_file`
 
     :raises FileNotFoundError: If genome file cannot be found
     :return: chromosome names and sizes in `genome_file`
@@ -280,7 +336,7 @@ class Sample:
 
     def get_input_type(self):
         r"""
-        get_input_type Determine if self.input_file is a BAM, bedgraph, or bigwig file
+        Determine if self.input_file is a BAM, bedgraph, or bigwig file
 
         The file type is determined by the file extension: '.bam', '.bw', etc. and is not robust
         to incorrectly labelled files.
@@ -307,7 +363,7 @@ class Sample:
 
     def bam_to_coverage_dict(self, bamcov_cmd=None, additional_args=None):
         r"""
-        bam_to_coverage_dict Wraps deeptools' bamCoverage to generate a dictionary of chromosome-specific coverage tracks
+        Wraps deeptools' bamCoverage to generate a dictionary of chromosome-specific coverage tracks
 
         """
         if bamcov_cmd is None:
@@ -325,7 +381,7 @@ class Sample:
 
     def bedgraph_to_coverage_dict(self):
         r"""
-        bedgraph_to_coverage_dict Parse a bedgraph file and store chromosome-specific coverage data in self.coverage_dict
+        Parse a bedgraph file and store chromosome-specific coverage data in self.coverage_dict
 
         """
         pb = pybedtools.BedTool(self.input_file)
@@ -352,7 +408,7 @@ class Sample:
 
     def bigwig_to_coverage_dict(self, input_=None):
         r"""
-        bigwig_to_coverage_dict Parse a bigwig file and store chromosome-specific coverage data in self.coverage_dict
+        Parse a bigwig file and store chromosome-specific coverage data in self.coverage_dict
 
         """
         if input_ is None:
@@ -375,7 +431,9 @@ class Sample:
 
     def write_track(self):
         r"""
-        write_track Write data in self.coverage_dict to file as a bedgraph or BED6 file
+        Write data in self.coverage_dict to file as a bedgraph or BED6 file
+
+        TODO: add option for wig/bigwig output
 
         """
         output_file = self.output_file
@@ -398,12 +456,13 @@ class Sample:
 
     def get_chrom_loci(self,chromosome):
         r"""
-        get_chrom_loci Return list of loci for a given chromosome
+        Return list of loci for a given chromosome
 
         :param chromosome: chromosome name
         :type chromosome: str
         :return: list of loci indices
         :rtype: list
+
         """
         loci = []
         try:
@@ -416,7 +475,7 @@ class Sample:
 
     def get_chrom_vals(self, chromosome):
         r"""
-        get_chrom_vals Return a list of coverage values over the locus indices in ``chromosome``
+        Return a list of coverage values over the locus indices in ``chromosome``
 
         :param chromosome: chromosome name
         :type chromosome: str
@@ -608,7 +667,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
     def get_Smat(self, chromosome, samples=None):
         r"""
-        get_Smat Generates a :math:`K \times n` coverage signal matrix :math:`\mathbf{S}_{chr}` from samples' data for input to ROCCO
+        Generates a :math:`K \times n` coverage signal matrix :math:`\mathbf{S}_{chr}` from samples' data for input to ROCCO
 
         .. math::
 
@@ -798,7 +857,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
               outfile=None,
               pr_bed=None):
         r"""
-        solve_chrom  Executes Rocco on a given chromosome.
+        Executes ROCCO on a given chromosome.
 
         In the case users wish to construct the signal matrix :math:`\mathbf{S}_{chr}` (``Smat_chr``), locus scores :math:`\mathcal{S}`, etc.
         with their own custom methods, this function has been written to accept these as parameters, only calling the default methods if left
@@ -950,7 +1009,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
     def run(self, plot_hist=True, peak_score_scale = 1000.0):
         r"""
-        Execute Rocco over each given chromosome, merge and score results, and create an output BED file.
+        Execute ROCCO over each given chromosome, merge and score results, and create an output BED file.
 
         :param plot_hist: if ``True`` plot and save a  histogram of peak scores
         :type plot_hist: bool, optional
