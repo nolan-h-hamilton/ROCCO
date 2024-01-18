@@ -55,7 +55,7 @@ Both an API and command-line interface are available to run ROCCO.
 
 ## Command-line interface
 
-Run ROCCO on the test data included with this repository. Output will be stored in a BED6 file.
+Run ROCCO on the test data included with this repository (BigWig files). Output will be stored in a BED6 file.
 
    ```
    rocco -i tests/data/*.bw --genome_file tests/test_hg38.sizes --chrom_param_file tests/test_hg38_param_file.csv
@@ -69,7 +69,7 @@ Same as the above example, but using the API:
     >>> import rocco
     >>> bw_files = ['tests/data/sample1.bw', 'tests/data/sample2.bw', 'tests/data/sample3.bw', 'tests/data/sample4.bw', 'tests/data/sample5.bw']
     >>> # see Rocco.HG38_PARAMS
-    >>> rocco_obj = Rocco(input_files=bw_files, genome_file='tests/test_hg38.sizes', chrom_param_file='tests/test_hg38_param_file.csv')
+    >>> rocco_obj = rocco.Rocco(input_files=bw_files, genome_file='tests/test_hg38.sizes', chrom_param_file='tests/test_hg38_param_file.csv')
     >>> rocco_obj.run() # genome-wide output stored in BED6 file
    ```
 
