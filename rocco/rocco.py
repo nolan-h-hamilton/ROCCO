@@ -318,14 +318,15 @@ class Sample:
         if self.get_input_type() == 'bam':
             logging.info(f"Calling bam_to_coverage_dict(): {self.input_file}")
             self.bam_to_coverage_dict(bamcov_cmd=self.bamcov_cmd, additional_args=self.bamcov_extra_args)
-        if self.get_input_type() == 'bg':
+        elif self.get_input_type() == 'bg':
             logging.info(f"Calling bedgraph_to_coverage_dict(): {self.input_file}")
             self.bedgraph_to_coverage_dict()
             self.step = min(np.diff([int(x) for x in self.coverage_dict[self.chroms[0]].keys()],1))
-        if self.get_input_type() == 'bw':
+        elif self.get_input_type() == 'bw':
             logging.info(f"Calling bigwig_to_coverage_dict(): {self.input_file}")
             self.bigwig_to_coverage_dict()
             self.step = min(np.diff([int(x) for x in self.coverage_dict[self.chroms[0]].keys()],1))
+            logging.info(f"Inferred step: {self.step}")
 
     def __str__(self):
         attributes = {}
@@ -421,11 +422,26 @@ class Sample:
         for chrom in self.chroms:
             loci = []
             vals = []
+            idx = 0
+            first_nonzero = -1
             for interval in input_bw.intervals(chrom,0, self.chrom_sizes_dict[chrom]):
                 loci.append(interval[0])
                 vals.append(interval[2])
-            loci = np.array(loci)
-            vals = self.weight*np.array(vals)
+                if interval[2] > 0 and first_nonzero < 0:
+                    first_nonzero = idx
+                idx += 1
+            loci = np.array(loci[first_nonzero:])
+            vals = self.weight*np.array(vals[first_nonzero:])
+            step = min([y for y in np.diff([int(x) for x in loci],1) if y > 0])
+            gap_indices = np.where(np.diff(loci) > step)[0]
+            for gap_index in gap_indices:
+                gap_start = loci[gap_index] + step
+                gap_end = loci[gap_index + 1] - step
+                fill_val = vals[gap_index]
+                gap_loci = np.arange(gap_start, gap_end, step)
+                loci = np.insert(loci, gap_index + 1, gap_loci)
+                vals = np.insert(vals, gap_index + 1, fill_val*np.ones_like(gap_loci))
+
             self.coverage_dict.update({chrom: dict(zip(loci,vals))})
 
 
@@ -657,6 +673,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         self.outfile = kwargs.get('outfile', f"rocco_peaks_{self.curr_time}.bed")
         self.tempfiles = []
         self.pr_bed = kwargs.get('pr_bed', '')
+        self.plot_hist = kwargs.get('plot_hist', False)
 
     def __str__(self):
         attributes = {}
@@ -847,6 +864,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
               scores=None,
               budget=None,
               gamma=None,
+              tau=None,
               solver=None,
               solver_reltol=None,
               solver_abstol=None,
@@ -921,6 +939,8 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             budget = self.param_df.loc[self.param_df['chrom'] == chromosome, 'budget'].values[0]
         if gamma is None:
             gamma = self.param_df.loc[self.param_df['chrom'] == chromosome, 'gamma'].values[0]
+        if tau is None:
+            tau = self.param_df.loc[self.param_df['chrom'] == chromosome, 'tau'].values[0]
         if solver is None:
             solver = self.solver
         if solver_reltol is None:
@@ -937,11 +957,11 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             step = self.step
         if outfile is None:
             outfile = self.outfile
-
         if pr_bed is None:
             pr_bed = self.pr_bed
 
         n = len(scores)
+        logging.info(f"solve_chrom() {chromosome}\nloci: {n}\nbudget: {budget}\ngamma: {gamma}")
         # define problem in CVXPY
         ell = cp.Variable(n)
         ell_aux = cp.Variable(n-1)
@@ -1003,11 +1023,10 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         except Exception as ex:
             logging.info(f"The following exception was ignored:\n{ex}\nSkipping removal of problematic regions...")
         self.tempfiles.append(tmpfile)
-
         return (chromosome, np.array(selected_loci))
 
 
-    def run(self, plot_hist=True, peak_score_scale = 1000.0):
+    def run(self, peak_score_scale = 1000.0):
         r"""
         Execute ROCCO over each given chromosome, merge and score results, and create an output BED file.
 
@@ -1031,7 +1050,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
                 if peak_score >= self.peak_score_filter:
                     outfile.write(f"{feature[0]}\t{feature[1]}\t{feature[2]}\t{feature[0] + '_' + str(feature[1]) + '_' + str(feature[2])}\t{peak_score}\t.\n")
 
-        if plot_hist:
+        if self.plot_hist:
             plt.hist(peak_scores, bins=50, color='blue', edgecolor='black', alpha=0.75, label='Peak score')
             plt.title(f"Peak Score Histogram")
             plt.legend()
@@ -1065,6 +1084,7 @@ def main():
     parser.add_argument('--solver_feastol', default=1e-8, type=float, help='Maximum allowed feasibility gap when solving the relaxation')
     parser.add_argument('--solver_abstol', default=1e-8, type=float, help='Maximum allowed absolute optimality gap when solving the relaxation')
     parser.add_argument('--peak_score_filter', default = 0.0, type=float, help='Only include peaks in the final annotation with peak scores above `--peak_score_filter`')
+    parser.add_argument('--plot_hist', action='store_true', help="If `True` save a plotted histogram of peak scores")
     parser.add_argument('--outfile', '-o',
                         default=f"rocco_peaks_{datetime.now().strftime('%m%d%Y_%H%M%S')}.bed",
                         help='Name of output peak/BED file')
@@ -1094,7 +1114,8 @@ def main():
           rand_iter=args['rand_iter'],
           verbose_solving=args['verbose_solving'],
           outfile=args['outfile'],
-          pr_bed=args['pr_bed'])
+          pr_bed=args['pr_bed'],
+          plot_hist=args['plot_hist'])
     logging.info(rocco_obj)
     rocco_obj.run()
 
