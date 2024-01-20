@@ -208,6 +208,8 @@ Notes/Miscellaneous
 
 * Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. A suitable peak score cutoff will depend on several experimental factors and may be evaluated by viewing the output histogram of peak scores.
 
+* If you encounter issues during the coverage track parsing/generation step, consider altering your pipeline to supply BedGraph input and verify constant bin sizes
+
 """
 #!/usr/bin/env python
 import argparse
@@ -325,8 +327,6 @@ class Sample:
         elif self.get_input_type() == 'bw':
             logging.info(f"Calling bigwig_to_coverage_dict(): {self.input_file}")
             self.bigwig_to_coverage_dict()
-            self.step = min(np.diff([int(x) for x in self.coverage_dict[self.chroms[0]].keys()],1))
-            logging.info(f"Inferred step: {self.step}")
 
     def __str__(self):
         attributes = {}
@@ -371,7 +371,7 @@ class Sample:
             bamcov_cmd = ['bamCoverage', '--bam', self.input_file,
                     '--binSize', str(self.step),
                     '-o', f"{self.input_file + '.bw'}",
-                    '-p', str(self.proc_num)]
+                    '-p', str(self.proc_num), '--samFlagInclude', '64']
             if additional_args:
                 bamcov_cmd.extend(additional_args)
 
@@ -410,7 +410,6 @@ class Sample:
     def bigwig_to_coverage_dict(self, input_=None):
         r"""
         Parse a bigwig file and store chromosome-specific coverage data in self.coverage_dict
-
         """
         if input_ is None:
             input_ = self.input_file
@@ -431,18 +430,25 @@ class Sample:
                     first_nonzero = idx
                 idx += 1
             loci = np.array(loci[first_nonzero:])
-            vals = self.weight*np.array(vals[first_nonzero:])
-            step = min([y for y in np.diff([int(x) for x in loci],1) if y > 0])
+            vals = self.weight * np.array(vals[first_nonzero:])
+            step = min([x for x in np.diff(loci[np.nonzero(loci)]) if x > 0])
+            self.step = step
             gap_indices = np.where(np.diff(loci) > step)[0]
-            for gap_index in gap_indices:
-                gap_start = loci[gap_index] + step
-                gap_end = loci[gap_index + 1] - step
-                fill_val = vals[gap_index]
-                gap_loci = np.arange(gap_start, gap_end, step)
-                loci = np.insert(loci, gap_index + 1, gap_loci)
-                vals = np.insert(vals, gap_index + 1, fill_val*np.ones_like(gap_loci))
+            new_loci = []
+            new_vals = []
 
-            self.coverage_dict.update({chrom: dict(zip(loci,vals))})
+            for gap_index in gap_indices:
+
+                gap_start = loci[gap_index] + step
+                gap_end = loci[gap_index + 1]
+                fill_val = vals[gap_index]
+                gap_loci = np.arange(gap_start, gap_end + step, step)
+                new_loci.extend(gap_loci)
+                new_vals.extend(fill_val * np.ones_like(gap_loci))
+
+            loci = np.concatenate([loci, new_loci])
+            vals = np.concatenate([vals, new_vals])
+            self.coverage_dict.update({chrom: dict(zip(loci, vals))})
 
 
     def write_track(self):
