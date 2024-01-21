@@ -8,10 +8,6 @@ ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
   :align: center
   :alt: logo
 
-
-.. contents:: Table of Contents
-    :depth: 3
-
 Underlying ROCCO is a :ref:`constrained optimization problem <problem>` with solutions dictating accessible chromatin regions across multiple samples.
 
 
@@ -60,7 +56,7 @@ Run ROCCO with BAM input files for each sample using default chromosome-specific
     ...     genome_file='genome.sizes',
     ...     chrom_param_file='hg38',
     ...     step=100)
-    >>> rocco_obj.run()
+    >>> rocco_obj.run() # output peak annotation saved as a BED file `rocco_obj.outfile`
 
 Example Two
 ^^^^^^^^^^^^^^^^
@@ -103,7 +99,7 @@ Example Four
 
 Use a custom parameter file to set chromosome-specific budgets, gamma, tau, etc.
 
-``custom_params.csv``
+With the following saved to **``custom_params.csv``**
 
 .. code-block:: text
 
@@ -208,7 +204,13 @@ Notes/Miscellaneous
 
 * Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. A suitable peak score cutoff will depend on several experimental factors and may be evaluated by viewing the output histogram of peak scores.
 
-* If you encounter issues during the coverage track parsing/generation step, consider altering your pipeline to supply BedGraph input and verify constant bin sizes
+* If you encounter issues during the coverage track parsing/generation step, consider altering your pipeline to supply BedGraph input and verify constant bin sizes. Alternatively, you can use the API and manually supply a coverage matrix to execute ROCCO.
+
+To-Do Items
+======================
+
+.. todolist::
+
 
 """
 #!/usr/bin/env python
@@ -279,6 +281,12 @@ class Sample:
     :type output_file: str, optional
     :param out_prefix: Specifies a string to prepend to the output file. Defaults to ``out_``
     :type out_prefix: str, optional
+
+    .. todo:: :meth:`Sample.bam_to_coverage_dict`: Add unit tests
+
+    .. todo:: :meth:`Sample.bigwig_to_coverage_dict`: Add unit tests
+
+    .. todo:: :meth:`Sample.bedgraph_to_coverage_dict`: Add unit tests
 
     """
     def __init__(self, input_file, genome_file, **kwargs):
@@ -455,7 +463,7 @@ class Sample:
         r"""
         Write data in self.coverage_dict to file as a bedgraph or BED6 file
 
-        TODO: add option for wig/bigwig output
+        .. todo:: :meth:`Sample.write_track` add option for wig/bigwig output
 
         """
         output_file = self.output_file
@@ -485,13 +493,14 @@ class Sample:
         :return: list of loci indices
         :rtype: list
 
+        .. todo:: :meth:`Sample.get_chrom_loci` consider raising KeyError
+
         """
         loci = []
         try:
             loci = [int(x) for x in self.coverage_dict[chromosome].keys()]
         except KeyError:
             logging.info('coverage_dict has not been generated yet')
-            # TODO: consider raising the exception
         return loci
 
 
@@ -504,13 +513,14 @@ class Sample:
         :return: list of loci indices
         :rtype: list
 
+        .. todo:: :meth:`Sample.get_chrom_vals` consider raising KeyError
+
         """
         vals = []
         try:
             vals = [float(x) for x in self.coverage_dict[chromosome].values()]
         except KeyError:
             logging.info('coverage_dict has not been generated yet')
-            # TODO: consider raising the exception
         return vals
 
 
@@ -727,6 +737,18 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
 
     def get_scores(self, chromosome, Smat_chr, c_1=None, c_2=None, c_3=None, tau=None):
+        r"""
+        Compute locus scores :math:`\mathcal{S}(i),~ \forall i=1\ldots n`
+
+        :param chromosome: Name of chromosome, e.g., 'chr19'
+        :type chromosome: str
+        :param Smat_chr: Matrix of coverage signals
+        :type Smat_chr: np.ndarray
+
+        :return: An :math:`n` -length array of locus scores, each of which quantifies the appeal of selecting the respective locus as open (accessible)
+        :rtype: np.ndarray
+
+        """
         if c_1 is None:
             c_1 = self.param_df.loc[self.param_df['chrom'] == chromosome, 'c_1'].values[0]
         if c_2 is None:
@@ -805,7 +827,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
         :type rand_iter: int, optional
 
-        :param eps_rand: Defines the initial 'floor-epsilon' reference solution.
+        :param eps_rand: Defines the initial 'floor-epsilon' reference solution with the following procedure
 
             .. code-block:: python
 
@@ -819,11 +841,9 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
                     # now start randomization procedure...
 
         :type eps_rand: float, optional
+
         """
         def obj(sol, scores, gamma):
-            r"""
-            Return numeric value of objective function given solution `sol`
-            """
             return (-scores@sol
                        + gamma*np.sum(np.abs(np.diff(sol,1))))
 
@@ -925,13 +945,13 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
         :notes:
 
-            ROCCO: Unrelaxed Optimization Problem
+            The initial, unrelaxed optimization problem ROCCO addresses is the following integer program
 
             .. math::
 
                 \begin{aligned}
-                & \underset{\ell}{\text{ Minimize:}}
-                & & f_{IP}(\ell) = \sum_{i=1}^{n}-\left(\mathcal{S}(i)\cdot\ell_i\right) + \gamma\sum_{i=1}^{n-1} |\ell_i - \ell_{i+1}| \\
+                & \underset{\boldsymbol{\ell}}{\text{ Minimize:}}
+                & & f_{\mathsf{IP}}(\boldsymbol{\ell}) = \sum_{i=1}^{n}-\left(\mathcal{S}(i)\cdot\ell_i\right) + \gamma\sum_{i=1}^{n-1} |\ell_i - \ell_{i+1}| \\
                 & \text{Subject To:} & &  \text{(i)}~~\sum_{i=1}^{n}\ell_i \leq \lfloor nb\rfloor \\
                 & & &  \text{(ii)}~~\ell_i \in \{0,1\}, ~\forall i=1 \ldots n.
                 \end{aligned}
@@ -1036,9 +1056,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         r"""
         Execute ROCCO over each given chromosome, merge and score results, and create an output BED file.
 
-        :param plot_hist: if ``True`` plot and save a  histogram of peak scores
-        :type plot_hist: bool, optional
-
+        .. todo:: :meth:`Rocco.run`: Update peak score histogram with subplots for each chromosome
         """
         for chrom in self.chroms:
             logging.info(f"Evaluating {chrom}")

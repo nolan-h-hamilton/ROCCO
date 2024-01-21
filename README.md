@@ -3,9 +3,7 @@
 <p align="center">
 <img width="400" alt="logo" src="docs/logo.png">
 
-Underlying ROCCO is a constrained optimization problem that can be
-solved efficiently to predict consensus regions of open chromatin across
-multiple samples.
+ROCCO is a multisample consensus peak caller for open chromatin data, e.g., ATAC-seq.
 
 **Features**
 
@@ -26,6 +24,11 @@ If using ROCCO in your research, please cite the [original paper](https://doi.or
     Bioinformatics, Volume 39, Issue 12, December 2023
    ```
 
+# Documentation
+
+Documentation and example usage are available at https://nolan-h-hamilton.github.io/ROCCO/
+
+
 **DOI**: ``10.1093/bioinformatics/btad725``
 
 # Installation
@@ -33,14 +36,6 @@ If using ROCCO in your research, please cite the [original paper](https://doi.or
    ```
    pip install rocco
    ```
-
-# GitHub (Homepage)
-
-https://github.com/nolan-h-hamilton/ROCCO/
-
-# Documentation
-
-Documentation and example usage are available at https://nolan-h-hamilton.github.io/ROCCO/
 
 # Input
 ROCCO accepts samples' **BAM** alignments or **BigWig** coverage tracks as input.
@@ -61,6 +56,8 @@ Run ROCCO on the test data included with this repository (BigWig files). Output 
    rocco -i tests/data/*.bw --genome_file tests/test_hg38.sizes --chrom_param_file tests/test_hg38_param_file.csv
    ```
 
+Default output BED file named as `rocco_peaks_[timestamp].bed`.
+
 ## API
 
 Same as the above example, but using the API:
@@ -70,7 +67,7 @@ Same as the above example, but using the API:
     >>> bw_files = ['tests/data/sample1.bw', 'tests/data/sample2.bw', 'tests/data/sample3.bw']
     >>> # see Rocco.HG38_PARAMS
     >>> rocco_obj = rocco.Rocco(input_files=bw_files, genome_file='tests/test_hg38.sizes', chrom_param_file='tests/test_hg38_param_file.csv')
-    >>> rocco_obj.run() # genome-wide output stored in BED6 file
+    >>> rocco_obj.run() # Default output BED file named as `rocco_peaks_[timestamp].bed`.
    ```
 
 # Testing ROCCO

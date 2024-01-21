@@ -50,7 +50,15 @@ autodoc_default_options = {
     'undoc-members': True,
     'show-inheritance': True,
 }
+todo_include_todos = True
+todo_link_only = True
 add_module_names = True
 # -- Options for napoleon extension ------------------------------------------
 napoleon_sphinx_docstring = True
-html_sidebars = { '**': ['searchbox.html'] }
+html_theme_options = {
+    'github_user': 'nolan-h-hamilton',
+    'github_repo': 'ROCCO',
+    'page_width': '1200px',
+    'sidebar_width': '300px',
+}
+html_sidebars = { '*': ['searchbox.html', 'localtoc.html'] }
