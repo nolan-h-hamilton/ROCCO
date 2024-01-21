@@ -24,12 +24,11 @@ If using ROCCO in your research, please cite the [original paper](https://doi.or
     Bioinformatics, Volume 39, Issue 12, December 2023
    ```
 
+**DOI**: ``10.1093/bioinformatics/btad725``
+
 # Documentation
 
 Documentation and example usage are available at https://nolan-h-hamilton.github.io/ROCCO/
-
-
-**DOI**: ``10.1093/bioinformatics/btad725``
 
 # Installation
 
