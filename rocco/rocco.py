@@ -34,6 +34,7 @@ Installation
 
 ``pip install rocco``
 
+
 Example Use
 ==============
 
@@ -205,6 +206,9 @@ Notes/Miscellaneous
 * Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. A suitable peak score cutoff will depend on several experimental factors and may be evaluated by viewing the output histogram of peak scores.
 
 * If you encounter issues during the coverage track parsing/generation step, consider altering your pipeline to supply BedGraph input and verify constant bin sizes. Alternatively, you can use the API and manually supply a coverage matrix to execute ROCCO.
+
+* If RAM is a special consideration, you can try increasing `--step` or using a lightweight solver for the optimization, e.g., `pip` install `ortools` and run ROCCO with `--solver PDLP`
+
 
 To-Do Items
 ======================
