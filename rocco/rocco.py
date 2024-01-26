@@ -312,10 +312,11 @@ class Sample:
             if chrom in self.chroms:
                 self.chrom_sizes_dict.update({chrom: genome_chrom_sizes_dict[chrom]})
 
-        self.output_format = kwargs.get('output_format', 'bg')
-        if self.output_format not in ['bed','bg']:
+
+        self.output_file = kwargs.get('output_file', f"{file_basename(self.input_file)}_{datetime.now().strftime('%m%d%Y_%H%M%S')}_coverage_track.bg")
+        self.output_format = kwargs.get('output_format', os.path.splitext(self.output_file)[1][1:])
+        if self.output_format not in ['wig','wiggle', 'bedgraph', 'bg']:
             raise ValueError(f"{self.output_format} is not a supported output format.")
-        self.output_file = kwargs.get('output_file', f"{file_basename(self.input_file)}_{datetime.now().strftime('%m%d%Y_%H%M%S')}_coverage_track.{self.output_format.lower()}")
         self.out_prefix = kwargs.get('out_prefix', 'out_')
         self.output_file = os.path.relpath(self.out_prefix + self.output_file)
         logging.info(f"Output file (only written if Sample.write_track() is called): {str(self.output_file)}")
@@ -453,9 +454,14 @@ class Sample:
                 gap_loci = np.arange(gap_start, gap_end + step, step)
                 new_loci.extend(gap_loci)
                 new_vals.extend(fill_val * np.ones_like(gap_loci))
-
-            loci = np.concatenate([loci, new_loci])
-            vals = np.concatenate([vals, new_vals])
+            combined_loci = np.concatenate([loci, new_loci])
+            combined_vals = np.concatenate([vals, new_vals])
+            sort_index = np.argsort(combined_loci)
+            loci_ = combined_loci[sort_index]
+            vals_ = combined_vals[sort_index]
+            unique_indices = np.unique(loci_, return_index=True)[1]
+            loci = loci_[unique_indices]
+            vals = vals_[unique_indices]
             self.coverage_dict.update({chrom: (loci, vals)})
 
 
@@ -463,26 +469,28 @@ class Sample:
         r"""
         Write data in self.coverage_dict to file as a bedgraph or BED6 file
 
-        .. todo:: :meth:`Sample.write_track` add option for wig/bigwig output
-
         """
         output_file = self.output_file
         output_format = self.output_format
 
+        #: write output as wig file
+        if output_format.lower() in ['wig', 'wiggle']:
+            with open(output_file, 'w') as outfile:
+                for chrom in self.chroms:
+                    loci = self.get_chrom_loci(chrom)
+                    vals = self.get_chrom_vals(chrom)
+                    outfile.write(f"variableStep chrom={chrom} span={self.step}\n")
+                    for loc,val in zip(loci,vals):
+                        outfile.write(f"{loc}\t{val}\n")
+                        
         #: write output as bedgraph file
-        if output_format.lower() in ['bedgraph', 'bg']:
+        if output_format.lower() in ['bg','bedgraph']:
             with open(output_file, 'w') as outfile:
                 for chrom in self.chroms:
-                    for key,val in zip(self.coverage_dict[chrom]):
-                        outfile.write(f"{chrom}\t{key}\t{key+self.step}\t{val}\n")
-
-        #: write output as bed6 file
-        if output_format.lower() in ['bed', 'bed6']:
-            with open(output_file, 'w') as outfile:
-                for chrom in self.chroms:
-                    for key,val in zip(self.coverage_dict[chrom]):
-                        outfile.write(f"{chrom}\t{key}\t{key+self.step}\t{chrom + '_' + str(key) + '_' + str(key+self.step)}\t{round(val)}\t{'.'}\n")
-
+                    loci = self.get_chrom_loci(chrom)
+                    vals = self.get_chrom_vals(chrom)
+                    for loc,val in zip(loci,vals):
+                        outfile.write(f"{chrom}\t{loc}\t{loc+self.step}\t{val}\n")
 
     def get_chrom_loci(self,chromosome):
         r"""

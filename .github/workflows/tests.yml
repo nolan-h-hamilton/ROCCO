@@ -34,3 +34,4 @@ jobs:
       working-directory: ./tests
       run: |
         pytest -v -rPA -l -k "regular" test_rocco.py
+        pytest -v -rPA -l -k "regular" test_sample.py
