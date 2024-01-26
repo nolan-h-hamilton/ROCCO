@@ -331,7 +331,7 @@ class Sample:
         elif self.get_input_type() == 'bg':
             logging.info(f"Calling bedgraph_to_coverage_dict(): {self.input_file}")
             self.bedgraph_to_coverage_dict()
-            self.step = min(np.diff([int(x) for x in self.coverage_dict[self.chroms[0]].keys()],1))
+            self.step = min(np.diff([int(x) for x in self.coverage_dict[self.chroms[0]][0]],1))
         elif self.get_input_type() == 'bw':
             logging.info(f"Calling bigwig_to_coverage_dict(): {self.input_file}")
             self.bigwig_to_coverage_dict()
@@ -412,7 +412,7 @@ class Sample:
                 iter_idx += 1
             loci = np.array(loci)
             vals = self.weight*np.array(vals)
-            self.coverage_dict.update({chrom: dict(zip(loci,vals))})
+            self.coverage_dict.update({chrom: (loci,vals)})
 
 
     def bigwig_to_coverage_dict(self, input_=None):
@@ -456,7 +456,7 @@ class Sample:
 
             loci = np.concatenate([loci, new_loci])
             vals = np.concatenate([vals, new_vals])
-            self.coverage_dict.update({chrom: dict(zip(loci, vals))})
+            self.coverage_dict.update({chrom: (loci, vals)})
 
 
     def write_track(self):
@@ -473,14 +473,14 @@ class Sample:
         if output_format.lower() in ['bedgraph', 'bg']:
             with open(output_file, 'w') as outfile:
                 for chrom in self.chroms:
-                    for key,val in self.coverage_dict[chrom].items():
+                    for key,val in zip(self.coverage_dict[chrom]):
                         outfile.write(f"{chrom}\t{key}\t{key+self.step}\t{val}\n")
 
         #: write output as bed6 file
         if output_format.lower() in ['bed', 'bed6']:
             with open(output_file, 'w') as outfile:
                 for chrom in self.chroms:
-                    for key,val in self.coverage_dict[chrom].items():
+                    for key,val in zip(self.coverage_dict[chrom]):
                         outfile.write(f"{chrom}\t{key}\t{key+self.step}\t{chrom + '_' + str(key) + '_' + str(key+self.step)}\t{round(val)}\t{'.'}\n")
 
 
@@ -498,7 +498,7 @@ class Sample:
         """
         loci = []
         try:
-            loci = [int(x) for x in self.coverage_dict[chromosome].keys()]
+            loci = np.array([int(x) for x in self.coverage_dict[chromosome][0]])
         except KeyError:
             logging.info('coverage_dict has not been generated yet')
         return loci
@@ -518,7 +518,7 @@ class Sample:
         """
         vals = []
         try:
-            vals = [float(x) for x in self.coverage_dict[chromosome].values()]
+            vals = np.array([float(x) for x in self.coverage_dict[chromosome][1]])
         except KeyError:
             logging.info('coverage_dict has not been generated yet')
         return vals
@@ -726,13 +726,16 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             samples = self.samples
 
         for j,samp in enumerate(samples):
-            samples_loci.append(samp.get_chrom_loci(chromosome))
+            samples_loci.append(list(samp.get_chrom_loci(chromosome)))
 
         common_loci = sorted([x for x in set.intersection(*map(set,samples_loci))])
         Smat = np.zeros(shape=(len(samples),len(common_loci)))
         for j,samp in enumerate(samples):
+            logging.info(f"Constructing Smat: ({j+1}/{len(samples)})")
+            samp_chrom_dict = dict(zip(
+                samp.coverage_dict[chromosome][0], samp.coverage_dict[chromosome][1]))
             for i,loc in enumerate(common_loci):
-                Smat[j][i] = samp.coverage_dict[chromosome][loc]
+                Smat[j][i] = samp_chrom_dict[loc]
         return common_loci, Smat
 
 
