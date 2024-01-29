@@ -26,7 +26,7 @@ If using ROCCO in your research, please cite the `original paper <https://doi.or
     Nolan H Hamilton, Terrence S Furey, ROCCO: a robust method for detection of open chromatin via convex optimization,
     Bioinformatics, Volume 39, Issue 12, December 2023
 
-**DOI**: ``10.1093/bioinformatics/btad725``
+**DOI**: `10.1093/bioinformatics/btad725 <https://doi.org/10.1093/bioinformatics/btad725>`_
 
 
 Installation
@@ -207,7 +207,7 @@ Notes/Miscellaneous
 
 * If you encounter issues during the coverage track parsing/generation step, consider altering your pipeline to supply BedGraph input and verify constant bin sizes. Alternatively, you can use the API and manually supply a coverage matrix to execute ROCCO.
 
-* If RAM is a special consideration, you can try increasing `--step` or using a lightweight solver for the optimization, e.g., `pip` install `ortools` and run ROCCO with `--solver PDLP`
+* If RAM is a special consideration, you can try increasing `--step` from its default of `50` to, e.g., `100` and/or using a lightweight solver for the optimization, e.g., `pip` install `ortools` and run ROCCO with `--solver PDLP`
 
 
 To-Do Items
@@ -229,6 +229,7 @@ from io import StringIO
 from pprint import pformat
 import random
 import subprocess
+import sys
 import types
 
 import cvxpy as cp
@@ -378,8 +379,8 @@ class Sample:
     def bam_to_coverage_dict(self, bamcov_cmd=None, additional_args=None):
         r"""
         Wraps deeptools' bamCoverage to generate a dictionary of chromosome-specific coverage tracks
-
         """
+        
         if bamcov_cmd is None:
             bamcov_cmd = ['bamCoverage', '--bam', self.input_file,
                     '--binSize', str(self.step),
@@ -387,8 +388,11 @@ class Sample:
                     '-p', str(self.proc_num), '--samFlagInclude', '64']
             if additional_args:
                 bamcov_cmd.extend(additional_args)
-
-        subprocess.run(bamcov_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            subprocess.run(bamcov_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except:
+            logging.info(f"{bamcov_cmd} failed. Ensure input is a sorted/indexed BAM file and that deepTools is installed.")
+            raise
         self.bigwig_to_coverage_dict(input_=f"{self.input_file + '.bw'}")
         os.remove(f"{self.input_file + '.bw'}")
 
@@ -534,6 +538,7 @@ class Sample:
         except KeyError:
             logging.info('coverage_dict has not been generated yet')
         return vals
+       
 
 
 class Rocco:
@@ -971,6 +976,8 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
                 & & &  \text{(ii)}~~\ell_i \in \{0,1\}, ~\forall i=1 \ldots n.
                 \end{aligned}
 
+            where :math:`\ell_i` denotes the binary decision variable for the :math:`i` -th locus, :math:`\mathcal{S}(i)` denotes the 'score' for the :math:`i` -th locus, etc.
+            See paper for more details.
         """
         if Smat_chr or common_loci is None:
             common_loci, Smat_chr = self.get_Smat(chromosome)
@@ -1100,11 +1107,11 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             self.delete_tempfiles()
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization", add_help=True)
     parser.add_argument('--input_files', '-i', nargs='+', type=str, help="Samples' corresponding BAM, bigwig, or bedgraph files. Accepts wildcard values, e.g., '*.bam', '*.bw'")
-    parser.add_argument('--chrom_param_file', type=str, default=None, help="Path to CSV param_file OR `hg38`/`mm10` for human/mouse default parameters")
+    parser.add_argument('--chrom_param_file', type=str, default=None, help="(Optional) Path to CSV param_file OR use `hg38`/`mm10` for human/mouse default parameters. If left unspecified, the 'constant_' parameters are used for all chromosomes.")
     parser.add_argument('--skip_chroms', nargs='+', type=str, default=[], help="Skip these chromosomes")
-    parser.add_argument('--genome_file', type=str, help="Genome sizes file")
+    parser.add_argument('--genome_file', type=str, help="Genome sizes file. A tab-separated file of the genome's chromosomes and their respective sizes measured in base pairs, e.g., `https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.chrom.sizes`")
     parser.add_argument('--sample_weights', nargs='+', type=float, default=None)
     parser.add_argument('--pr_bed', type=str, help="BED file of blacklisted/problematic regions to exclude from peak annotation", default=None)
     parser.add_argument('--proc_num', '-p', default=max(multiprocessing.cpu_count()-1,1), type=int,
@@ -1129,7 +1136,15 @@ def main():
                         help='Name of output peak/BED file')
     parser.add_argument('--verbose_solving', action='store_true', default=False)
     args = vars(parser.parse_args())
-
+    
+    if args['input_files'] is None:
+        print('No input files `--input_files` were supplied. See `rocco --help`')
+        sys.exit(1)
+    
+    if args['genome_file'] is None:
+        print('No genome sizes file `--genome_file` was supplied. See `rocco --help`')
+        sys.exit(1)
+        
     filler_params = {'budget':args['constant_budget'],
                      'gamma':args['constant_gamma'],
                      'tau':args['constant_tau'],
