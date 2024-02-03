@@ -13,8 +13,8 @@ def test_sample_init():
     global TEST_GENOME_FILE_chr21
     global TEST_STEP
     test_sample = Sample(TEST_BAMFILE_chr21, TEST_GENOME_FILE_chr21, step=TEST_STEP)
-    test_sample.write_track()
     
-    assert len(np.unique(np.diff(test_sample.coverage_dict['chr21'][0]))) == 1
-    assert test_sample.coverage_dict['chr21'][0][1] - test_sample.coverage_dict['chr21'][0][0] == TEST_STEP
-    os.remove(test_sample.output_file)
+    assert len(np.unique(np.diff(test_sample.get_chrom_data('chr21')[0]))) == 1
+    assert TEST_STEP in list(np.unique(np.diff(test_sample.get_chrom_data('chr21')[0])))
+    
+test_sample_init()

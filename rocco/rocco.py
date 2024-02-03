@@ -205,8 +205,6 @@ Notes/Miscellaneous
 
 * Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. A suitable peak score cutoff will depend on several experimental factors and may be evaluated by viewing the output histogram of peak scores.
 
-* If you encounter issues during the coverage track parsing/generation step, consider altering your pipeline to supply BedGraph input and verify constant bin sizes. Alternatively, you can use the API and manually supply a coverage matrix to execute ROCCO.
-
 * If RAM is a special consideration, you can try increasing `--step` from its default of `50` to, e.g., `100` and/or using a lightweight solver for the optimization, e.g., `pip` install `ortools` and run ROCCO with `--solver PDLP`
 
 
@@ -268,31 +266,20 @@ class Sample:
     r"""
     Sample
 
-    Used to generate/parse coverage tracks of samples' BAM or bedgraph files
+    Used to generate/parse coverage tracks of samples' BAM or BigWig files
 
-    :param input_file: a BAM (.bam), bedgraph (.bg), or bigwig (.bw) file for a given sample
-    :type input_files: str
+    :param input_file: a BAM (.bam), or bigwig (.bw) file for a given sample
+    :type input_file: str
     :param genome_file: Path to the genome sizes file containing chromosome sizes
     :type genome_file: str
     :param skip_chroms: List of chromosomes to exclude when parsing/generating coverage tracks
     :type skip_chroms: list, optional
     :param proc_num: Number of processes to use when computing chromosome-specific coverage tracks
     :type proc_num: int, optional
-    :param step: Step size for coverage tracks. This is overwritten and inferred from the data if a bigwig or bedgraph file is used as input
+    :param step: Step size for coverage tracks. This is overwritten and inferred from the data if a BigWig file is used as input
     :type step: int, optional
     :param weight: Weight to scale coverage values by. Can be used to apply scaling factor for normalization, etc. Defaults to 1.0
     :type weight: float, optional
-    :param output_file: Used by ``Sample.write_track()``. Specifies a filepath to write the coverage track to, if at all
-    :type output_file: str, optional
-    :param out_prefix: Specifies a string to prepend to the output file. Defaults to ``out_``
-    :type out_prefix: str, optional
-
-    .. todo:: :meth:`Sample.bam_to_coverage_dict`: Add unit tests
-
-    .. todo:: :meth:`Sample.bigwig_to_coverage_dict`: Add unit tests
-
-    .. todo:: :meth:`Sample.bedgraph_to_coverage_dict`: Add unit tests
-
     """
     def __init__(self, input_file, genome_file, **kwargs):
         logging.basicConfig(level=logging.INFO, format='LOG: %(asctime)s - %(message)s')
@@ -303,8 +290,7 @@ class Sample:
         self.genome_file = os.path.relpath(genome_file)
 
         self.proc_num = kwargs.get('proc_num', max(multiprocessing.cpu_count()-1,1))
-        if self.get_input_type() == 'bam':
-            self.step = kwargs.get('step', 50)
+        self.step = kwargs.get('step', 50)
         self.bamcov_extra_args = kwargs.get('bamcov_extra_args', None)
         self.bamcov_cmd = kwargs.get('bamcov_cmd', None)
         self.weight = kwargs.get('weight', 1.0)
@@ -317,30 +303,12 @@ class Sample:
             if chrom in self.chroms:
                 self.chrom_sizes_dict.update({chrom: genome_chrom_sizes_dict[chrom]})
 
-
-        self.output_file = kwargs.get('output_file', f"{file_basename(self.input_file)}_{datetime.now().strftime('%m%d%Y_%H%M%S')}_coverage_track.bg")
-        self.output_format = kwargs.get('output_format', os.path.splitext(self.output_file)[1][1:])
-        if self.output_format not in ['wig','wiggle', 'bedgraph', 'bg']:
-            raise ValueError(f"{self.output_format} is not a supported output format.")
-        self.out_prefix = kwargs.get('out_prefix', 'out_')
-        self.output_file = os.path.relpath(self.out_prefix + self.output_file)
-        logging.info(f"Output file (only written if Sample.write_track() is called): {str(self.output_file)}")
-
-
-        self.tempfiles = []
-        self.coverage_dict = {}
-
-        # NOTE: The coverage track is computed genome-wide as part of the initialization, yielding a dictionary of form {chrom:{locus:coverage}}, but that this data is *not written to file* unless self.write_coverage() is called.
         if self.get_input_type() == 'bam':
-            logging.info(f"Calling bam_to_coverage_dict(): {self.input_file}")
-            self.bam_to_coverage_dict(bamcov_cmd=self.bamcov_cmd, additional_args=self.bamcov_extra_args)
-        elif self.get_input_type() == 'bg':
-            logging.info(f"Calling bedgraph_to_coverage_dict(): {self.input_file}")
-            self.bedgraph_to_coverage_dict()
-            self.step = min(np.diff([int(x) for x in self.coverage_dict[self.chroms[0]][0]],1))
+            logging.info(f"Calling bam_to_bigwig(): {self.input_file}")
+            self.bigwig = self.bam_to_bigwig(bamcov_cmd=self.bamcov_cmd, additional_args=self.bamcov_extra_args)
+            
         elif self.get_input_type() == 'bw':
-            logging.info(f"Calling bigwig_to_coverage_dict(): {self.input_file}")
-            self.bigwig_to_coverage_dict()
+            self.bigwig = self.input_file
 
     def __str__(self):
         attributes = {}
@@ -351,7 +319,7 @@ class Sample:
 
     def get_input_type(self):
         r"""
-        Determine if self.input_file is a BAM, bedgraph, or bigwig file
+        Determine if self.input_file is a BAM, or BigWig file
 
         The file type is determined by the file extension: '.bam', '.bw', etc. and is not robust
         to incorrectly labelled files.
@@ -363,22 +331,20 @@ class Sample:
         file_type = None
         file_ext = os.path.splitext(self.input_file.lower())[1][1:]
 
-        if file_ext in ['bedgraph', 'bg']:
-            file_type = 'bg'
-        elif file_ext in ['bam']:
+        if file_ext in ['bam']:
             file_type = 'bam'
         elif file_ext in ['bw','bigwig']:
             file_type = 'bw'
 
         if file_type is None:
-            raise ValueError('Input file must be a BAM alignment file, bigwig, or bedgraph file')
+            raise ValueError('Input file must be a BAM alignment file or bigwig file')
 
         return file_type
 
 
-    def bam_to_coverage_dict(self, bamcov_cmd=None, additional_args=None):
+    def bam_to_bigwig(self, bamcov_cmd=None, additional_args=None):
         r"""
-        Wraps deeptools' bamCoverage to generate a dictionary of chromosome-specific coverage tracks
+        Wraps deeptools' bamCoverage to generate a bigwig file
         """
         
         if bamcov_cmd is None:
@@ -393,158 +359,63 @@ class Sample:
         except:
             logging.info(f"{bamcov_cmd} failed. Ensure input is a sorted/indexed BAM file and that deepTools is installed.")
             raise
-        self.bigwig_to_coverage_dict(input_=f"{self.input_file + '.bw'}")
-        os.remove(f"{self.input_file + '.bw'}")
+        return f"{self.input_file + '.bw'}"
 
 
-    def bedgraph_to_coverage_dict(self):
+    def get_chrom_data(self, chromosome):
         r"""
-        Parse a bedgraph file and store chromosome-specific coverage data in self.coverage_dict
-
+        Parse a bigwig file and return chromosome-specific coverage loci, coverage values
         """
-        pb = pybedtools.BedTool(self.input_file)
-        for chrom in self.chroms:
-            chrom_pb = pb.filter(lambda interval: interval.chrom == chrom)
-            self.coverage_dict.update
-            loci = []
-            vals = []
-            iter_idx = 0
-            for feature in chrom_pb:
-                if iter_idx == 0:
-                    try:
-                        feat_tuple = (feature[1],feature[3])
-                    except KeyError:
-                        logging.info(f"Bedgraph file should be in a 4-column format: chrom    start    end    value")
-                        raise
-                loci.append(int(feature[1]))
-                vals.append(float(feature[3]))
-                iter_idx += 1
-            loci = np.array(loci)
-            vals = self.weight*np.array(vals)
-            self.coverage_dict.update({chrom: (loci,vals)})
-
-
-    def bigwig_to_coverage_dict(self, input_=None):
-        r"""
-        Parse a bigwig file and store chromosome-specific coverage data in self.coverage_dict
-        """
-        if input_ is None:
-            input_ = self.input_file
+        input_ = self.bigwig 
         try:
             input_bw = pbw.open(input_)
         except:
             logging.info(f"Could not read {input_} as a BigWig via pyBigWig")
             raise
-        for chrom in self.chroms:
-            loci = []
-            vals = []
-            idx = 0
-            first_nonzero = -1
-            for interval in input_bw.intervals(chrom,0, self.chrom_sizes_dict[chrom]):
-                loci.append(interval[0])
-                vals.append(interval[2])
-                if interval[2] > 0 and first_nonzero < 0:
-                    first_nonzero = idx
-                idx += 1
-            loci = np.array(loci[first_nonzero:])
-            vals = self.weight * np.array(vals[first_nonzero:])
-            step = min([x for x in np.diff(loci[np.nonzero(loci)]) if x > 0])
-            self.step = step
-            gap_indices = np.where(np.diff(loci) > step)[0]
-            new_loci = []
-            new_vals = []
 
-            for gap_index in gap_indices:
-
-                gap_start = loci[gap_index] + step
-                gap_end = loci[gap_index + 1]
-                fill_val = vals[gap_index]
-                gap_loci = np.arange(gap_start, gap_end + step, step)
-                new_loci.extend(gap_loci)
-                new_vals.extend(fill_val * np.ones_like(gap_loci))
-            combined_loci = np.concatenate([loci, new_loci])
-            combined_vals = np.concatenate([vals, new_vals])
-            sort_index = np.argsort(combined_loci)
-            loci_ = combined_loci[sort_index]
-            vals_ = combined_vals[sort_index]
-            unique_indices = np.unique(loci_, return_index=True)[1]
-            loci = loci_[unique_indices]
-            vals = vals_[unique_indices]
-            self.coverage_dict.update({chrom: (loci, vals)})
-
-
-    def write_track(self):
-        r"""
-        Write data in self.coverage_dict to file as a bedgraph or BED6 file
-
-        """
-        output_file = self.output_file
-        output_format = self.output_format
-
-        #: write output as wig file
-        if output_format.lower() in ['wig', 'wiggle']:
-            with open(output_file, 'w') as outfile:
-                for chrom in self.chroms:
-                    loci = self.get_chrom_loci(chrom)
-                    vals = self.get_chrom_vals(chrom)
-                    outfile.write(f"variableStep chrom={chrom} span={self.step}\n")
-                    for loc,val in zip(loci,vals):
-                        outfile.write(f"{loc}\t{val}\n")
-                        
-        #: write output as bedgraph file
-        if output_format.lower() in ['bg','bedgraph']:
-            with open(output_file, 'w') as outfile:
-                for chrom in self.chroms:
-                    loci = self.get_chrom_loci(chrom)
-                    vals = self.get_chrom_vals(chrom)
-                    for loc,val in zip(loci,vals):
-                        outfile.write(f"{chrom}\t{loc}\t{loc+self.step}\t{val}\n")
-
-    def get_chrom_loci(self,chromosome):
-        r"""
-        Return list of loci for a given chromosome
-
-        :param chromosome: chromosome name
-        :type chromosome: str
-        :return: list of loci indices
-        :rtype: list
-
-        .. todo:: :meth:`Sample.get_chrom_loci` consider raising KeyError
-
-        """
         loci = []
-        try:
-            loci = np.array([int(x) for x in self.coverage_dict[chromosome][0]])
-        except KeyError:
-            logging.info('coverage_dict has not been generated yet')
-        return loci
-
-
-    def get_chrom_vals(self, chromosome):
-        r"""
-        Return a list of coverage values over the locus indices in ``chromosome``
-
-        :param chromosome: chromosome name
-        :type chromosome: str
-        :return: list of loci indices
-        :rtype: list
-
-        .. todo:: :meth:`Sample.get_chrom_vals` consider raising KeyError
-
-        """
         vals = []
-        try:
-            vals = np.array([float(x) for x in self.coverage_dict[chromosome][1]])
-        except KeyError:
-            logging.info('coverage_dict has not been generated yet')
-        return vals
-       
+        idx = 0
+        first_nonzero = -1
+        for interval in input_bw.intervals(chromosome,0, self.chrom_sizes_dict[chromosome]):
+            loci.append(interval[0])
+            vals.append(interval[2])
+            if interval[2] > 0 and first_nonzero < 0:
+                first_nonzero = idx
+            idx += 1
+        loci = np.array(loci[first_nonzero:])
+        vals = self.weight * np.array(vals[first_nonzero:])
+        step = min([x for x in np.diff(loci[np.nonzero(loci)]) if x > 0])
+        self.step = step
+        gap_indices = np.where(np.diff(loci) > step)[0]
+        new_loci = []
+        new_vals = []
+
+        for gap_index in gap_indices:
+            gap_start = loci[gap_index] + step
+            gap_end = loci[gap_index + 1]
+            fill_val = vals[gap_index]
+            gap_loci = np.arange(gap_start, gap_end + step, step)
+            new_loci.extend(gap_loci)
+            new_vals.extend(fill_val * np.ones_like(gap_loci))
+        combined_loci = np.concatenate([loci, new_loci])
+        combined_vals = np.concatenate([vals, new_vals])
+        sort_index = np.argsort(combined_loci)
+        loci_ = combined_loci[sort_index]
+        vals_ = combined_vals[sort_index]
+        unique_indices = np.unique(loci_, return_index=True)[1]
+        loci = loci_[unique_indices]
+        vals = vals_[unique_indices]
+        step = min([x for x in np.diff(loci[np.nonzero(loci)]) if x > 0])
+        if step != self.step:
+            self.step = step
+        return (loci,vals)
 
 
 class Rocco:
 
     r"""
-    :param input_files: a list of samples' BAM files, or a list of samples' BigWig, or a list of samples' BedGraph files
+    :param input_files: a list of samples' BAM files, or a list of samples' BigWig
     :type input_files: list
     :param genome_file: Path to the genome sizes file containing chromosome sizes
     :type genome_file: str
@@ -554,7 +425,7 @@ class Rocco:
     :type skip_chroms: list, optional
     :param proc_num: Number of processes to use when computing chromosome-specific coverage tracks
     :type proc_num: int, optional
-    :param step: Step size for coverage tracks. Inferred from the intervals if bedgraph/bigwig input is supplied.
+    :param step: Step size for coverage tracks. Inferred from the intervals if bigwig input is supplied.
     :type step: int, optional
     :param sample_weights: List/array of weights used to scale the coverage tracks for each sample. Defaults to np.ones()
     :type sample_weights: numpy array, optional
@@ -640,7 +511,6 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         self.peak_score_filter = kwargs.get('peak_score_filter', 0.0)
 
         self.proc_num = kwargs.get('proc_num', max(multiprocessing.cpu_count()-1,1))
-        # NOTE: self.step will be overwritten and inferred from the data if bedgraph input is used
         self.step = kwargs.get('step', 50)
         self.sample_weights = kwargs.get('sample_weights')
         if self.sample_weights is None or self.sample_weights == []:
@@ -702,7 +572,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         for j,input_file in enumerate(self.input_files):
             samples.append(Sample(input_file, self.genome_file, weight=self.sample_weights[j], step=self.step, proc_num=self.proc_num))
         self.samples = samples
-        self.step = samples[0].step
+        self.step = self.samples[0].step
         self.outfile = kwargs.get('outfile', f"rocco_peaks_{self.curr_time}.bed")
         self.tempfiles = []
         self.pr_bed = kwargs.get('pr_bed', '')
@@ -738,19 +608,20 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
         """
         samples_loci = []
-
+        samples_vals = []
         if samples is None:
             samples = self.samples
 
         for j,samp in enumerate(samples):
-            samples_loci.append(list(samp.get_chrom_loci(chromosome)))
-
+            loci,vals = samp.get_chrom_data(chromosome)
+            samples_loci.append(list(loci))
+            samples_vals.append(list(vals))
+            
         common_loci = sorted([x for x in set.intersection(*map(set,samples_loci))])
         Smat = np.zeros(shape=(len(samples),len(common_loci)))
         for j,samp in enumerate(samples):
             logging.info(f"Constructing Smat: ({j+1}/{len(samples)})")
-            samp_chrom_dict = dict(zip(
-                samp.coverage_dict[chromosome][0], samp.coverage_dict[chromosome][1]))
+            samp_chrom_dict = dict(zip(samples_loci[j],samples_vals[j]))
             for i,loc in enumerate(common_loci):
                 Smat[j][i] = samp_chrom_dict[loc]
         return common_loci, Smat
@@ -1001,13 +872,17 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             solver_maxiter = int(self.solver_maxiter)
         if verbose_solving is None:
             verbose_solving = self.verbose_solving
-        if step is None:
+        if step is None and common_loci is None:
             step = self.step
+        elif len(common_loci) > 1:
+            step = common_loci[1]-common_loci[0]
         if outfile is None:
             outfile = self.outfile
         if pr_bed is None:
             pr_bed = self.pr_bed
 
+        
+        
         n = len(scores)
         logging.info(f"solve_chrom() {chromosome}\nloci: {n}\nbudget: {budget}\ngamma: {gamma}")
         # define problem in CVXPY
@@ -1050,10 +925,10 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             raise cp.error.SolverError(f'\nFailed to obtain optimal solution.\
                 \nProblem status: {problem.status}.\n')
 
-        # NOTE:`lp_sol` is the truncated solution to the LP formulation
+        # NOTE:`lp_sol` is the truncated solution to the LP
         lp_sol = problem.variables()[0].value
         rr_sol = self.run_rr_proc(lp_sol, scores, budget, gamma)
-        # NOTE: write output as bed6 file
+        # NOTE: write output as BED file
         tmpfile = f"{outfile}.{chromosome}.tmp"
 
         selected_loci = []
@@ -1108,7 +983,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
 def main():
     parser = argparse.ArgumentParser(description="ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization", add_help=True)
-    parser.add_argument('--input_files', '-i', nargs='+', type=str, help="Samples' corresponding BAM, bigwig, or bedgraph files. Accepts wildcard values, e.g., '*.bam', '*.bw'")
+    parser.add_argument('--input_files', '-i', nargs='+', type=str, help="Samples' corresponding BAM or BigWig files. Accepts wildcard values, e.g., '*.bam', '*.bw'")
     parser.add_argument('--chrom_param_file', type=str, default=None, help="(Optional) Path to CSV param_file OR use `hg38`/`mm10` for human/mouse default parameters. If left unspecified, the 'constant_' parameters are used for all chromosomes.")
     parser.add_argument('--skip_chroms', nargs='+', type=str, default=[], help="Skip these chromosomes")
     parser.add_argument('--genome_file', type=str, help="Genome sizes file. A tab-separated file of the genome's chromosomes and their respective sizes measured in base pairs, e.g., `https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.chrom.sizes`")
@@ -1122,7 +997,7 @@ def main():
     parser.add_argument('--constant_c_1', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables")
     parser.add_argument('--constant_c_2', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables")
     parser.add_argument('--constant_c_3', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables")
-    parser.add_argument('--step', default=50, type=int, help='step size in coverage signal tracks. This argument is overwritten and inferred from the intervals if bedgraph/bigwig input is supplied')
+    parser.add_argument('--step', default=50, type=int, help='step size in coverage signal tracks. This argument is overwritten and inferred from the intervals if BigWig input is supplied')
     parser.add_argument('--rand_iter', '-N', type=int, default=100, help = 'Number of RR iterations')
     parser.add_argument('--solver', default='CLARABEL', type=str, help='Optimization software used to solve the relaxation')
     parser.add_argument('--solver_maxiter', default=10000, type=int, help='Maximum number of solver iterations')
