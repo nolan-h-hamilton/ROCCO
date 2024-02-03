@@ -62,11 +62,10 @@ Run ROCCO with BAM input files for each sample using default chromosome-specific
 Example Two
 ^^^^^^^^^^^^^^^^
 
-Run ROCCO with bigwig input files for each sample using default chromosome-specific budget, gamma, etc. parameters for the ``hg38`` assembly in ``Rocco.HG38_PARAMS``
+Run ROCCO with BigWig input files for each sample using default chromosome-specific budget, gamma, etc. parameters for the ``hg38`` assembly in ``Rocco.HG38_PARAMS``
 
-For instance, if you wish to generate the coverage tracks with `deepTools bamCoverage <https://deeptools.readthedocs.io/en/develop/content/tools/bamCoverage.html>`_ or
-another utility that produces bigwig signal files with additional features for normalization, smoothing, read extension, etc. You can supply the resulting bigwig files
-as input to ROCCO.
+Accepting BigWig input directly allows users the option to generate the coverage tracks independently with, e.g., `deepTools bamCoverage <https://deeptools.readthedocs.io/en/develop/content/tools/bamCoverage.html>`_ or
+another utility that produces BigWig signal files with additional features for normalization, smoothing, read extension.
 
 .. doctest::
 
@@ -203,8 +202,6 @@ Notes/Miscellaneous
 
 * Default parameters (constant or chromosome-specific) generally provide strong results, but users may consider tweaking the default parameters or filtering peaks by score with the `--peak_score_filter` argument.
 
-* Peak scores are computed as the average number of reads over the given peak region (w.r.t samples), divided by the length of the region, and then scaled to units of kilobases. A suitable peak score cutoff will depend on several experimental factors and may be evaluated by viewing the output histogram of peak scores.
-
 * If RAM is a special consideration, you can try increasing `--step` from its default of `50` to, e.g., `100` and/or using a lightweight solver for the optimization, e.g., `pip` install `ortools` and run ROCCO with `--solver PDLP`
 
 
@@ -229,6 +226,7 @@ import random
 import subprocess
 import sys
 import types
+import warnings
 
 import cvxpy as cp
 import matplotlib.pyplot as plt
@@ -344,7 +342,7 @@ class Sample:
 
     def bam_to_bigwig(self, bamcov_cmd=None, additional_args=None):
         r"""
-        Wraps deeptools' bamCoverage to generate a bigwig file
+        Wraps deeptools' bamCoverage to generate a BigWig coverage track from the input BAM file
         """
         
         if bamcov_cmd is None:
@@ -385,8 +383,14 @@ class Sample:
             idx += 1
         loci = np.array(loci[first_nonzero:])
         vals = self.weight * np.array(vals[first_nonzero:])
+        # Step sizes larger than the 'correct' step size are common in bigwig files
+        # generated with popular tools from BAM files as a result of compression.
+        # Step sizes smaller than the correct step size should be much less common,
+        # so, `min()`.  
         step = min([x for x in np.diff(loci[np.nonzero(loci)]) if x > 0])
-        self.step = step
+        if step != self.step:
+            warnings.warn(f"Step size inferred from BigWig file ({step}) doesn't match `self.step`")
+            self.step = step
         gap_indices = np.where(np.diff(loci) > step)[0]
         new_loci = []
         new_vals = []
@@ -407,8 +411,6 @@ class Sample:
         loci = loci_[unique_indices]
         vals = vals_[unique_indices]
         step = min([x for x in np.diff(loci[np.nonzero(loci)]) if x > 0])
-        if step != self.step:
-            self.step = step
         return (loci,vals)
 
 
@@ -616,7 +618,6 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             loci,vals = samp.get_chrom_data(chromosome)
             samples_loci.append(list(loci))
             samples_vals.append(list(vals))
-            
         common_loci = sorted([x for x in set.intersection(*map(set,samples_loci))])
         Smat = np.zeros(shape=(len(samples),len(common_loci)))
         for j,samp in enumerate(samples):
@@ -729,7 +730,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
                     # loop guarantees the feasibility of solutions
                     eps_cpy = eps_cpy/2
                     init_sol = np.floor(lp_sol + eps_cpy)
-                    # now start randomization procedure...
+                # now start randomization procedure...
 
         :type eps_rand: float, optional
 
@@ -939,19 +940,21 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
                     selected_loci.append(loc)
                     outfile.write(f"{chromosome}\t{loc}\t{loc+step}\t{chromosome + '_' + str(loc) + '_' + str(loc+step)}\t{np.mean(Smat_chr[:,iter_idx])}\t{'.'}\n")
                 iter_idx += 1
+        tmpfile_cpy = copy.deepcopy(tmpfile)
         try:
             if pr_bed is not None and len(pr_bed) > 0 and os.path.exists(pr_bed):
                 cleaned_bed = pybedtools.BedTool(tmpfile).subtract(pr_bed)
                 cleaned_bed.saveas(tmpfile)
         except Exception as ex:
             logging.info(f"The following exception was ignored:\n{ex}\nSkipping removal of problematic regions...")
+            tmpfile = tmpfile_cpy
         self.tempfiles.append(tmpfile)
         return (chromosome, np.array(selected_loci))
 
 
     def run(self, peak_score_scale = 1000.0):
         r"""
-        Execute ROCCO over each given chromosome, merge and score results, and create an output BED file.
+        Execute ROCCO over each given chromosome, merge, score results, and create an output BED file.
 
         .. todo:: :meth:`Rocco.run`: Update peak score histogram with subplots for each chromosome
         """
@@ -984,7 +987,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 def main():
     parser = argparse.ArgumentParser(description="ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization", add_help=True)
     parser.add_argument('--input_files', '-i', nargs='+', type=str, help="Samples' corresponding BAM or BigWig files. Accepts wildcard values, e.g., '*.bam', '*.bw'")
-    parser.add_argument('--chrom_param_file', type=str, default=None, help="(Optional) Path to CSV param_file OR use `hg38`/`mm10` for human/mouse default parameters. If left unspecified, the 'constant_' parameters are used for all chromosomes.")
+    parser.add_argument('--chrom_param_file', type=str, default=None, help="(Optional) Path to CSV param_file OR use `hg38`/`mm10` for human/mouse default parameters. If left unspecified, the 'constant_'/filler parameters are used for all chromosomes.")
     parser.add_argument('--skip_chroms', nargs='+', type=str, default=[], help="Skip these chromosomes")
     parser.add_argument('--genome_file', type=str, help="Genome sizes file. A tab-separated file of the genome's chromosomes and their respective sizes measured in base pairs, e.g., `https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.chrom.sizes`")
     parser.add_argument('--sample_weights', nargs='+', type=float, default=None)
