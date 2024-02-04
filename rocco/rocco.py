@@ -46,7 +46,7 @@ API Use
 Example One
 ^^^^^^^^^^^^^^^^
 
-Run ROCCO with BAM input files for each sample using default chromosome-specific budget, gamma, etc. parameters for ``hg38`` assembly in ``Rocco.HG38_PARAMS``. Compute coverage tracks at over intervals of 100 base pairs (Default is 50).
+Run ROCCO with BAM input files for each sample using the default chromosome-specific budget, gamma, etc. parameters for hg38 assembly in (See ``Rocco.HG38_PARAMS``). Compute coverage tracks at over intervals of 100 base pairs (Default is 50).
 
 .. doctest::
 
@@ -117,10 +117,13 @@ With the following saved to **``custom_params.csv``**
     ...     chrom_param_file='custom_params.csv')
     >>> rocco_obj.run()
 
+For a template chromosome parameter file see ``docs``.
+
+
 Example Five
 ^^^^^^^^^^^^^^^^
 
-Use constant, genome-wide parameters by setting ``chrom_param_file=None``. Can modify the genome-wide parameters via the ``constant_`` arguments.
+Use constant, default genome-wide parameters for all chromosomes. Users can modify these default genome-wide parameters via the ``constant_`` arguments at the command line or as below
 
 .. doctest::
 
@@ -386,7 +389,8 @@ class Sample:
         # Step sizes larger than the 'correct' step size are common in bigwig files
         # generated with popular tools from BAM files as a result of compression.
         # Step sizes smaller than the correct step size should be much less common,
-        # so, `min()`.  
+        # so, `min()`. Ideally, the BigWig file will explicitly list each interval
+        # so that this issue is avoided altogether. 
         step = min([x for x in np.diff(loci[np.nonzero(loci)]) if x > 0])
         if step != self.step:
             warnings.warn(f"Step size inferred from BigWig file ({step}) doesn't match `self.step`")
@@ -702,15 +706,16 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             .. math::
                 \sum^{n}_{i=1} \ell_i \leq \lfloor nb \rfloor
 
-            where :math:`\textsf{budget} := b` and :math:`n` is the number of loci (fixed-step contiguous genomic intervals).
+            where :math:`\textsf{budget} := b` and :math:`n` is the number of loci (fixed-step contiguous genomic intervals).  In general, a lower budget will result in more conservative results.
         :type budget: float, optional
 
         :param gamma: Weight for the 'fragmentation penalty' in decision space.
 
             .. math::
                 \gamma \sum^{n-1}_{i=1} |\ell_i - \ell_{i+1}|
-
-        :type gamma: float, optional
+            
+            In general, higher values of gamma yield fewer but broader peaks. Gamma should be set relative to the step size in the coverage signals, with gamma increasing as the step size decreases, as discussed in the Supplement of the paper.
+        :type gamma: type, optional
 
         :param rand_iter: Number of randomized integral solutions to draw as
 
@@ -817,14 +822,15 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
                 \sum^{n}_{i=1} \ell_i \leq \lfloor nb \rfloor
 
-            where :math:`\textsf{budget} := b` and :math:`n` is the number of loci (fixed-step contiguous genomic intervals).
+            where :math:`\textsf{budget} := b` and :math:`n` is the number of loci (fixed-step contiguous genomic intervals). In general, a lower budget will result in more conservative results.
         :type budget: float, optional
 
         :param gamma: Weight for the 'fragmentation penalty' in decision space.
 
             .. math::
                 \gamma \sum^{n-1}_{i=1} |\ell_i - \ell_{i+1}|
-
+            
+            In general, higher values of gamma yield fewer but broader peaks. Gamma should be set relative to the step size in the coverage signals, with gamma increasing as the step size decreases, as discussed in the Supplement of the paper.
         :type gamma: type, optional
 
         :param outfile: Name of the chromosome-specific BED output file.

@@ -3,7 +3,7 @@
 <p align="center">
 <img width="400" alt="logo" src="docs/logo.png">
 
-ROCCO is a multisample consensus peak caller for open chromatin data, e.g., ATAC-seq.
+ROCCO is a scalable consensus peak calling algorithm for open chromatin data on multiple samples, e.g., ATAC-seq.
 
 **Features**
 
@@ -37,7 +37,7 @@ Documentation and example usage are available at https://nolan-h-hamilton.github
    ```
 
 # Input
-ROCCO accepts samples' **BAM** alignments or **BigWig** coverage tracks as input.
+ROCCO accepts samples' **BAM** alignments or **BigWig** coverage tracks and a genome sizes file as input.
 
 # Output
 
@@ -45,29 +45,14 @@ A **BED** file containing peak regions and scores.
 
 # Minimal Example
 
-Both an API and command-line interface are available to run ROCCO.
-
-## Command-line interface
-
-Run ROCCO on the test data included with this repository (BigWig files). Output will be stored in a BED6 file.
+Run ROCCO on the test data included with this repository (BigWig files).
 
    ```
-   rocco -i tests/data/*.bw --genome_file tests/test_hg38.sizes --chrom_param_file tests/test_hg38_param_file.csv
+   rocco -i tests/data/*.bw --genome_file tests/test_hg38.sizes
    ```
 
-Default output BED file named as `rocco_peaks_[timestamp].bed`.
-
-## API
-
-Same as the above example, but using the API:
-
-   ```
-    >>> import rocco
-    >>> bw_files = ['tests/data/sample1.bw', 'tests/data/sample2.bw', 'tests/data/sample3.bw']
-    >>> # see Rocco.HG38_PARAMS
-    >>> rocco_obj = rocco.Rocco(input_files=bw_files, genome_file='tests/test_hg38.sizes', chrom_param_file='tests/test_hg38_param_file.csv')
-    >>> rocco_obj.run() # Default output BED file named as `rocco_peaks_[timestamp].bed`.
-   ```
+Default output BED file named as `rocco_peaks_[timestamp].bed`. Because no `--chrom_param_file` is supplied,
+the default genome-wide budget (`0.035`), gamma (`1.0`), etc. are used for all chromosomes. See the [Documentation](https://nolan-h-hamilton.github.io/ROCCO/) for additional examples and details.
 
 # Testing ROCCO
 
