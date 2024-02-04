@@ -38,7 +38,7 @@ Installation
 Example Use
 ==============
 
-Both an API and command-line interface are available to run ROCCO. Analagous examples are given below for each.
+Both an API and command-line interface (CLI) are available to run ROCCO. Toy examples are provided below using both the CLI and API.
 
 API Use
 ----------------------
@@ -46,7 +46,7 @@ API Use
 Example One
 ^^^^^^^^^^^^^^^^
 
-Run ROCCO with BAM input files for each sample using the default chromosome-specific budget, gamma, etc. parameters for hg38 assembly in (See ``Rocco.HG38_PARAMS``). Compute coverage tracks at over intervals of 100 base pairs (Default is 50).
+Run ROCCO with BAM input files for each sample using the default chromosome-specific budget, gamma, etc. parameters for hg38 assembly (See ``Rocco.HG38_PARAMS``). Compute coverage tracks at intervals of 100 base pairs (Default is 50).
 
 .. doctest::
 
@@ -203,7 +203,9 @@ Run PyTest unit tests
 Notes/Miscellaneous
 ======================
 
-* Default parameters (constant or chromosome-specific) generally provide strong results, but users may consider tweaking the default parameters or filtering peaks by score with the `--peak_score_filter` argument.
+* Default parameters (constant or chromosome-specific) generally provide strong results, but users may consider tweaking the default parameters using a custom ``--chrom_param_file`` or by modifying the default 'constant' genome-wide parameters with the ``--constant_budget``, ``--constant_gamma``, etc. arguments. See `paper and/or supplement <https://doi.org/10.1093/bioinformatics/btad725>`_ for further guidance on optional parameter tuning.
+
+* Run with ``--plot_hist`` to generate a histogram of peak scores that may be useful if tuning the ``--peak_score_filter`` argument.
 
 * If RAM is a special consideration, you can try increasing `--step` from its default of `50` to, e.g., `100` and/or using a lightweight solver for the optimization, e.g., `pip` install `ortools` and run ROCCO with `--solver PDLP`
 
@@ -393,7 +395,7 @@ class Sample:
         # so that this issue is avoided altogether. 
         step = min([x for x in np.diff(loci[np.nonzero(loci)]) if x > 0])
         if step != self.step:
-            warnings.warn(f"Step size inferred from BigWig file ({step}) doesn't match `self.step`")
+            warnings.warn(f"Step size inferred from BigWig file ({step}) doesn't match `self.step`. Resetting `self.step=step`.")
             self.step = step
         gap_indices = np.where(np.diff(loci) > step)[0]
         new_loci = []
