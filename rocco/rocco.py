@@ -946,7 +946,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             for loc,dec_var in zip(common_loci, rr_sol):
                 if dec_var > 0:
                     selected_loci.append(loc)
-                    outfile.write(f"{chromosome}\t{loc}\t{loc+step}\t{chromosome + '_' + str(loc) + '_' + str(loc+step)}\t{np.mean(Smat_chr[:,iter_idx])}\t{'.'}\n")
+                    outfile.write(f"{chromosome}\t{int(loc)}\t{int(loc+step)}\t{chromosome + '_' + str(int(loc)) + '_' + str(int(loc+step))}\t{np.mean(Smat_chr[:,iter_idx])}\t{'.'}\n")
                 iter_idx += 1
         tmpfile_cpy = copy.deepcopy(tmpfile)
         try:
