@@ -65,7 +65,7 @@ Example Two
 Run ROCCO with BigWig input files for each sample using default chromosome-specific budget, gamma, etc. parameters for the ``hg38`` assembly in ``Rocco.HG38_PARAMS``
 
 Accepting BigWig input directly allows users the option to generate the coverage tracks independently with, e.g., `deepTools bamCoverage <https://deeptools.readthedocs.io/en/develop/content/tools/bamCoverage.html>`_ or
-another utility that produces BigWig signal files with additional features for normalization, smoothing, read extension.
+another utility that produces BigWig signal files with additional features for normalization, smoothing, read extension, etc. that are useful in many experimental settings.
 
 .. doctest::
 
@@ -208,6 +208,8 @@ Notes/Miscellaneous
 * Run with ``--plot_hist`` to generate a histogram of peak scores that may be useful if tuning the ``--peak_score_filter`` argument.
 
 * If RAM is a special consideration, you can try increasing `--step` from its default of `50` to, e.g., `100` and/or using a lightweight solver for the optimization, e.g., `pip` install `ortools` and run ROCCO with `--solver PDLP`
+
+* Ensure [samtools](https://samtools.github.io) and [bedtools](https://bedtools.readthedocs.io/en/latest/) are installed and in your PATH. These tools are utilized for several auxiliary features.
 
 
 To-Do Items
