@@ -8,7 +8,7 @@ ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
   :align: center
   :alt: logo
 
-Underlying ROCCO is a :ref:`constrained optimization problem <problem>` with solutions dictating accessible chromatin regions across multiple samples.
+Underlying ROCCO is a :ref:`constrained optimization problem <problem>` with solutions dictating accessible chromatin regions consistent across multiple samples.
 
 
 GitHub (Homepage)
@@ -34,6 +34,26 @@ Installation
 
 ``pip install rocco``
 
+Input
+========
+
+* A set of **BAM** alignment files
+    * In this case, ROCCO generates coverage track files in BigWig format for each sample using `deepTools bamCoverage <https://deeptools.readthedocs.io/en/develop/content/tools/bamCoverage.html>`_ and user-specified parameters/arguments for read filtering, normalization, etc.
+    
+OR
+
+* A set of **BigWig** coverage track files
+    * Users can also manually generate BigWig files for each sample according to their experimental needs and preferred protocol and supply them them directly to ROCCO. Input BigWig tracks are treated as final and not modified by ROCCO (e.g., no normalization, etc.)
+
+AND
+
+* A **genome sizes file** containing chromosome names and sizes separated by tabs (e.g., ``docs/hg38.sizes``)
+
+
+Output
+========
+
+A **BED** file listing the identified peak regions and scores.
 
 Example Use
 ==============
@@ -51,7 +71,7 @@ Run ROCCO with BAM input files for each sample using the default chromosome-spec
 .. doctest::
 
     >>> import rocco
-    >>> bamfiles = ['sample1.bam', 'sample2.bam', 'sample3.bam']
+    >>> bamfiles = ['sample1.bam', 'sample2.bam', 'sample3.bam','sample4.bam', 'sample5.bam']
     >>> rocco_obj = rocco.Rocco(
     ...     input_files=bamfiles,
     ...     genome_file='genome.sizes',
@@ -64,13 +84,13 @@ Example Two
 
 Run ROCCO with BigWig input files for each sample using default chromosome-specific budget, gamma, etc. parameters for the ``hg38`` assembly in ``Rocco.HG38_PARAMS``
 
-Accepting BigWig input directly allows users the option to generate the coverage tracks independently with, e.g., `deepTools bamCoverage <https://deeptools.readthedocs.io/en/develop/content/tools/bamCoverage.html>`_ or
+Accepting BigWig input directly allows users the option to generate the coverage tracks according to their preferred protocol, e.g., `deepTools bamCoverage <https://deeptools.readthedocs.io/en/develop/content/tools/bamCoverage.html>`_ or
 another utility that produces BigWig signal files with additional features for normalization, smoothing, read extension, etc. that are useful in many experimental settings.
 
 .. doctest::
 
     >>> import rocco
-    >>> bw_files = ['sample1.bw', 'sample2.bw', 'sample3.bw']
+    >>> bw_files = ['sample1.bw', 'sample2.bw', 'sample3.bw', 'sample4.bw', 'sample5.bw']
     >>> rocco_obj = rocco.Rocco(
     ...     input_files=bw_files,
     ...     genome_file='genome.sizes',
@@ -80,17 +100,17 @@ another utility that produces BigWig signal files with additional features for n
 Example Three
 ^^^^^^^^^^^^^^^^
 
-Scale coverage tracks of samples before calling peaks
+Scale coverage signals before calling peaks
 
 .. doctest::
 
     >>> import rocco
-    >>> bamfiles = ['sample1.bam', 'sample2.bam', 'sample3.bam']
+    >>> bamfiles = ['sample1.bam', 'sample2.bam', 'sample3.bam','sample4.bam', 'sample5.bam']
     >>> rocco_obj = rocco.Rocco(
     ...     input_files=bamfiles,
     ...     genome_file='genome.sizes',
     ...     chrom_param_file='hg38',
-    ...     sample_weights=[0.50, 1.0, 1.0]
+    ...     sample_weights=[0.50, 1.0, 1.0, 1.0, 0.75]
     ... )
     >>> rocco_obj.run()
 
@@ -110,7 +130,7 @@ With the following saved to **``custom_params.csv``**
 .. doctest::
 
     >>> import rocco
-    >>> bamfiles = ['sample1.bam', 'sample2.bam', 'sample3.bam']
+    >>> bamfiles = ['sample1.bam', 'sample2.bam', 'sample3.bam','sample4.bam', 'sample5.bam']
     >>> rocco_obj = rocco.Rocco(
     ...     input_files=bamfiles,
     ...     genome_file='genome.sizes',
@@ -128,7 +148,7 @@ Use constant, default genome-wide parameters for all chromosomes. Users can modi
 .. doctest::
 
     >>> import rocco
-    >>> bamfiles = ['sample1.bam', 'sample2.bam', 'sample3.bam']
+    >>> bamfiles = ['sample1.bam', 'sample2.bam', 'sample3.bam','sample4.bam', 'sample5.bam']
     >>> rocco_obj = rocco.Rocco(
     ...     input_files=bamfiles,
     ...     genome_file='genome.sizes',
@@ -149,7 +169,7 @@ Example One
 
 .. code-block:: text
 
-    rocco -i sample1.bam sample2.bam sample3.bam --genome_file genome.sizes --chrom_param_file hg38 --step 100
+    rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam --genome_file genome.sizes --chrom_param_file hg38 --step 100
 
 ROCCO will also accept wildcard/regex filename patterns:
 
@@ -168,18 +188,18 @@ Example Two
 Example Three
 ^^^^^^^^^^^^^^^^^
 
-List the input files and weights explicitly to ensure the correct order
+Explicitly list the input files and weights to ensure the correct mapping of weights to samples
 
 .. code-block:: text
 
-    rocco -i sample1.bam sample2.bam sample3.bam --genome_file genome.sizes --chrom_param_file hg38 --sample_weights 0.50 1.0 1.0
+    rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam --genome_file genome.sizes --chrom_param_file hg38 --sample_weights 0.50 1.0 1.0 1.0 0.75
 
 Example Four
 ^^^^^^^^^^^^^^^^^
 
 .. code-block:: text
 
-    rocco -i sample1.bam sample2.bam sample3.bam --genome_file genome.sizes --chrom_param_file custom_params.csv
+    rocco -i *.bam --genome_file genome.sizes --chrom_param_file custom_params.csv
 
 Example Five
 ^^^^^^^^^^^^^^^^^^
@@ -200,16 +220,23 @@ Run PyTest unit tests
     pytest -v -rPA -l -k "regular" test_rocco.py
 
 
-Notes/Miscellaneous
+Miscellaneous
 ======================
 
-* Default parameters (constant or chromosome-specific) generally provide strong results, but users may consider tweaking the default parameters using a custom ``--chrom_param_file`` or by modifying the default 'constant' genome-wide parameters with the ``--constant_budget``, ``--constant_gamma``, etc. arguments. See `paper and/or supplement <https://doi.org/10.1093/bioinformatics/btad725>`_ for further guidance on optional parameter tuning.
+* **Parameter Tuning** Default parameters (constant or chromosome-specific) generally provide strong results, but users may consider tweaking the default parameters using a custom ``--chrom_param_file`` or by modifying the ``--constant_budget``, ``--constant_gamma``, etc. arguments if using the same parameters for all chromosomes. See `paper and/or supplement <https://doi.org/10.1093/bioinformatics/btad725>`_ for further guidance on optional parameter tuning.
 
-* Run with ``--plot_hist`` to generate a histogram of peak scores that may be useful if tuning the ``--peak_score_filter`` argument.
+* **Peak Scores** Run with ``--plot_hist`` to generate a histogram of peak scores that may be useful if tuning the ``--peak_score_filter`` argument.
 
-* If RAM is a special consideration, you can try increasing `--step` from its default of `50` to, e.g., `100` and/or using a lightweight solver for the optimization, e.g., `pip` install `ortools` and run ROCCO with `--solver PDLP`
+* **Memory Use** If RAM is a special consideration, you can try increasing `--step` from its default of `50` to, e.g., `100` and/or using a lightweight solver for the optimization, e.g., `pip` install `ortools` and run ROCCO with `--solver PDLP`
 
-* Ensure [samtools](https://samtools.github.io) and [bedtools](https://bedtools.readthedocs.io/en/latest/) are installed and in your PATH. These tools are utilized for several auxiliary features.
+* **Dependencies** Ensure [samtools](https://samtools.github.io) and [bedtools](https://bedtools.readthedocs.io/en/latest/) are installed and in your PATH. These tools are utilized for several auxiliary features.
+
+* **Small Sample Sizes** In general, ROCCO offers its greatest advantage in experiments involving large sample sizes (e.g., :math:`K \geq 10`). It is difficult to prescribe a minimum sample size as results will depend on various experimental factors (e.g., parity in sequencing depth), but we note ROCCO has performed well in several instances with as few as 3-5 samples. To ensure peak quality in such cases, consider decreasing the budget. See below for reference.
+
+.. image:: ../docs/rocco_k5.png
+  :width: 600
+  :align: center
+  :alt: small_sample_size
 
 
 To-Do Items
@@ -249,8 +276,10 @@ def file_basename(filename):
     basename = os.path.splitext(basename)[0]
     return basename
 
+
 def nearest_step_idx(val, step):
     return round((val // step)*step)
+
 
 def get_chroms_and_sizes(genome_file):
     r"""
@@ -265,6 +294,24 @@ def get_chroms_and_sizes(genome_file):
     chrom_names = pd.read_csv(genome_file,sep='\t',header=None)[0]
     chrom_sizes = pd.read_csv(genome_file,sep='\t',header=None)[1]
     return dict(zip(chrom_names, chrom_sizes))
+
+
+def has_chrom_reads(input_file, chromosome):
+    r"""
+    Check if a given chromosome has reads in the input file
+    """
+    if input_file.lower().endswith('.bam'):
+        with pysam.AlignmentFile(input_file, "rb") as bamfile:
+            try:
+                for read in bamfile.fetch(chromosome):
+                    return True
+            except:
+                return False
+    elif input_file.lower().endswith('.bw') or input_file.lower().endswith('.bigwig'):
+        input_bw = pbw.open(input_file)
+        if chromosome in input_bw.chroms():
+            return True
+    return False
 
 
 class Sample:
@@ -283,8 +330,15 @@ class Sample:
     :type proc_num: int, optional
     :param step: Step size for coverage tracks. This is overwritten and inferred from the data if a BigWig file is used as input
     :type step: int, optional
-    :param weight: Weight to scale coverage values by. Can be used to apply scaling factor for normalization, etc. Defaults to 1.0
+    :param weight: Weight by which to scale coverage values by. Can be used to apply scaling factor for normalization, etc. Defaults to 1.0
     :type weight: float, optional
+    :param norm_method: use CPM, BPM, or RPKM (see documentation for `deeptools`'s `bamCoverage` tool) to normalize the sample's coverage track. Ignored if input is a BigWig file. Defaults to `RPKM` for BAM files.
+    :type norm_method: str, optional
+    :param norm_ignore_chroms: list of chromosomes to skip for normalization
+    :type norm_ignore_chroms: list, optional
+    :param effective_genome_size: Effective genome size for normalization. Ignored if `norm_method` is not 'RPGC'.
+    :param raw_counts: If ``True``, no normalization is performed when computing the coverage track from the input BAM file.
+    :type raw_counts: bool, optional
     """
     def __init__(self, input_file, genome_file, **kwargs):
         logging.basicConfig(level=logging.INFO, format='LOG: %(asctime)s - %(message)s')
@@ -298,8 +352,13 @@ class Sample:
         self.step = kwargs.get('step', 50)
         self.bamcov_extra_args = kwargs.get('bamcov_extra_args', None)
         self.bamcov_cmd = kwargs.get('bamcov_cmd', None)
+        self.norm_method = kwargs.get('norm_method', 'RPKM')
+        self.raw_counts = kwargs.get('raw_counts', False)
+        self.norm_ignore_chroms = kwargs.get('norm_ignore_chroms', ['chrM', 'chrX', 'chrY'])
+        self.effective_genome_size = kwargs.get('--effective_genome_size', 2.7e9)
+        self.sam_flag_include = kwargs.get('sam_flag_include', 67)
+        self.sam_flag_exclude = kwargs.get('sam_flag_exclude', 1284)
         self.weight = kwargs.get('weight', 1.0)
-
         self.skip_chroms = kwargs.get('skip_chroms', [])
         genome_chrom_sizes_dict = get_chroms_and_sizes(self.genome_file)
         self.chroms = kwargs.get('chroms', [x for x in genome_chrom_sizes_dict.keys() if x not in self.skip_chroms])
@@ -314,6 +373,7 @@ class Sample:
             
         elif self.get_input_type() == 'bw':
             self.bigwig = self.input_file
+            self.norm_method = None
 
     def __str__(self):
         attributes = {}
@@ -356,10 +416,17 @@ class Sample:
             bamcov_cmd = ['bamCoverage', '--bam', self.input_file,
                     '--binSize', str(self.step),
                     '-o', f"{self.input_file + '.bw'}",
-                    '-p', str(self.proc_num), '--samFlagInclude', '64']
+                    '-p', str(self.proc_num), '--samFlagInclude', str(self.sam_flag_include), '--samFlagExclude', str(self.sam_flag_exclude)]
+            if self.norm_method and not self.raw_counts:
+                bamcov_cmd.extend(['--normalizeUsing', self.norm_method])
+                if self.norm_method.lower() == 'rpgc':
+                    bamcov_cmd.extend(['--effectiveGenomeSize', str(int(self.effective_genome_size))])
+                if self.norm_ignore_chroms:
+                    bamcov_cmd.extend(['--ignoreForNormalization', ' '.join(self.norm_ignore_chroms)])
             if additional_args:
                 bamcov_cmd.extend(additional_args)
         try:
+            logging.info(f"{self.input_file} - running bamCoverage command: \n{' '.join(bamcov_cmd)}\n")
             subprocess.run(bamcov_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except:
             logging.info(f"{bamcov_cmd} failed. Ensure input is a sorted/indexed BAM file and that deepTools is installed.")
@@ -369,7 +436,7 @@ class Sample:
 
     def get_chrom_data(self, chromosome):
         r"""
-        Parse a bigwig file and return chromosome-specific coverage loci, coverage values
+        Parse a BigWig file and return chromosome-specific coverage loci, coverage values
         """
         input_ = self.bigwig 
         try:
@@ -420,6 +487,8 @@ class Sample:
         vals = vals_[unique_indices]
         step = min([x for x in np.diff(loci[np.nonzero(loci)]) if x > 0])
         return (loci,vals)
+    
+    
 
 
 class Rocco:
@@ -455,7 +524,13 @@ class Rocco:
     :type rand_iter: int, optional
     :param verbose_solving: Whether to print solver logging data
     :type verbose_solving: bool, optional
-
+    :param norm_method: apply RPKM or RPGC normalization (see documentation for `deeptools`'s `bamCoverage` tool) on each Sample's coverage track independently.
+    :type norm_method: str, optional
+    :param norm_ignore_chroms: list of chromosomes to skip for normalization
+    :type norm_ignore_chroms: list, optional
+    :param effective_genome_size: Effective genome size for normalization. Ignored if `norm_method` is not 'RPGC'.
+    :param raw_counts: If ``True``, no normalization is performed when computing the coverage track from the input BAM file.
+    :type raw_counts: bool, optional
 """
 
     def __init__(self, input_files, genome_file, chrom_param_file=None, **kwargs):
@@ -525,10 +600,18 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         self.sample_weights = kwargs.get('sample_weights')
         if self.sample_weights is None or self.sample_weights == []:
             self.sample_weights = np.ones(len(self.input_files))
+        if len(self.sample_weights) != len(self.input_files):
+            raise ValueError(f"Length of sample weights ({len(self.sample_weights)}) must match the number of input files ({len(self.input_files)})")
+
         self.chrom_param_file = chrom_param_file
         self.filler_params = kwargs.get('filler_params',
                                         {'budget':0.035, 'gamma':1.0, 'tau':0.0, 'c_1':1.0, 'c_2':1.0, 'c_3':1.0})
-
+        self.norm_method = kwargs.get('norm_method', 'RPKM')
+        self.norm_ignore_chroms = kwargs.get('norm_ignore_chroms', ['chrM'])
+        self.effective_genome_size = kwargs.get('--effective_genome_size', 2.7e9)
+        self.sam_flag_include = kwargs.get('sam_flag_include', 67)
+        self.sam_flag_exclude = kwargs.get('sam_flag_exclude', 1284)
+        self.raw_counts = kwargs.get('raw_counts', False)
         self.chrom_param_file = chrom_param_file
         self.param_df = None
         expected_columns = ['chrom','budget','gamma','tau','c_1','c_2','c_3']
@@ -580,7 +663,16 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
         samples = []
         for j,input_file in enumerate(self.input_files):
-            samples.append(Sample(input_file, self.genome_file, weight=self.sample_weights[j], step=self.step, proc_num=self.proc_num))
+            samples.append(Sample(input_file, self.genome_file,
+                                  weight=self.sample_weights[j],
+                                  step=self.step,
+                                  proc_num=self.proc_num,
+                                  norm_method=self.norm_method,
+                                  norm_ignore_chroms=self.norm_ignore_chroms,
+                                  effective_genome_size=self.effective_genome_size,
+                                  sam_flag_include=self.sam_flag_include,
+                                  sam_flag_exclude=self.sam_flag_exclude,
+                                  raw_counts=self.raw_counts))
         self.samples = samples
         self.step = self.samples[0].step
         self.outfile = kwargs.get('outfile', f"rocco_peaks_{self.curr_time}.bed")
@@ -620,7 +712,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         samples_loci = []
         samples_vals = []
         if samples is None:
-            samples = self.samples
+            samples = [samp for samp in self.samples if has_chrom_reads(samp.input_file, chromosome)]
 
         for j,samp in enumerate(samples):
             loci,vals = samp.get_chrom_data(chromosome)
@@ -803,10 +895,6 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
               pr_bed=None):
         r"""
         Executes ROCCO on a given chromosome.
-
-        In the case users wish to construct the signal matrix :math:`\mathbf{S}_{chr}` (``Smat_chr``), locus scores :math:`\mathcal{S}`, etc.
-        with their own custom methods, this function has been written to accept these as parameters, only calling the default methods if left
-        as `None`.
 
         :param chromosome: Name of chromosome on which to execute Rocco
         :type chromosome: str
@@ -1000,7 +1088,7 @@ def main():
     parser.add_argument('--chrom_param_file', type=str, default=None, help="(Optional) Path to CSV param_file OR use `hg38`/`mm10` for human/mouse default parameters. If left unspecified, the 'constant_'/filler parameters are used for all chromosomes.")
     parser.add_argument('--skip_chroms', nargs='+', type=str, default=[], help="Skip these chromosomes")
     parser.add_argument('--genome_file', type=str, help="Genome sizes file. A tab-separated file of the genome's chromosomes and their respective sizes measured in base pairs, e.g., `https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.chrom.sizes`")
-    parser.add_argument('--sample_weights', nargs='+', type=float, default=None)
+    parser.add_argument('--sample_weights', nargs='+', type=float, default=None, help="Weights for each sample. Generally, `--sample_weights` should not be used unless `--raw_counts` is invoked to avoid contradicting normalization methods.")
     parser.add_argument('--pr_bed', type=str, help="BED file of blacklisted/problematic regions to exclude from peak annotation", default=None)
     parser.add_argument('--proc_num', '-p', default=max(multiprocessing.cpu_count()-1,1), type=int,
                         help='Number of processes to run simultaneously when generating coverage signals from BAM files')
@@ -1019,6 +1107,12 @@ def main():
     parser.add_argument('--solver_abstol', default=1e-8, type=float, help='Maximum allowed absolute optimality gap when solving the relaxation')
     parser.add_argument('--peak_score_filter', default = 0.0, type=float, help='Only include peaks in the final annotation with peak scores above `--peak_score_filter`')
     parser.add_argument('--plot_hist', action='store_true', help="If `True` save a plotted histogram of peak scores")
+    parser.add_argument('--norm_method', default='RPKM', type=str, help="use CPM, BPM, RPKM, or RPGC (see documentation for `deeptools`'s `bamCoverage` tool) to normalize each sample's coverage track independently. Ignored if `--raw_counts` is invoked.")
+    parser.add_argument('--norm_ignore_chroms', nargs='+', type=str, default=['chrM', 'chrX', 'chrY'], help="Chromosomes to ignore when normalizing samples' coverage tracks with `--norm_method`")
+    parser.add_argument('--raw_counts', action='store_true', help="If ``True``, ``--norm_method`` is ignored and no normalization is performed when computing the coverage tracks from the samples BAM files.")
+    parser.add_argument('--effective_genome_size', default=2.7e9, help="Effective genome size. Only used if `--norm_method RPGC` normalization: see documentation for `deeptools`'s `bamCoverage` tool for more details.")
+    parser.add_argument('--sam_flag_include', default=67, type=int, help="When computing coverage tracks on BAM input, include reads with these SAM flags")
+    parser.add_argument('--sam_flag_exclude', default=1284, type=int, help="When computing coverage tracks on BAM input, exclude reads with these SAM flags")
     parser.add_argument('--outfile', '-o',
                         default=f"rocco_peaks_{datetime.now().strftime('%m%d%Y_%H%M%S')}.bed",
                         help='Name of output peak/BED file')
@@ -1057,7 +1151,13 @@ def main():
           verbose_solving=args['verbose_solving'],
           outfile=args['outfile'],
           pr_bed=args['pr_bed'],
-          plot_hist=args['plot_hist'])
+          plot_hist=args['plot_hist'],
+          raw_counts=args['raw_counts'],
+          norm_method=args['norm_method'],
+          norm_ignore_chroms=args['norm_ignore_chroms'],
+          effective_genome_size=args['effective_genome_size'],
+          sam_flag_include=args['sam_flag_include'],
+          sam_flag_exclude=args['sam_flag_exclude'])
     logging.info(rocco_obj)
     rocco_obj.run()
 

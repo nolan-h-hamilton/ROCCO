@@ -3,7 +3,7 @@
 <p align="center">
 <img width="400" alt="logo" src="docs/logo.png">
 
-ROCCO is a scalable consensus peak calling algorithm for open chromatin data on multiple samples, e.g., ATAC-seq.
+ROCCO is a scalable consensus peak calling algorithm for open chromatin count signals in large sample sizes.
 
 **Features**
 
@@ -14,7 +14,7 @@ ROCCO is a scalable consensus peak calling algorithm for open chromatin data on 
 5. **No required training data** or a heuristically determined set of initial candidate peak regions;
 
 
-# Paper
+# Paper/Citation
 
 If using ROCCO in your research, please cite the [original paper](https://doi.org/10.1093/bioinformatics/btad725) in *Bioinformatics*
 
@@ -37,7 +37,7 @@ Documentation and example usage are available at https://nolan-h-hamilton.github
    ```
 
 # Input
-ROCCO accepts samples' **BAM** alignments or **BigWig** coverage tracks and a genome sizes file as input.
+ROCCO accepts **BAM** alignments or **BigWig** coverage tracks and a genome sizes file as input. ROCCO has been tested primarily using ATAC-seq data but may be suitable for DNase-seq experiments as well.
 
 # Output
 
