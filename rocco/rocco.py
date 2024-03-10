@@ -728,12 +728,12 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         """
         samples_loci = []
         samples_vals = []
-        if samples is None and chromosome != 'chrY':
+        if samples is None and (chromosome != 'chrY' or len(self.male_samples) == 0):
             samples = [samp for samp in self.samples if has_chrom_reads(samp.input_file, chromosome)]
-        elif chromosome == 'chrY' and len(self.male_samples) > 0:
+        elif samples is None and chromosome == 'chrY' and len(self.male_samples) > 0:
             samples = [samp for samp in self.samples if has_chrom_reads(samp.input_file, chromosome) and samp.input_file in self.male_samples]
             logging.info(f"Using samples {self.male_samples} for chrY")
-
+            
         for j,samp in enumerate(samples):
             loci,vals = samp.get_chrom_data(chromosome)
             samples_loci.append(list(loci))
