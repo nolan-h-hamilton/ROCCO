@@ -66,7 +66,7 @@ API Use
 Example One
 ^^^^^^^^^^^^^^^^
 
-Run ROCCO with BAM input files for each sample using the default chromosome-specific budget, gamma, etc. parameters for hg38 assembly (See ``Rocco.HG38_PARAMS``). Compute coverage tracks at intervals of 100 base pairs (Default is 50).
+Run ROCCO with BAM input files for each sample using the default chromosome-specific budget, gamma, etc. parameters for hg38 assembly (See ``Rocco.HG38_PARAMS`` or  `hg38_template.csv <https://github.com/nolan-h-hamilton/ROCCO/blob/5cf7ab7ef8016426055e9b7531bc9dde5c091a88/docs/hg38_template.csv>`_).
 
 .. doctest::
 
@@ -75,8 +75,7 @@ Run ROCCO with BAM input files for each sample using the default chromosome-spec
     >>> rocco_obj = rocco.Rocco(
     ...     input_files=bamfiles,
     ...     genome_file='genome.sizes',
-    ...     chrom_param_file='hg38',
-    ...     step=100)
+    ...     chrom_param_file='hg38')
     >>> rocco_obj.run() # output peak annotation saved as a BED file `rocco_obj.outfile`
 
 Example Two
@@ -137,7 +136,7 @@ With the following saved to **``custom_params.csv``**
     ...     chrom_param_file='custom_params.csv')
     >>> rocco_obj.run()
 
-For a template chromosome parameter file see ``docs``.
+For a template chromosome parameter file see `hg38_template.csv <https://github.com/nolan-h-hamilton/ROCCO/blob/5cf7ab7ef8016426055e9b7531bc9dde5c091a88/docs/hg38_template.csv>`_.
 
 
 Example Five
@@ -169,7 +168,7 @@ Example One
 
 .. code-block:: text
 
-    rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam --genome_file genome.sizes --chrom_param_file hg38 --step 100
+    rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam --genome_file genome.sizes --chrom_param_file hg38 
 
 ROCCO will also accept wildcard/regex filename patterns:
 
@@ -223,13 +222,13 @@ Run PyTest unit tests
 Miscellaneous
 ======================
 
-* **Parameter Tuning** Default parameters (constant or chromosome-specific) generally provide strong results, but users may consider tweaking the default parameters using a custom ``--chrom_param_file`` or by modifying the ``--constant_budget``, ``--constant_gamma``, etc. arguments if using the same parameters for all chromosomes. See `paper and/or supplement <https://doi.org/10.1093/bioinformatics/btad725>`_ for further guidance on optional parameter tuning.
+* **Parameter Tuning** Default parameters generally provide strong results, but users may alter these using a custom ``--chrom_param_file`` (e.g., `hg38_template.csv <https://github.com/nolan-h-hamilton/ROCCO/blob/5cf7ab7ef8016426055e9b7531bc9dde5c091a88/docs/hg38_template.csv>`_.) or by modifying the ``--constant_budget``, ``--constant_gamma``, etc. arguments if wishing to use consistent parameters for all chromosomes.
 
 * **Peak Scores** Run with ``--plot_hist`` to generate a histogram of peak scores that may be useful if tuning the ``--peak_score_filter`` argument.
 
 * **Memory Use** If RAM is a special consideration, you can try increasing `--step` from its default of `50` to, e.g., `100` and/or using a lightweight solver for the optimization, e.g., `pip` install `ortools` and run ROCCO with `--solver PDLP`
 
-* **Dependencies** Ensure [samtools](https://samtools.github.io) and [bedtools](https://bedtools.readthedocs.io/en/latest/) are installed and in your PATH. These tools are utilized for several auxiliary features.
+* **Dependencies** Ensure `samtools <https://samtools.github.io>`_ and `bedtools <https://bedtools.readthedocs.io/en/latest/>`_ are installed and in your PATH. These tools are utilized for several auxiliary features.
 
 * **Small Sample Sizes** In general, ROCCO offers its greatest advantage in experiments involving large sample sizes (e.g., :math:`K \geq 10`). It is difficult to prescribe a minimum sample size as results will depend on various experimental factors (e.g., parity in sequencing depth), but we note ROCCO has performed well in several instances with as few as 3-5 samples. To ensure peak quality in such cases, consider decreasing the budget. See below for reference.
 
@@ -369,6 +368,16 @@ class Sample:
 
         if self.get_input_type() == 'bam':
             logging.info(f"Calling bam_to_bigwig(): {self.input_file}")
+            has_index = False
+            with pysam.AlignmentFile(input_file, "rb") as bamfile:
+                try:
+                    has_index = bamfile.check_index()
+                except ValueError as ex:
+                    warnings.warn(f"Error checking index for {input_file}:\n{ex}")
+            if not has_index:
+                logging.info(f"Could not find or open index file for {self.input_file}...calling pysam.index()")
+                pysam.index(self.input_file)
+
             self.bigwig = self.bam_to_bigwig(bamcov_cmd=self.bamcov_cmd, additional_args=self.bamcov_extra_args)
             
         elif self.get_input_type() == 'bw':
@@ -499,6 +508,8 @@ class Rocco:
     :param genome_file: Path to the genome sizes file containing chromosome sizes
     :type genome_file: str
     :param chrom_param_file: Path to the chromosome parameter file
+    :param male_samples: If specified, peak calling over chrY is restricted to these samples. Otherwise, all samples are used for all chromosomes.
+    :type male_samples: list, optional
     :type chrom_param_file: str
     :param skip_chroms: List of chromosomes to skip
     :type skip_chroms: list, optional
@@ -590,6 +601,12 @@ chrX,0.02,1.0,0,1.0,1.0,1.0
 chrY,0.01,1.0,0,1.0,1.0,1.0
 """
         self.input_files = input_files
+        self.male_samples = kwargs.get('male_samples', [])
+        # ensure all files in self.male_samples are also in self.input_files
+        for msample in self.male_samples:
+            if msample not in self.input_files:
+                self.input_files.append(msample)
+
         self.genome_file = genome_file
         self.skip_chroms = kwargs.get('skip_chroms', [])
         self.chroms = kwargs.get('chroms', [x for x in get_chroms_and_sizes(self.genome_file).keys() if x not in self.skip_chroms])
@@ -711,8 +728,11 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         """
         samples_loci = []
         samples_vals = []
-        if samples is None:
+        if samples is None and chromosome != 'chrY':
             samples = [samp for samp in self.samples if has_chrom_reads(samp.input_file, chromosome)]
+        elif chromosome == 'chrY' and len(self.male_samples) > 0:
+            samples = [samp for samp in self.samples if has_chrom_reads(samp.input_file, chromosome) and samp.input_file in self.male_samples]
+            logging.info(f"Using samples {self.male_samples} for chrY")
 
         for j,samp in enumerate(samples):
             loci,vals = samp.get_chrom_data(chromosome)
@@ -874,6 +894,8 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             if is_feas and score < best_score:
                 rr_sol = ell_rand_n
                 best_score = score
+        print(np.sum(np.abs(rr_sol - lp_sol)))
+        print(len(lp_sol))
         return rr_sol
 
 
@@ -1087,17 +1109,18 @@ def main():
     parser.add_argument('--input_files', '-i', nargs='+', type=str, help="Samples' corresponding BAM or BigWig files. Accepts wildcard values, e.g., '*.bam', '*.bw'")
     parser.add_argument('--chrom_param_file', type=str, default=None, help="(Optional) Path to CSV param_file OR use `hg38`/`mm10` for human/mouse default parameters. If left unspecified, the 'constant_'/filler parameters are used for all chromosomes.")
     parser.add_argument('--skip_chroms', nargs='+', type=str, default=[], help="Skip these chromosomes")
+    parser.add_argument('--male_samples', nargs='+', type=str, default=[], help="If specified, peak calling over chrY is restricted to these samples. Otherwise, all samples are used.")
     parser.add_argument('--genome_file', type=str, help="Genome sizes file. A tab-separated file of the genome's chromosomes and their respective sizes measured in base pairs, e.g., `https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.chrom.sizes`")
     parser.add_argument('--sample_weights', nargs='+', type=float, default=None, help="Weights for each sample. Generally, `--sample_weights` should not be used unless `--raw_counts` is invoked to avoid contradicting normalization methods.")
     parser.add_argument('--pr_bed', type=str, help="BED file of blacklisted/problematic regions to exclude from peak annotation", default=None)
     parser.add_argument('--proc_num', '-p', default=max(multiprocessing.cpu_count()-1,1), type=int,
                         help='Number of processes to run simultaneously when generating coverage signals from BAM files')
-    parser.add_argument('--constant_budget', default=0.035, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables")
-    parser.add_argument('--constant_gamma', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables")
-    parser.add_argument('--constant_tau', default=0.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables")
-    parser.add_argument('--constant_c_1', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables")
-    parser.add_argument('--constant_c_2', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables")
-    parser.add_argument('--constant_c_3', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables")
+    parser.add_argument('--constant_budget', default=0.035, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file` is not specified, `constant_budget` is used for all chromosomes.")
+    parser.add_argument('--constant_gamma', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file` is not specified, `constant_gamma` is used for all chromosomes.")
+    parser.add_argument('--constant_tau', default=0.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file` is not specified, `constant_tau` is used for all chromosomes.")
+    parser.add_argument('--constant_c_1', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file` is not specified, `constant_c_1` is used for all chromosomes.")
+    parser.add_argument('--constant_c_2', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file` is not specified, `constant_c_2` is used for all chromosomes.")
+    parser.add_argument('--constant_c_3', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file` is not specified, `constant_c_3` is used for all chromosomes.")
     parser.add_argument('--step', default=50, type=int, help='step size in coverage signal tracks. This argument is overwritten and inferred from the intervals if BigWig input is supplied')
     parser.add_argument('--rand_iter', '-N', type=int, default=100, help = 'Number of RR iterations')
     parser.add_argument('--solver', default='CLARABEL', type=str, help='Optimization software used to solve the relaxation')
@@ -1136,6 +1159,7 @@ def main():
 
     rocco_obj = Rocco(input_files=args['input_files'],
           genome_file=args['genome_file'],
+          male_samples=args['male_samples'],
           chrom_param_file=args['chrom_param_file'],
           skip_chroms=args['skip_chroms'],
           proc_num=args['proc_num'],
