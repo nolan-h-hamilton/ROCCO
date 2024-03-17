@@ -29,6 +29,12 @@ If using ROCCO in your research, please cite the `original paper <https://doi.or
 **DOI**: `10.1093/bioinformatics/btad725 <https://doi.org/10.1093/bioinformatics/btad725>`_
 
 
+Demo
+================
+
+A brief `demonstration <https://github.com/nolan-h-hamilton/ROCCO/tree/main/docs/demo/demo.ipynb>`_ of ROCCO using ENCODE ATAC-seq data is available as a Jupyter notebook.
+
+
 Installation
 ===============
 
@@ -226,11 +232,11 @@ Miscellaneous
 
 * **Peak Scores** Run with ``--plot_hist`` to generate a histogram of peak scores that may be useful if tuning the ``--peak_score_filter`` argument.
 
-* **Memory Use** If RAM is a special consideration, you can try increasing `--step` from its default of `50` to, e.g., `100` and/or using a lightweight solver for the optimization, e.g., `pip` install `ortools` and run ROCCO with `--solver PDLP`
+* **Memory Use** If RAM is a special consideration, you can try increasing `--step` from its default of `50` to, e.g., `100` and/or using a lightweight solver for the optimization, e.g., a first-order method such as `PDLP`.
 
 * **Dependencies** Ensure `samtools <https://samtools.github.io>`_ and `bedtools <https://bedtools.readthedocs.io/en/latest/>`_ are installed and in your PATH. These tools are utilized for several auxiliary features.
 
-* **Small Sample Sizes** In general, ROCCO offers its greatest advantage in experiments involving large sample sizes (e.g., :math:`K \geq 10`). It is difficult to prescribe a minimum sample size as results will depend on various experimental factors (e.g., parity in sequencing depth), but we note ROCCO has performed well in several instances with as few as 3-5 samples. To ensure peak quality in such cases, consider decreasing the budget. See below for reference.
+* **Small Sample Sizes** In general, ROCCO offers its greatest advantage in analyses involving large sample sizes (e.g., :math:`K \geq 10`). It is difficult to prescribe a minimum sample size as results will depend on various experiment-specific factors (e.g., parity in sequencing depth), but we note ROCCO has performed well in several instances with as few as 3-5 samples. To ensure peak quality in such cases, consider decreasing the budget. See below for reference.
 
 .. image:: ../docs/rocco_k5.png
   :width: 600
@@ -894,8 +900,6 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             if is_feas and score < best_score:
                 rr_sol = ell_rand_n
                 best_score = score
-        print(np.sum(np.abs(rr_sol - lp_sol)))
-        print(len(lp_sol))
         return rr_sol
 
 

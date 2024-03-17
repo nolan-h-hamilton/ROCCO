@@ -36,23 +36,33 @@ Documentation and example usage are available at https://nolan-h-hamilton.github
    pip install rocco
    ```
 
+# Demo
+
+https://github.com/nolan-h-hamilton/ROCCO/tree/main/docs/demo/demo.ipynb
+
 # Input
-ROCCO accepts **BAM** alignments or **BigWig** coverage tracks and a genome sizes file as input. ROCCO has been tested primarily using ATAC-seq data but may be suitable for DNase-seq experiments as well.
+ROCCO requires **BAM** alignments or **BigWig** coverage tracks and a genome sizes file as input.
+
+   ```
+   rocco -i sample1.bam sample2.bam sample3.bam [...] --genome_file hg38.sizes --chrom_param_file hg38
+   ```
+
+or with a wildcard:
+
+   ```
+   rocco -i *.bam --genome_file hg38.sizes --chrom_param_file hg38
+   ```
+
+BigWig input:
+
+   ```
+   rocco -i *.bw --genome_file hg38.sizes --chrom_param_file hg38
+   ```
 
 # Output
 
 A **BED** file containing peak regions and scores.
 
-# Minimal Example
-
-Run ROCCO on the test data included with this repository (BigWig files).
-
-   ```
-   rocco -i tests/data/*.bw --genome_file tests/test_hg38.sizes
-   ```
-
-Default output BED file named as `rocco_peaks_[timestamp].bed`. Because no `--chrom_param_file` is supplied,
-the default genome-wide budget (`0.035`), gamma (`1.0`), etc. are used for all chromosomes. See the [Documentation](https://nolan-h-hamilton.github.io/ROCCO/) for additional examples and details.
 
 # Testing ROCCO
 
