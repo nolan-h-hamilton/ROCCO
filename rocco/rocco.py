@@ -361,6 +361,7 @@ class Sample:
         self.raw_counts = kwargs.get('raw_counts', False)
         self.norm_ignore_chroms = kwargs.get('norm_ignore_chroms', ['chrM', 'chrX', 'chrY'])
         self.effective_genome_size = kwargs.get('--effective_genome_size', 2.7e9)
+        self.curr_time = kwargs.get('curr_time', datetime.now().strftime('%m%d%Y_%H%M%S'))
         self.sam_flag_include = kwargs.get('sam_flag_include', 67)
         self.sam_flag_exclude = kwargs.get('sam_flag_exclude', 1284)
         self.weight = kwargs.get('weight', 1.0)
@@ -428,9 +429,10 @@ class Sample:
         """
         
         if bamcov_cmd is None:
+            bw_fname = f"{file_basename(self.input_file)}_{self.curr_time}.bw"
             bamcov_cmd = ['bamCoverage', '--bam', self.input_file,
                     '--binSize', str(self.step),
-                    '-o', f"{self.input_file + '.bw'}",
+                    '-o', bw_fname,
                     '-p', str(self.proc_num), '--samFlagInclude', str(self.sam_flag_include), '--samFlagExclude', str(self.sam_flag_exclude)]
             if self.norm_method and not self.raw_counts:
                 bamcov_cmd.extend(['--normalizeUsing', self.norm_method])
@@ -446,7 +448,7 @@ class Sample:
         except:
             logging.info(f"{bamcov_cmd} failed. Ensure input is a sorted/indexed BAM file and that deepTools is installed.")
             raise
-        return f"{self.input_file + '.bw'}"
+        return bw_fname
 
 
     def get_chrom_data(self, chromosome):
@@ -695,7 +697,8 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
                                   effective_genome_size=self.effective_genome_size,
                                   sam_flag_include=self.sam_flag_include,
                                   sam_flag_exclude=self.sam_flag_exclude,
-                                  raw_counts=self.raw_counts))
+                                  raw_counts=self.raw_counts,
+                                  curr_time=self.curr_time))
         self.samples = samples
         self.step = self.samples[0].step
         self.outfile = kwargs.get('outfile', f"rocco_peaks_{self.curr_time}.bed")
