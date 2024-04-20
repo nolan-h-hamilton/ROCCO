@@ -3,7 +3,7 @@
 <p align="center">
 <img width="400" alt="logo" src="docs/logo.png">
 
-ROCCO is a scalable consensus peak calling algorithm for open chromatin count signals in large sample sizes.
+ROCCO is an optimal consensus peak calling algorithm for open chromatin data that is scalable to large sample sizes.
 
 **Features**
 
@@ -24,7 +24,7 @@ If using ROCCO in your research, please cite the [original paper](https://doi.or
     Bioinformatics, Volume 39, Issue 12, December 2023
    ```
 
-**DOI**: ``10.1093/bioinformatics/btad725``
+**DOI**: [10.1093/bioinformatics/btad725](`10.1093/bioinformatics/btad725`)
 
 # Documentation
 
@@ -41,23 +41,19 @@ Documentation and example usage are available at https://nolan-h-hamilton.github
 https://github.com/nolan-h-hamilton/ROCCO/tree/main/docs/demo/demo.ipynb
 
 # Input
-ROCCO requires **BAM** alignments or **BigWig** coverage tracks and a genome sizes file as input.
+ROCCO accepts **BAM** alignments and a genome sizes file as input.
 
    ```
-   rocco -i sample1.bam sample2.bam sample3.bam [...] --genome_file hg38.sizes --chrom_param_file hg38
+   rocco -i sample1.bam sample2.bam sample3.bam [...] -g hg38.sizes --params hg38
    ```
 
 or with a wildcard:
 
    ```
-   rocco -i *.bam --genome_file hg38.sizes --chrom_param_file hg38
+   rocco -i *.bam -g hg38.sizes --params hg38
    ```
 
-BigWig input:
-
-   ```
-   rocco -i *.bw --genome_file hg38.sizes --chrom_param_file hg38
-   ```
+See `rocco --help` for more details.
 
 # Output
 

@@ -8,7 +8,7 @@ ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
   :align: center
   :alt: logo
 
-Underlying ROCCO is a :ref:`constrained optimization problem <problem>` with solutions dictating accessible chromatin regions consistent across multiple samples.
+Underlying ROCCO is a :ref:`constrained optimization problem <problem>` with solutions dictating accessible chromatin regions that are consistent across multiple samples.
 
 
 GitHub (Homepage)
@@ -174,20 +174,20 @@ Example One
 
 .. code-block:: text
 
-    rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam --genome_file genome.sizes --chrom_param_file hg38 
+    rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g genome.sizes --params hg38 
 
 ROCCO will also accept wildcard/regex filename patterns:
 
 .. code-block:: text
 
-    rocco -i *.bam --genome_file genome.sizes --chrom_param_file hg38 --step 100
+    rocco -i *.bam -g genome.sizes --params hg38
 
 Example Two
 ^^^^^^^^^^^^^^^^
 
 .. code-block:: text
 
-    rocco -i *.bw --genome_file genome.sizes --chrom_param_file hg38
+    rocco -i *.bw -g genome.sizes --params hg38
 
 
 Example Three
@@ -197,21 +197,21 @@ Explicitly list the input files and weights to ensure the correct mapping of wei
 
 .. code-block:: text
 
-    rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam --genome_file genome.sizes --chrom_param_file hg38 --sample_weights 0.50 1.0 1.0 1.0 0.75
+    rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g genome.sizes --params hg38 --sample_weights 0.50 1.0 1.0 1.0 0.75
 
 Example Four
 ^^^^^^^^^^^^^^^^^
 
 .. code-block:: text
 
-    rocco -i *.bam --genome_file genome.sizes --chrom_param_file custom_params.csv
+    rocco -i *.bam -g genome.sizes --params custom_params.csv
 
 Example Five
 ^^^^^^^^^^^^^^^^^^
 
 .. code-block:: text
 
-    rocco -i *.bam --genome_file genome.sizes --constant_budget 0.035 --constant_gamma 1.0 --constant_tau 0.0
+    rocco -i *.bam -g genome.sizes --budget 0.035 --gamma 1.0 --tau 0.0
 
 
 Testing ROCCO
@@ -228,20 +228,13 @@ Run PyTest unit tests
 Miscellaneous
 ======================
 
-* **Parameter Tuning** Default parameters generally provide strong results, but users may alter these using a custom ``--chrom_param_file`` (e.g., `hg38_template.csv <https://github.com/nolan-h-hamilton/ROCCO/blob/5cf7ab7ef8016426055e9b7531bc9dde5c091a88/docs/hg38_template.csv>`_.) or by modifying the ``--constant_budget``, ``--constant_gamma``, etc. arguments if wishing to use consistent parameters for all chromosomes.
+* **Parameter Tuning** Default parameters generally provide strong results, but users may alter these using a custom ``--params`` (e.g., `hg38_template.csv <https://github.com/nolan-h-hamilton/ROCCO/blob/5cf7ab7ef8016426055e9b7531bc9dde5c091a88/docs/hg38_template.csv>`_.) or by modifying the ``--budget/--constant_budget``, ``--gamma/--constant_gamma``, etc. arguments if wishing to use consistent parameters for all chromosomes.
 
 * **Peak Scores** Run with ``--plot_hist`` to generate a histogram of peak scores that may be useful if tuning the ``--peak_score_filter`` argument.
 
-* **Memory Use** If RAM is a special consideration, you can try increasing `--step` from its default of `50` to, e.g., `100` and/or using a lightweight solver for the optimization, e.g., a first-order method such as `PDLP`.
+* **Memory Use** If RAM is a special consideration, you can try increasing `--step` from its default of `50` to, e.g., `100` and/or using a lightweight solver for the optimization, e.g., a first-order method such as `PDLP`. Note that if using BigWig files as input, `--step` has no effect as the step size is inferred from the data. 
 
 * **Dependencies** Ensure `samtools <https://samtools.github.io>`_ and `bedtools <https://bedtools.readthedocs.io/en/latest/>`_ are installed and in your PATH. These tools are utilized for several auxiliary features.
-
-* **Small Sample Sizes** In general, ROCCO offers its greatest advantage in analyses involving large sample sizes (e.g., :math:`K \geq 10`). It is difficult to prescribe a minimum sample size as results will depend on various experiment-specific factors (e.g., parity in sequencing depth), but we note ROCCO has performed well in several instances with as few as 3-5 samples. To ensure peak quality in such cases, consider decreasing the budget. See below for reference.
-
-.. image:: ../docs/rocco_k5.png
-  :width: 600
-  :align: center
-  :alt: small_sample_size
 
 
 To-Do Items
@@ -516,9 +509,9 @@ class Rocco:
     :param genome_file: Path to the genome sizes file containing chromosome sizes
     :type genome_file: str
     :param chrom_param_file: Path to the chromosome parameter file
+    :type chrom_param_file: str
     :param male_samples: If specified, peak calling over chrY is restricted to these samples. Otherwise, all samples are used for all chromosomes.
     :type male_samples: list, optional
-    :type chrom_param_file: str
     :param skip_chroms: List of chromosomes to skip
     :type skip_chroms: list, optional
     :param proc_num: Number of processes to use when computing chromosome-specific coverage tracks
@@ -1114,33 +1107,34 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 def main():
     parser = argparse.ArgumentParser(description="ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization", add_help=True)
     parser.add_argument('--input_files', '-i', nargs='+', type=str, help="Samples' corresponding BAM or BigWig files. Accepts wildcard values, e.g., '*.bam', '*.bw'")
-    parser.add_argument('--chrom_param_file', type=str, default=None, help="(Optional) Path to CSV param_file OR use `hg38`/`mm10` for human/mouse default parameters. If left unspecified, the 'constant_'/filler parameters are used for all chromosomes.")
+    parser.add_argument('--chrom_param_file', '--params', '-f', type=str, default=None, help="(Optional) Path to CSV param_file OR use `hg38`/`mm10` for human/mouse default parameters. If left unspecified, the 'constant_'/filler parameters are used for all chromosomes.")
+    
     parser.add_argument('--skip_chroms', nargs='+', type=str, default=[], help="Skip these chromosomes")
     parser.add_argument('--male_samples', nargs='+', type=str, default=[], help="If specified, peak calling over chrY is restricted to these samples. Otherwise, all samples are used.")
-    parser.add_argument('--genome_file', type=str, help="Genome sizes file. A tab-separated file of the genome's chromosomes and their respective sizes measured in base pairs, e.g., `https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.chrom.sizes`")
+    parser.add_argument('--genome_file', '-g', type=str, help="Genome sizes file. A tab-separated file of the genome's chromosomes and their respective sizes measured in base pairs, e.g., `https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.chrom.sizes`")
     parser.add_argument('--sample_weights', nargs='+', type=float, default=None, help="Weights for each sample. Generally, `--sample_weights` should not be used unless `--raw_counts` is invoked to avoid contradicting normalization methods.")
-    parser.add_argument('--pr_bed', type=str, help="BED file of blacklisted/problematic regions to exclude from peak annotation", default=None)
-    parser.add_argument('--proc_num', '-p', default=max(multiprocessing.cpu_count()-1,1), type=int,
+    parser.add_argument('--pr_bed', '--blacklist', type=str, help="BED file of blacklisted/problematic regions to exclude from peak annotation", default=None)
+    parser.add_argument('--proc_num', '-p', default=max(multiprocessing.cpu_count()-2,1), type=int,
                         help='Number of processes to run simultaneously when generating coverage signals from BAM files')
-    parser.add_argument('--constant_budget', default=0.035, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file` is not specified, `constant_budget` is used for all chromosomes.")
-    parser.add_argument('--constant_gamma', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file` is not specified, `constant_gamma` is used for all chromosomes.")
-    parser.add_argument('--constant_tau', default=0.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file` is not specified, `constant_tau` is used for all chromosomes.")
-    parser.add_argument('--constant_c_1', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file` is not specified, `constant_c_1` is used for all chromosomes.")
-    parser.add_argument('--constant_c_2', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file` is not specified, `constant_c_2` is used for all chromosomes.")
-    parser.add_argument('--constant_c_3', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file` is not specified, `constant_c_3` is used for all chromosomes.")
-    parser.add_argument('--step', default=50, type=int, help='step size in coverage signal tracks. This argument is overwritten and inferred from the intervals if BigWig input is supplied')
+    parser.add_argument('--constant_budget','--budget', default=0.035, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file/--params` is not specified, `constant_budget` is used for all chromosomes.")
+    parser.add_argument('--constant_gamma', '--gamma', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file/--params` is not specified, `constant_gamma` is used for all chromosomes.")
+    parser.add_argument('--constant_tau', '--tau', default=0.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file/--params` is not specified, `constant_tau` is used for all chromosomes.")
+    parser.add_argument('--constant_c_1', '--c_1', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file/--params` is not specified, `constant_c_1` is used for all chromosomes.")
+    parser.add_argument('--constant_c_2', '--c_2', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file/--params` is not specified, `constant_c_2` is used for all chromosomes.")
+    parser.add_argument('--constant_c_3','--c_3', default=1.0, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file/--params` is not specified, `constant_c_3` is used for all chromosomes.")
+    parser.add_argument('--step', default=50, type=int, help='step size in coverage signal tracks. This argument is overwritten and inferred from the intervals if BigWig input is supplied.')
     parser.add_argument('--rand_iter', '-N', type=int, default=100, help = 'Number of RR iterations')
     parser.add_argument('--solver', default='CLARABEL', type=str, help='Optimization software used to solve the relaxation')
-    parser.add_argument('--solver_maxiter', default=10000, type=int, help='Maximum number of solver iterations')
-    parser.add_argument('--solver_reltol', default=1e-8, type=float, help='Maximum allowed relative optimality gap when solving the relaxation')
-    parser.add_argument('--solver_feastol', default=1e-8, type=float, help='Maximum allowed feasibility gap when solving the relaxation')
-    parser.add_argument('--solver_abstol', default=1e-8, type=float, help='Maximum allowed absolute optimality gap when solving the relaxation')
-    parser.add_argument('--peak_score_filter', default = 0.0, type=float, help='Only include peaks in the final annotation with peak scores above `--peak_score_filter`')
+    parser.add_argument('--solver_maxiter','--maxiter', default=10000, type=int, help='Maximum number of solver iterations')
+    parser.add_argument('--solver_reltol', '--reltol', default=1e-8, type=float, help='Maximum allowed relative optimality gap when solving the relaxation')
+    parser.add_argument('--solver_feastol', '--feastol', default=1e-8, type=float, help='Maximum allowed feasibility gap when solving the relaxation')
+    parser.add_argument('--solver_abstol', '--abstol', default=1e-8, type=float, help='Maximum allowed absolute optimality gap when solving the relaxation')
+    parser.add_argument('--peak_score_filter', '--minscore', default = 0.0, type=float, help='Only include peaks in the final annotation with peak scores above `--peak_score_filter`')
     parser.add_argument('--plot_hist', action='store_true', help="If `True` save a plotted histogram of peak scores")
-    parser.add_argument('--norm_method', default='RPKM', type=str, help="use CPM, BPM, RPKM, or RPGC (see documentation for `deeptools`'s `bamCoverage` tool) to normalize each sample's coverage track independently. Ignored if `--raw_counts` is invoked.")
+    parser.add_argument('--norm_method', '--norm', default='RPKM', type=str, help="use CPM, BPM, RPKM, or RPGC (see documentation for `deeptools`'s `bamCoverage` tool) to normalize each sample's coverage track independently. Ignored if `--raw_counts` is invoked.")
     parser.add_argument('--norm_ignore_chroms', nargs='+', type=str, default=['chrM', 'chrX', 'chrY'], help="Chromosomes to ignore when normalizing samples' coverage tracks with `--norm_method`")
     parser.add_argument('--raw_counts', action='store_true', help="If ``True``, ``--norm_method`` is ignored and no normalization is performed when computing the coverage tracks from the samples BAM files.")
-    parser.add_argument('--effective_genome_size', default=2.7e9, help="Effective genome size. Only used if `--norm_method RPGC` normalization: see documentation for `deeptools`'s `bamCoverage` tool for more details.")
+    parser.add_argument('--effective_genome_size', default=2.8e9, help="Effective genome size. Only used if `--norm_method RPGC` normalization: see documentation for `deeptools`'s `bamCoverage` tool for more details.")
     parser.add_argument('--sam_flag_include', default=67, type=int, help="When computing coverage tracks on BAM input, include reads with these SAM flags")
     parser.add_argument('--sam_flag_exclude', default=1284, type=int, help="When computing coverage tracks on BAM input, exclude reads with these SAM flags")
     parser.add_argument('--outfile', '-o',
