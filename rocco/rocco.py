@@ -26,7 +26,7 @@ If using ROCCO in your research, please cite the `original paper <https://doi.or
     Nolan H Hamilton, Terrence S Furey, ROCCO: a robust method for detection of open chromatin via convex optimization,
     Bioinformatics, Volume 39, Issue 12, December 2023
 
-**DOI**: `10.1093/bioinformatics/btad725 <https://doi.org/10.1093/bioinformatics/btad725>`_
+**DOI**: `10.1093/bioinformatics/btad725`
 
 
 Demo
@@ -354,11 +354,12 @@ class Sample:
         self.raw_counts = kwargs.get('raw_counts', False)
         self.norm_ignore_chroms = kwargs.get('norm_ignore_chroms', ['chrM', 'chrX', 'chrY'])
         self.effective_genome_size = kwargs.get('--effective_genome_size', 2.7e9)
-        self.curr_time = kwargs.get('curr_time', datetime.now().strftime('%m%d%Y_%H%M%S'))
+        self.curr_time = kwargs.get('curr_time', datetime.now().strftime('%m%d%Y_%H%M%S_%f')[:-2])
         self.sam_flag_include = kwargs.get('sam_flag_include', 67)
         self.sam_flag_exclude = kwargs.get('sam_flag_exclude', 1284)
         self.weight = kwargs.get('weight', 1.0)
         self.skip_chroms = kwargs.get('skip_chroms', [])
+        self.generated_bw = None
         genome_chrom_sizes_dict = get_chroms_and_sizes(self.genome_file)
         self.chroms = kwargs.get('chroms', [x for x in genome_chrom_sizes_dict.keys() if x not in self.skip_chroms])
         self.chrom_sizes_dict = {}
@@ -379,6 +380,7 @@ class Sample:
                 pysam.index(self.input_file)
 
             self.bigwig = self.bam_to_bigwig(bamcov_cmd=self.bamcov_cmd, additional_args=self.bamcov_extra_args)
+            self.generated_bw = self.bigwig
             
         elif self.get_input_type() == 'bw':
             self.bigwig = self.input_file
@@ -467,14 +469,9 @@ class Sample:
             idx += 1
         loci = np.array(loci[first_nonzero:])
         vals = self.weight * np.array(vals[first_nonzero:])
-        # Step sizes larger than the 'correct' step size are common in bigwig files
-        # generated with popular tools from BAM files as a result of compression.
-        # Step sizes smaller than the correct step size should be much less common,
-        # so, `min()`. Ideally, the BigWig file will explicitly list each interval
-        # so that this issue is avoided altogether. 
         step = min([x for x in np.diff(loci[np.nonzero(loci)]) if x > 0])
         if step != self.step:
-            warnings.warn(f"Step size inferred from BigWig file ({step}) doesn't match `self.step`. Resetting `self.step=step`.")
+            warnings.warn(f"Step size in BigWig file {self.bigwig} is not uniform or doesn't match `self.step`. Trying with the step size inferred from data...")
             self.step = step
         gap_indices = np.where(np.diff(loci) > step)[0]
         new_loci = []
@@ -548,7 +545,7 @@ class Rocco:
     def __init__(self, input_files, genome_file, chrom_param_file=None, **kwargs):
         logging.basicConfig(level=logging.INFO, format='LOG: %(asctime)s - %(message)s')
         self.logger = logging.getLogger(__name__)
-        self.curr_time = datetime.now().strftime('%m%d%Y_%H%M%S')
+        self.curr_time = datetime.now().strftime('%m%d%Y_%H%M%S_%f')[:-2]
         self.HG38_PARAMS =\
 """chrom,budget,gamma,tau,c_1,c_2,c_3
 chr1,0.03,1.0,0,1.0,1.0,1.0
@@ -625,6 +622,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         self.filler_params = kwargs.get('filler_params',
                                         {'budget':0.035, 'gamma':1.0, 'tau':0.0, 'c_1':1.0, 'c_2':1.0, 'c_3':1.0})
         self.norm_method = kwargs.get('norm_method', 'RPKM')
+        self.save_bigwigs = kwargs.get('save_bigwigs', False)
         self.norm_ignore_chroms = kwargs.get('norm_ignore_chroms', ['chrM'])
         self.effective_genome_size = kwargs.get('--effective_genome_size', 2.7e9)
         self.sam_flag_include = kwargs.get('sam_flag_include', 67)
@@ -741,12 +739,20 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             samples_loci.append(list(loci))
             samples_vals.append(list(vals))
         common_loci = sorted([x for x in set.intersection(*map(set,samples_loci))])
+        start_locus = common_loci[0]
+        end_locus = common_loci[-1]
+        logging.info(f"Reads cover {chromosome}:{start_locus}-{end_locus}")
+        common_loci = np.arange(start_locus, end_locus+self.step, self.step)
         Smat = np.zeros(shape=(len(samples),len(common_loci)))
         for j,samp in enumerate(samples):
             logging.info(f"Constructing Smat: ({j+1}/{len(samples)})")
             samp_chrom_dict = dict(zip(samples_loci[j],samples_vals[j]))
             for i,loc in enumerate(common_loci):
-                Smat[j][i] = samp_chrom_dict[loc]
+                try:
+                    Smat[j][i] = samp_chrom_dict[loc]
+                except KeyError:
+                    logging.info(f'KeyError: {loc} not in sample {j}')
+                    Smat[j][i] = 0
         return common_loci, Smat
 
 
@@ -1103,6 +1109,11 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
         if not self.keep_chrom_bedfiles:
             self.delete_tempfiles()
+            
+        for sample_obj in self.samples:
+            if not self.save_bigwigs and sample_obj.generated_bw is not None and os.path.exists(sample_obj.generated_bw):
+                logging.info(f"Removing {sample_obj.generated_bw}")
+                os.remove(sample_obj.generated_bw)
 
 def main():
     parser = argparse.ArgumentParser(description="ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization", add_help=True)
@@ -1134,11 +1145,12 @@ def main():
     parser.add_argument('--norm_method', '--norm', default='RPKM', type=str, help="use CPM, BPM, RPKM, or RPGC (see documentation for `deeptools`'s `bamCoverage` tool) to normalize each sample's coverage track independently. Ignored if `--raw_counts` is invoked.")
     parser.add_argument('--norm_ignore_chroms', nargs='+', type=str, default=['chrM', 'chrX', 'chrY'], help="Chromosomes to ignore when normalizing samples' coverage tracks with `--norm_method`")
     parser.add_argument('--raw_counts', action='store_true', help="If ``True``, ``--norm_method`` is ignored and no normalization is performed when computing the coverage tracks from the samples BAM files.")
-    parser.add_argument('--effective_genome_size', default=2.8e9, help="Effective genome size. Only used if `--norm_method RPGC` normalization: see documentation for `deeptools`'s `bamCoverage` tool for more details.")
+    parser.add_argument('--effective_genome_size', default=2.7e9, help="Effective genome size. Only used if `--norm_method RPGC` normalization: see documentation for `deeptools`'s `bamCoverage` tool for more details.")
     parser.add_argument('--sam_flag_include', default=67, type=int, help="When computing coverage tracks on BAM input, include reads with these SAM flags")
     parser.add_argument('--sam_flag_exclude', default=1284, type=int, help="When computing coverage tracks on BAM input, exclude reads with these SAM flags")
+    parser.add_argument('--save_bigwigs', '--save_tracks', action='store_true', help="If `True`, save samples' coverage tracks as BigWig files")
     parser.add_argument('--outfile', '-o',
-                        default=f"rocco_peaks_{datetime.now().strftime('%m%d%Y_%H%M%S')}.bed",
+                        default=f"rocco_peaks_{datetime.now().strftime('%m%d%Y_%H%M%S_%f')[:-2]}.bed",
                         help='Name of output peak/BED file')
     parser.add_argument('--verbose_solving', action='store_true', default=False)
     args = vars(parser.parse_args())
@@ -1182,7 +1194,8 @@ def main():
           norm_ignore_chroms=args['norm_ignore_chroms'],
           effective_genome_size=args['effective_genome_size'],
           sam_flag_include=args['sam_flag_include'],
-          sam_flag_exclude=args['sam_flag_exclude'])
+          sam_flag_exclude=args['sam_flag_exclude'],
+          save_bigwigs=args['save_bigwigs'])
     logging.info(rocco_obj)
     rocco_obj.run()
 
