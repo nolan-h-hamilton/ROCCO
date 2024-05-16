@@ -469,14 +469,9 @@ class Sample:
             idx += 1
         loci = np.array(loci[first_nonzero:])
         vals = self.weight * np.array(vals[first_nonzero:])
-        # Step sizes larger than the 'correct' step size are common in bigwig files
-        # generated with popular tools from BAM files as a result of compression.
-        # Step sizes smaller than the correct step size should be much less common,
-        # so, `min()`. Ideally, the BigWig file will explicitly list each interval
-        # so that this issue is avoided altogether. 
         step = min([x for x in np.diff(loci[np.nonzero(loci)]) if x > 0])
         if step != self.step:
-            warnings.warn(f"Step size inferred from BigWig file ({step}) doesn't match `self.step`. Resetting `self.step=step`.")
+            warnings.warn(f"Step size in BigWig file {self.bigwig} is not uniform or doesn't match `self.step`. Trying with the step size inferred from data...")
             self.step = step
         gap_indices = np.where(np.diff(loci) > step)[0]
         new_loci = []
@@ -756,6 +751,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
                 try:
                     Smat[j][i] = samp_chrom_dict[loc]
                 except KeyError:
+                    logging.info(f'KeyError: {loc} not in sample {j}')
                     Smat[j][i] = 0
         return common_loci, Smat
 
