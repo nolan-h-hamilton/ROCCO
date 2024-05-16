@@ -1142,12 +1142,12 @@ def main():
     parser.add_argument('--norm_method', '--norm', default='RPKM', type=str, help="use CPM, BPM, RPKM, or RPGC (see documentation for `deeptools`'s `bamCoverage` tool) to normalize each sample's coverage track independently. Ignored if `--raw_counts` is invoked.")
     parser.add_argument('--norm_ignore_chroms', nargs='+', type=str, default=['chrM', 'chrX', 'chrY'], help="Chromosomes to ignore when normalizing samples' coverage tracks with `--norm_method`")
     parser.add_argument('--raw_counts', action='store_true', help="If ``True``, ``--norm_method`` is ignored and no normalization is performed when computing the coverage tracks from the samples BAM files.")
-    parser.add_argument('--effective_genome_size', default=2.8e9, help="Effective genome size. Only used if `--norm_method RPGC` normalization: see documentation for `deeptools`'s `bamCoverage` tool for more details.")
+    parser.add_argument('--effective_genome_size', default=2.7e9, help="Effective genome size. Only used if `--norm_method RPGC` normalization: see documentation for `deeptools`'s `bamCoverage` tool for more details.")
     parser.add_argument('--sam_flag_include', default=67, type=int, help="When computing coverage tracks on BAM input, include reads with these SAM flags")
     parser.add_argument('--sam_flag_exclude', default=1284, type=int, help="When computing coverage tracks on BAM input, exclude reads with these SAM flags")
     parser.add_argument('--save_bigwigs', '--save_tracks', action='store_true', help="If `True`, save samples' coverage tracks as BigWig files")
     parser.add_argument('--outfile', '-o',
-                        default=f"rocco_peaks_{datetime.now().strftime('%m%d%Y_%H%M%S')}.bed",
+                        default=f"rocco_peaks_{datetime.now().strftime('%m%d%Y_%H%M%S_%f')[:-2]}.bed",
                         help='Name of output peak/BED file')
     parser.add_argument('--verbose_solving', action='store_true', default=False)
     args = vars(parser.parse_args())
