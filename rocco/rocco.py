@@ -744,12 +744,19 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             samples_loci.append(list(loci))
             samples_vals.append(list(vals))
         common_loci = sorted([x for x in set.intersection(*map(set,samples_loci))])
+        start_locus = common_loci[0]
+        end_locus = common_loci[-1]
+        logging.info(f"Reads cover {chromosome}:{start_locus}-{end_locus}")
+        common_loci = np.arange(start_locus, end_locus+self.step, self.step)
         Smat = np.zeros(shape=(len(samples),len(common_loci)))
         for j,samp in enumerate(samples):
             logging.info(f"Constructing Smat: ({j+1}/{len(samples)})")
             samp_chrom_dict = dict(zip(samples_loci[j],samples_vals[j]))
             for i,loc in enumerate(common_loci):
-                Smat[j][i] = samp_chrom_dict[loc]
+                try:
+                    Smat[j][i] = samp_chrom_dict[loc]
+                except KeyError:
+                    Smat[j][i] = 0
         return common_loci, Smat
 
 
@@ -1108,9 +1115,9 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             self.delete_tempfiles()
             
         for sample_obj in self.samples:
-            if not sample_obj.save_bigwig and sample_obj.generated_bw is not None and os.path.exists(sample_obj.generated_bw):
+            if not self.save_bigwigs and sample_obj.generated_bw is not None and os.path.exists(sample_obj.generated_bw):
                 logging.info(f"Removing {sample_obj.generated_bw}")
-                os.path.remove(sample_obj.generated_bw)
+                os.remove(sample_obj.generated_bw)
 
 def main():
     parser = argparse.ArgumentParser(description="ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization", add_help=True)
