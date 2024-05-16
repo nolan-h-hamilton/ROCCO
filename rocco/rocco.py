@@ -1145,6 +1145,7 @@ def main():
     parser.add_argument('--effective_genome_size', default=2.8e9, help="Effective genome size. Only used if `--norm_method RPGC` normalization: see documentation for `deeptools`'s `bamCoverage` tool for more details.")
     parser.add_argument('--sam_flag_include', default=67, type=int, help="When computing coverage tracks on BAM input, include reads with these SAM flags")
     parser.add_argument('--sam_flag_exclude', default=1284, type=int, help="When computing coverage tracks on BAM input, exclude reads with these SAM flags")
+    parser.add_argument('--save_bigwigs', '--save_tracks', action='store_true', help="If `True`, save samples' coverage tracks as BigWig files")
     parser.add_argument('--outfile', '-o',
                         default=f"rocco_peaks_{datetime.now().strftime('%m%d%Y_%H%M%S')}.bed",
                         help='Name of output peak/BED file')
@@ -1190,7 +1191,8 @@ def main():
           norm_ignore_chroms=args['norm_ignore_chroms'],
           effective_genome_size=args['effective_genome_size'],
           sam_flag_include=args['sam_flag_include'],
-          sam_flag_exclude=args['sam_flag_exclude'])
+          sam_flag_exclude=args['sam_flag_exclude'],
+          save_bigwigs=args['save_bigwigs'])
     logging.info(rocco_obj)
     rocco_obj.run()
 
