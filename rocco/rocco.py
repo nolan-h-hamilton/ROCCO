@@ -26,7 +26,7 @@ If using ROCCO in your research, please cite the `original paper <https://doi.or
     Nolan H Hamilton, Terrence S Furey, ROCCO: a robust method for detection of open chromatin via convex optimization,
     Bioinformatics, Volume 39, Issue 12, December 2023
 
-**DOI**: `10.1093/bioinformatics/btad725 <https://doi.org/10.1093/bioinformatics/btad725>`_
+**DOI**: `10.1093/bioinformatics/btad725`
 
 
 Demo
@@ -354,11 +354,12 @@ class Sample:
         self.raw_counts = kwargs.get('raw_counts', False)
         self.norm_ignore_chroms = kwargs.get('norm_ignore_chroms', ['chrM', 'chrX', 'chrY'])
         self.effective_genome_size = kwargs.get('--effective_genome_size', 2.7e9)
-        self.curr_time = kwargs.get('curr_time', datetime.now().strftime('%m%d%Y_%H%M%S'))
+        self.curr_time = kwargs.get('curr_time', datetime.now().strftime('%m%d%Y_%H%M%S_%f')[:-2])
         self.sam_flag_include = kwargs.get('sam_flag_include', 67)
         self.sam_flag_exclude = kwargs.get('sam_flag_exclude', 1284)
         self.weight = kwargs.get('weight', 1.0)
         self.skip_chroms = kwargs.get('skip_chroms', [])
+        self.generated_bw = None
         genome_chrom_sizes_dict = get_chroms_and_sizes(self.genome_file)
         self.chroms = kwargs.get('chroms', [x for x in genome_chrom_sizes_dict.keys() if x not in self.skip_chroms])
         self.chrom_sizes_dict = {}
@@ -379,6 +380,7 @@ class Sample:
                 pysam.index(self.input_file)
 
             self.bigwig = self.bam_to_bigwig(bamcov_cmd=self.bamcov_cmd, additional_args=self.bamcov_extra_args)
+            self.generated_bw = self.bigwig
             
         elif self.get_input_type() == 'bw':
             self.bigwig = self.input_file
@@ -548,7 +550,7 @@ class Rocco:
     def __init__(self, input_files, genome_file, chrom_param_file=None, **kwargs):
         logging.basicConfig(level=logging.INFO, format='LOG: %(asctime)s - %(message)s')
         self.logger = logging.getLogger(__name__)
-        self.curr_time = datetime.now().strftime('%m%d%Y_%H%M%S')
+        self.curr_time = datetime.now().strftime('%m%d%Y_%H%M%S_%f')[:-2]
         self.HG38_PARAMS =\
 """chrom,budget,gamma,tau,c_1,c_2,c_3
 chr1,0.03,1.0,0,1.0,1.0,1.0
@@ -625,6 +627,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         self.filler_params = kwargs.get('filler_params',
                                         {'budget':0.035, 'gamma':1.0, 'tau':0.0, 'c_1':1.0, 'c_2':1.0, 'c_3':1.0})
         self.norm_method = kwargs.get('norm_method', 'RPKM')
+        self.save_bigwigs = kwargs.get('save_bigwigs', False)
         self.norm_ignore_chroms = kwargs.get('norm_ignore_chroms', ['chrM'])
         self.effective_genome_size = kwargs.get('--effective_genome_size', 2.7e9)
         self.sam_flag_include = kwargs.get('sam_flag_include', 67)
@@ -1103,6 +1106,11 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
 
         if not self.keep_chrom_bedfiles:
             self.delete_tempfiles()
+            
+        for sample_obj in self.samples:
+            if not sample_obj.save_bigwig and sample_obj.generated_bw is not None and os.path.exists(sample_obj.generated_bw):
+                logging.info(f"Removing {sample_obj.generated_bw}")
+                os.path.remove(sample_obj.generated_bw)
 
 def main():
     parser = argparse.ArgumentParser(description="ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization", add_help=True)
