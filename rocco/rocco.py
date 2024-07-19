@@ -230,8 +230,6 @@ Miscellaneous
 
 * **Parameter Tuning** Default parameters generally provide strong results, but users may alter these using a custom ``--params`` (e.g., `hg38_template.csv <https://github.com/nolan-h-hamilton/ROCCO/blob/5cf7ab7ef8016426055e9b7531bc9dde5c091a88/docs/hg38_template.csv>`_.) or by modifying the ``--budget/--constant_budget``, ``--gamma/--constant_gamma``, etc. arguments if wishing to use consistent parameters for all chromosomes.
 
-* **Peak Scores** Run with ``--plot_hist`` to generate a histogram of peak scores that may be useful if tuning the ``--peak_score_filter`` argument.
-
 * **Memory Use** If RAM is a special consideration, you can try increasing `--step` from its default of `50` to, e.g., `100` and/or using a lightweight solver for the optimization, e.g., a first-order method such as `PDLP`. Note that if using BigWig files as input, `--step` has no effect as the step size is inferred from the data. 
 
 * **Dependencies** Ensure `samtools <https://samtools.github.io>`_ and `bedtools <https://bedtools.readthedocs.io/en/latest/>`_ are installed and in your PATH. These tools are utilized for several auxiliary features.
@@ -348,15 +346,19 @@ class Sample:
 
         self.proc_num = kwargs.get('proc_num', max(multiprocessing.cpu_count()-1,1))
         self.step = kwargs.get('step', 50)
+        self.step = int(self.step)
         self.bamcov_extra_args = kwargs.get('bamcov_extra_args', None)
         self.bamcov_cmd = kwargs.get('bamcov_cmd', None)
         self.norm_method = kwargs.get('norm_method', 'RPKM')
         self.raw_counts = kwargs.get('raw_counts', False)
         self.norm_ignore_chroms = kwargs.get('norm_ignore_chroms', ['chrM', 'chrX', 'chrY'])
         self.effective_genome_size = kwargs.get('--effective_genome_size', 2.7e9)
+        self.effective_genome_size = int(self.effective_genome_size)
         self.curr_time = kwargs.get('curr_time', datetime.now().strftime('%m%d%Y_%H%M%S_%f')[:-2])
         self.sam_flag_include = kwargs.get('sam_flag_include', 67)
         self.sam_flag_exclude = kwargs.get('sam_flag_exclude', 1284)
+        self.sam_flag_include = int(self.sam_flag_include)
+        self.sam_flag_exclude = int(self.sam_flag_exclude)
         self.weight = kwargs.get('weight', 1.0)
         self.skip_chroms = kwargs.get('skip_chroms', [])
         self.generated_bw = None
@@ -469,7 +471,7 @@ class Sample:
             idx += 1
         loci = np.array(loci[first_nonzero:])
         vals = self.weight * np.array(vals[first_nonzero:])
-        step = min([x for x in np.diff(loci[np.nonzero(loci)]) if x > 0])
+        step = int(min([x for x in np.diff(loci[np.nonzero(loci)]) if x > 0]))
         if step != self.step:
             warnings.warn(f"Step size in BigWig file {self.bigwig} is not uniform or doesn't match `self.step`. Trying with the step size inferred from data...")
             self.step = step
@@ -492,7 +494,7 @@ class Sample:
         unique_indices = np.unique(loci_, return_index=True)[1]
         loci = loci_[unique_indices]
         vals = vals_[unique_indices]
-        step = min([x for x in np.diff(loci[np.nonzero(loci)]) if x > 0])
+        step = int(min([x for x in np.diff(loci[np.nonzero(loci)]) if x > 0]))
         return (loci,vals)
     
     
@@ -624,7 +626,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         self.norm_method = kwargs.get('norm_method', 'RPKM')
         self.save_bigwigs = kwargs.get('save_bigwigs', False)
         self.norm_ignore_chroms = kwargs.get('norm_ignore_chroms', ['chrM'])
-        self.effective_genome_size = kwargs.get('--effective_genome_size', 2.7e9)
+        self.effective_genome_size = kwargs.get('effective_genome_size', 2.7e9)
         self.sam_flag_include = kwargs.get('sam_flag_include', 67)
         self.sam_flag_exclude = kwargs.get('sam_flag_exclude', 1284)
         self.raw_counts = kwargs.get('raw_counts', False)
@@ -694,8 +696,6 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
         self.step = self.samples[0].step
         self.outfile = kwargs.get('outfile', f"rocco_peaks_{self.curr_time}.bed")
         self.tempfiles = []
-        self.pr_bed = kwargs.get('pr_bed', '')
-        self.plot_hist = kwargs.get('plot_hist', False)
 
     def __str__(self):
         attributes = {}
@@ -738,11 +738,11 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             loci,vals = samp.get_chrom_data(chromosome)
             samples_loci.append(list(loci))
             samples_vals.append(list(vals))
-        common_loci = sorted([x for x in set.intersection(*map(set,samples_loci))])
+        common_loci = sorted([int(x) for x in set.intersection(*map(set,samples_loci))])
         start_locus = common_loci[0]
         end_locus = common_loci[-1]
         logging.info(f"Reads cover {chromosome}:{start_locus}-{end_locus}")
-        common_loci = np.arange(start_locus, end_locus+self.step, self.step)
+        common_loci = np.arange(start_locus, end_locus+self.step, self.step, dtype=int)
         Smat = np.zeros(shape=(len(samples),len(common_loci)))
         for j,samp in enumerate(samples):
             logging.info(f"Constructing Smat: ({j+1}/{len(samples)})")
@@ -919,8 +919,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
               solver_maxiter=None,
               verbose_solving=None,
               step=None,
-              outfile=None,
-              pr_bed=None):
+              outfile=None):
         r"""
         Executes ROCCO on a given chromosome.
 
@@ -1005,10 +1004,6 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
             step = common_loci[1]-common_loci[0]
         if outfile is None:
             outfile = self.outfile
-        if pr_bed is None:
-            pr_bed = self.pr_bed
-
-        
         
         n = len(scores)
         logging.info(f"solve_chrom() {chromosome}\nloci: {n}\nbudget: {budget}\ngamma: {gamma}")
@@ -1066,14 +1061,7 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
                     selected_loci.append(loc)
                     outfile.write(f"{chromosome}\t{int(loc)}\t{int(loc+step)}\t{chromosome + '_' + str(int(loc)) + '_' + str(int(loc+step))}\t{np.mean(Smat_chr[:,iter_idx])}\t{'.'}\n")
                 iter_idx += 1
-        tmpfile_cpy = copy.deepcopy(tmpfile)
-        try:
-            if pr_bed is not None and len(pr_bed) > 0 and os.path.exists(pr_bed):
-                cleaned_bed = pybedtools.BedTool(tmpfile).subtract(pr_bed)
-                cleaned_bed.saveas(tmpfile)
-        except Exception as ex:
-            logging.info(f"The following exception was ignored:\n{ex}\nSkipping removal of problematic regions...")
-            tmpfile = tmpfile_cpy
+
         self.tempfiles.append(tmpfile)
         return (chromosome, np.array(selected_loci))
 
@@ -1100,13 +1088,6 @@ chrY,0.01,1.0,0,1.0,1.0,1.0
                 if peak_score >= self.peak_score_filter:
                     outfile.write(f"{feature[0]}\t{feature[1]}\t{feature[2]}\t{feature[0] + '_' + str(feature[1]) + '_' + str(feature[2])}\t{peak_score}\t.\n")
 
-        if self.plot_hist:
-            plt.hist(peak_scores, bins=50, color='blue', edgecolor='black', alpha=0.75, label='Peak score')
-            plt.title(f"Peak Score Histogram")
-            plt.legend()
-            plt.savefig(f"peak_score_hist_{self.curr_time}.pdf")
-            plt.close()
-
         if not self.keep_chrom_bedfiles:
             self.delete_tempfiles()
             
@@ -1124,7 +1105,6 @@ def main():
     parser.add_argument('--male_samples', nargs='+', type=str, default=[], help="If specified, peak calling over chrY is restricted to these samples. Otherwise, all samples are used.")
     parser.add_argument('--genome_file', '-g', type=str, help="Genome sizes file. A tab-separated file of the genome's chromosomes and their respective sizes measured in base pairs, e.g., `https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.chrom.sizes`")
     parser.add_argument('--sample_weights', nargs='+', type=float, default=None, help="Weights for each sample. Generally, `--sample_weights` should not be used unless `--raw_counts` is invoked to avoid contradicting normalization methods.")
-    parser.add_argument('--pr_bed', '--blacklist', type=str, help="BED file of blacklisted/problematic regions to exclude from peak annotation", default=None)
     parser.add_argument('--proc_num', '-p', default=max(multiprocessing.cpu_count()-2,1), type=int,
                         help='Number of processes to run simultaneously when generating coverage signals from BAM files')
     parser.add_argument('--constant_budget','--budget', default=0.035, type=float, help="'constant' parameters are used to fill in missing or NaN entries in the chromosome-specific parameter files/tables. If `--chrom_param_file/--params` is not specified, `constant_budget` is used for all chromosomes.")
@@ -1141,7 +1121,6 @@ def main():
     parser.add_argument('--solver_feastol', '--feastol', default=1e-8, type=float, help='Maximum allowed feasibility gap when solving the relaxation')
     parser.add_argument('--solver_abstol', '--abstol', default=1e-8, type=float, help='Maximum allowed absolute optimality gap when solving the relaxation')
     parser.add_argument('--peak_score_filter', '--minscore', default = 0.0, type=float, help='Only include peaks in the final annotation with peak scores above `--peak_score_filter`')
-    parser.add_argument('--plot_hist', action='store_true', help="If `True` save a plotted histogram of peak scores")
     parser.add_argument('--norm_method', '--norm', default='RPKM', type=str, help="use CPM, BPM, RPKM, or RPGC (see documentation for `deeptools`'s `bamCoverage` tool) to normalize each sample's coverage track independently. Ignored if `--raw_counts` is invoked.")
     parser.add_argument('--norm_ignore_chroms', nargs='+', type=str, default=['chrM', 'chrX', 'chrY'], help="Chromosomes to ignore when normalizing samples' coverage tracks with `--norm_method`")
     parser.add_argument('--raw_counts', action='store_true', help="If ``True``, ``--norm_method`` is ignored and no normalization is performed when computing the coverage tracks from the samples BAM files.")
@@ -1187,8 +1166,6 @@ def main():
           rand_iter=args['rand_iter'],
           verbose_solving=args['verbose_solving'],
           outfile=args['outfile'],
-          pr_bed=args['pr_bed'],
-          plot_hist=args['plot_hist'],
           raw_counts=args['raw_counts'],
           norm_method=args['norm_method'],
           norm_ignore_chroms=args['norm_ignore_chroms'],
