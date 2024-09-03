@@ -1,0 +1,51 @@
+name: API
+
+# build the documentation whenever there are new commits in dev,main
+on:
+  push:
+    branches:
+      - dev
+      - main
+    paths:
+      - '**.py'
+      - '**.yml'
+
+
+permissions:
+  contents: read
+  pages: write
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v3
+
+      - name: Install dependencies
+        run: |
+          pip install sphinx myst_parser pytest pybedtools pysam numpy scipy pandas pyBigWig cvxpy matplotlib deeptools
+
+      - name: Sphinx build
+        run: |
+          sphinx-build docs docs/build_
+
+      - uses: actions/upload-pages-artifact@v1
+        with:
+          path: docs/build_/
+
+  deploy:
+    needs: docs
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v2

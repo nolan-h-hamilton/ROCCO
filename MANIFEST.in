@@ -1,0 +1,5 @@
+include *.md
+include *.rst
+recursive-include docs *.png
+recursive-include rocco *.sizes
+recursive-include rocco *.csv
