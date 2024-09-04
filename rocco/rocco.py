@@ -133,8 +133,12 @@ def _get_input_type(input_file:str) -> str:
 
     return file_type
 
+
 def minmax_scale(vector:np.ndarray, min_val:float, max_val:float) -> np.ndarray:
     r"""Scale a vector to the range [min_val,max_val]
+
+    Note that even if data is already in the range [min_val,max_val], this function will still scale the data
+    such that the minimum value is `min_val` and the maximum value is `max_val`.
 
     :param vector: Vector to scale
     :type vector: np.ndarray
@@ -146,6 +150,10 @@ def minmax_scale(vector:np.ndarray, min_val:float, max_val:float) -> np.ndarray:
     :rtype: np.ndarray
 
     """
+    if min_val > max_val:
+        raise ValueError('`min_val` must be less than `max_val`')
+    if min_val == max_val:
+        return np.ones_like(vector)*min_val
     return min_val + (max_val - min_val)*(vector - np.min(vector))/(np.max(vector) - np.min(vector))
 
 def score_central_tendency_chrom(chrom_matrix, method='quantile', quantile=0.50, trim_prop=0.05, power=1.0) -> np.ndarray:
