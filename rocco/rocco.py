@@ -135,7 +135,7 @@ def _get_input_type(input_file:str) -> str:
 
 
 def minmax_scale(vector:np.ndarray, min_val:float, max_val:float) -> np.ndarray:
-    r"""Scale a vector to the range [min_val,max_val]
+    r"""Scale a vector (scores) to the range [min_val,max_val]
 
     Note that even if data is already in the range [min_val,max_val], this function will still scale the data
     such that the minimum value is `min_val` and the maximum value is `max_val`.
@@ -155,6 +155,7 @@ def minmax_scale(vector:np.ndarray, min_val:float, max_val:float) -> np.ndarray:
     if min_val == max_val:
         return np.ones_like(vector)*min_val
     return min_val + (max_val - min_val)*(vector - np.min(vector))/(np.max(vector) - np.min(vector))
+
 
 def score_central_tendency_chrom(chrom_matrix, method='quantile', quantile=0.50, trim_prop=0.05, power=1.0) -> np.ndarray:
     r"""Calculate the central tendency of a matrix of values across the columns.
@@ -645,9 +646,12 @@ def get_rround_sol(chrom_lp_sol, scores, budget, gamma,
         return init_sol, init_score
 
     nonint_loci = np.array([i for i in range(len(chrom_lp_sol)) if chrom_lp_sol[i] > int_tol and chrom_lp_sol[i] < 1-int_tol])
-    if len(nonint_loci) == 0:
-        return init_sol, init_score
+    logger.info(f'Number of fractional decision variables in LP (tol={int_tol}): {len(nonint_loci)}')
 
+    if len(nonint_loci) == 0:
+        logger.info('LP solution is integral. Returning.')
+        return init_sol, init_score
+ 
     rround_sol = copy.copy(init_sol)
     rround_sum = np.sum(init_sol)
     best_score = init_score
@@ -811,7 +815,7 @@ def main():
     parser.add_argument('--c_3', type=float, default=1.0, help='Score parameter: coefficient for boundary measure. Assumed positive in the default implementation')
     
     ## misc. scoring-related arguments
-    parser.add_argument('--minmax_gamma', type=float, default=-1, help='If True, scale scores to [-gamma/g**2,gamma*(g**2)] where g is the `minmax_gamma` value. Ignored if less than or equal to zero.')
+    parser.add_argument('--minmax_gamma', type=float, default=-1, help='If True, scale scores to [0,gamma*(g**2)] where g is the `minmax_gamma` value. Ignored if less than or equal to zero.')
     parser.add_argument('--eps_neg', type=float, default=-1.0e-4)
 
 
@@ -849,9 +853,11 @@ def main():
                         help='Minimum length of regions to output in the final BED file')
     args = vars(parser.parse_args())
 
-
+    if args['c_1'] < 0: 
+        logger.info('Central tendency score coefficient is negative. In the default implementation, this may reward weak signals.')
     if args['c_2'] > 0:
         logger.info('Dispersion score coefficient is positive. In the default implementation, this may reward regions with high variance among samples.')
+    
     if any([_get_input_type(args['input_files'][i]) == 'bw' for i in range(len(args['input_files']))]):
         logger.info("Note, BigWig input files are processed 'as is' and the normalization/scaling options not applied. Ensure that the data in the BigWig files is sufficient beforehand. Alternatively, supply samples' BAM files as input.")
 
@@ -958,16 +964,16 @@ def main():
                         + args['c_3']*boundary_scores)
         if args['minmax_gamma'] > 0:
             minmax_gamma_ = args['minmax_gamma']**2
-            chrom_scores = minmax_scale(chrom_scores, min_val=-chrom_gamma/(minmax_gamma_), max_val=minmax_gamma_*chrom_gamma)
+            chrom_scores = minmax_scale(chrom_scores, min_val=0, max_val=minmax_gamma_*chrom_gamma)
         chrom_scores += args['eps_neg']
         score_output = pformat({
-            'Quantile=0.05': round(np.quantile(chrom_scores, q=0.05), 3),
+            'Quantile=0.01': round(np.quantile(chrom_scores, q=0.01), 3),
             'Quantile=0.10': round(np.quantile(chrom_scores, q=0.10), 3),
             'Quantile=0.25': round(np.quantile(chrom_scores, q=0.25), 3),
             'Quantile=0.50': round(np.median(chrom_scores), 3),
             'Quantile=0.75': round(np.quantile(chrom_scores, q=0.75), 3),
             'Quantile=0.90': round(np.quantile(chrom_scores, q=0.90), 3),
-            'Quantile=0.95': round(np.quantile(chrom_scores, q=0.95), 3),})
+            'Quantile=0.99': round(np.quantile(chrom_scores, q=0.99), 3),})
         logger.info(f"\nChromosome {chrom_} scores:\n{score_output}\n")
         print(get_warm_idx(chrom_scores, chrom_budget, chrom_gamma))
         # optimization phase

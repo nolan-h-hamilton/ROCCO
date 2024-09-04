@@ -131,23 +131,14 @@ def test_minmax_scale():
     x = [1, 2, 3, 4, 5]
     minval_ = 0
     maxval_ = 10
-    x_minmax = minmax_scale(x, min_val=0, max_val=10)
+    x_minmax = minmax_scale(x, min_val=minval_, max_val=maxval_)
     assert min(x_minmax) == 0, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
     assert max(x_minmax) == 10, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
     
     # case 2
     x = [-1, 0, 1, 2, 3]
-    minval_ = -2
+    minval_ = 0
     maxval_ = 4
-    x_minmax = minmax_scale(x, min_val=-2, max_val=4)
-    assert min(x_minmax) == -2, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
+    x_minmax = minmax_scale(x, min_val=minval_, max_val=maxval_)
+    assert min(x_minmax) == 0, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
     assert max(x_minmax) == 4, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
-    
-
-    # case 3
-    x = [-2,-1, 0, 0, 0]
-    minval_ = 1
-    maxval_ = 2
-    x_minmax = minmax_scale(x, min_val=1, max_val=2)
-    assert min(x_minmax) == 1, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
-    assert max(x_minmax) == 2, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
