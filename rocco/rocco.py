@@ -134,7 +134,7 @@ def _get_input_type(input_file:str) -> str:
     return file_type
 
 
-def minmax_scale(vector:np.ndarray, min_val:float, max_val:float) -> np.ndarray:
+def minmax_scale_scores(vector:np.ndarray, min_val:float, max_val:float) -> np.ndarray:
     r"""Scale a vector (scores) to the range [min_val,max_val]
 
     Note that even if data is already in the range [min_val,max_val], this function will still scale the data
@@ -142,9 +142,9 @@ def minmax_scale(vector:np.ndarray, min_val:float, max_val:float) -> np.ndarray:
 
     :param vector: Vector to scale
     :type vector: np.ndarray
-    :param min_val: Minimum value of the scaled vector
+    :param min_val: minimum value of the scaled vector (should be near-zero for gamma-scaling)
     :type min_val: float
-    :param max_val: Maximum value of the scaled vector
+    :param max_val: maximum value of the scaled vector
     :type max_val: float
     :return: Scaled vector
     :rtype: np.ndarray
@@ -157,17 +157,17 @@ def minmax_scale(vector:np.ndarray, min_val:float, max_val:float) -> np.ndarray:
     return min_val + (max_val - min_val)*(vector - np.min(vector))/(np.max(vector) - np.min(vector))
 
 
-def score_central_tendency_chrom(chrom_matrix, method='quantile', quantile=0.50, trim_prop=0.05, power=1.0) -> np.ndarray:
-    r"""Calculate the central tendency of a matrix of values across the columns.
+def score_central_tendency_chrom(chrom_matrix, method='quantile', quantile=0.50, tprop=0.05, power=1.0) -> np.ndarray:
+    r"""Calculate the central tendency of read measures across samples (rows) at each genomic position (column) in a given chrom.
     
     :param chrom_matrix: Matrix of values for a given chromosome
     :type chrom_matrix: np.ndarray
-    :param method: Method to calculate central tendency. Options are 'quantile', 'trimmed_mean', and 'mean'. Default is quantile, q=.50 (median)
+    :param method: Method to calculate central tendency. Options are 'quantile', 'tmean' (trimmed-mean), and 'mean'. Default is quantile, q=.50 (median)
     :type method: str
     :param quantile: Quantile to use if `method` is 'quantile'
     :type quantile: float
-    :param trim_prop: Proportion of values to trim if `method` is 'trimmed_mean'
-    :type trim_prop: float
+    :param tprop: Proportion of values to trim if `method` is 'tmean'
+    :type tprop: float
     :param power: Power to raise the central tendency value to
     :type power: float
     :return: Central tendency score
@@ -182,8 +182,11 @@ def score_central_tendency_chrom(chrom_matrix, method='quantile', quantile=0.50,
 
     if method_ == 'quantile':
         central_tendency_stats = np.quantile(chrom_matrix, quantile, axis=0)
-    if method_ == "trimmed_mean":
-        central_tendency_stats = stats.trim_mean(chrom_matrix, trim_prop, axis=0)
+    if method_ == "tmean":
+        llim = np.quantile(chrom_matrix, tprop, method='nearest', axis=0)
+        ulim = np.quantile(chrom_matrix, 1-tprop, method='nearest', axis=0)
+        central_tendency_stats = stats.tmean(chrom_matrix, limits=(llim, ulim), inclusive=(True, True), axis=0)
+
     if method_ == "mean":
         central_tendency_stats = np.mean(chrom_matrix, axis=0)
 
@@ -193,13 +196,15 @@ def score_central_tendency_chrom(chrom_matrix, method='quantile', quantile=0.50,
     return central_tendency_stats**power
 
 
-def score_dispersion_chrom(chrom_matrix:np.ndarray, method:str='mad', rng=(25,75), power:float=1.0) -> np.ndarray:
-    r"""Calculate across-sample dispersion stats for scoring
+def score_dispersion_chrom(chrom_matrix:np.ndarray, method:str='mad', rng=(25,75), tprop=.05, power:float=1.0) -> np.ndarray:
+    r"""Calculate the dispersion of read measures across samples (rows) at each genomic position (column) in a given chrom.
     
     :param chrom_matrix: Matrix of values for a given chromosome
     :type chrom_matrix: np.ndarray
-    :param method: Method to calculate dispersion. Options are 'mad', 'iqr', 'std', and 'var'
+    :param method: Method to calculate dispersion. Options are 'mad', 'iqr', 'tstd' (trimmed std.), and 'std'. Default is 'mad'
     :type method: str
+    :param tprop: Proportion of values to trim if `method` is 'tstd'
+    :type tprop: float
     :param rng: Range of quantiles to use if `method` is 'iqr'
     :type rng: Tuple[int,int]
     :param power: Power to raise the dispersion value to
@@ -221,16 +226,19 @@ def score_dispersion_chrom(chrom_matrix:np.ndarray, method:str='mad', rng=(25,75
         return stats.iqr(chrom_matrix, rng=rng, axis=0)
     if method_ == 'std':
         dispersion_stats = np.std(chrom_matrix, axis=0)
-    if method_ == 'var':
-        dispersion_stats = np.var(chrom_matrix, axis=0)
+    if method_ == "tstd":
+        llim = np.quantile(chrom_matrix, tprop, interpolation='lower', axis=0)
+        ulim = np.quantile(chrom_matrix, 1-tprop, interpolation='higher', axis=0)
+        dispersion_stats = stats.tstd(chrom_matrix, limits=(llim, ulim), inclusive=(True, True), axis=0)
 
     if dispersion_stats is None:
         raise ValueError(f"Dispersion method not recognized: {method}")
+
     return dispersion_stats**power
 
 
 def score_boundary_chrom(signal_vector: np.ndarray, denom:float=1.0, power:float=1.0) -> np.ndarray:
-    r"""Calculate the boundary stats for scoring
+    r"""Calculate the boundary stats for the chromosome score (maximum absolute difference in either direction)
     
     :param signal_vector: (Assumed: central tendency stats) vector for a given chromosome
     :type signal_vector: np.ndarray
@@ -242,7 +250,6 @@ def score_boundary_chrom(signal_vector: np.ndarray, denom:float=1.0, power:float
     :rtype: np.ndarray
     
     """
-
     boundary_stats = np.zeros_like(signal_vector)
     for i in range(len(signal_vector)):
         if i == 0:
@@ -255,10 +262,63 @@ def score_boundary_chrom(signal_vector: np.ndarray, denom:float=1.0, power:float
     return boundary_stats**power
 
 
+def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, minmax_gamma:bool=False, eps_neg=-1.0e-4) -> np.ndarray:
+    r"""Return scores :math:`(\mathbf{G}\mathbf{c})^{\top}` where :math:`\mathbf{G}` is the :math:`n \times 3` matrix of central tendency scores, dispersion scores, and boundary scores for a given chromosome and :math:`\mathbf{c}` is the 3D vector of coefficients.
+    
+    This is the default scoring function for ROCCO, but various alternatives (e.g., log2fc) have successfully been
+    applied as well.
+    
+    :param central_tendency_vec: Central tendency scores for a given chromosome
+    :type central_tendency_vec: np.ndarray
+    :param dispersion_vec: Dispersion scores for a given chromosome
+    :type dispersion_vec: np.ndarray
+    :param boundary_vec: Boundary scores for a given chromosome
+    :type boundary_vec: np.ndarray
+    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere.
+    :type: gamma: float
+    :param c_1: Coefficient for central tendency scores (:math:`c_1 g_1(i),~i=1,\ldots,n` in the paper)
+    :type c_1: float
+    :param c_2: Coefficient for dispersion scores (:math:`c_2 g_2(i),~i=1,\ldots,n` in the paper)
+    :type c_2: float
+    :param c_3: Coefficient for boundary scores (:math:`c_3 g_3(i),~i=1,\ldots,n` in the paper)
+    :type c_3: float
+    :param minmax_gamma: If True, scale the scores to the range [0,2\gamma+1]. Default is False
+    :type minmax_gamma: bool
+    :param eps_neg: Negative epsilon value to add to the scores
+    :type eps_neg: float
+    :return: chromosome scores
+    :rtype: np.ndarray
+
+    """
+    if c_1 < 0: 
+        logger.info('Central tendency score coefficient is negative. In the default implementation, this may reward weak signals.')
+    if c_2 > 0:
+        logger.info('Dispersion score coefficient is positive. In the default implementation, this may reward regions with inconsistent signals among samples.')
+        
+    chrom_scores = (c_1*central_tendency_vec
+                    + c_2*dispersion_vec
+                    + c_3*boundary_vec)
+
+    if minmax_gamma:
+        if gamma is None:
+            gamma = 1.0
+            logger.setLevel(logging.WARNING)
+            logger.warning('`gamma` not provided. Defaulting to 1.0')
+            logger.setLevel(logging.INFO)
+        # Some background for for this particular upper bound: the intervals with scores greater than 2*gamma
+        # will have negative gradients no matter the value of the proximal dvars. Promotes integrality but a tighter 
+        # and/or less arbitrary additive term for the 2*gamma bound should be considered.
+        chrom_scores = minmax_scale_scores(chrom_scores, min_val=0, max_val= 10*(gamma) + np.log2(max(chrom_scores)+ 1))
+
+    chrom_scores += eps_neg
+
+    return chrom_scores
+
+
 def get_warm_idx(scores, budget, gamma) -> Tuple[np.ndarray, np.ndarray, float]:
     r"""Prior to solving, identify 'warm' indices--those with scores greater than the worst-case fragmentation penalty
     that could be incurred by their selection
-    
+
     :param scores: Scores for each genomic position within a given chromosome
     :type scores: np.ndarray
     :param budget: :math:`b` upper bounds the proportion of the chromosome that can be selected as open/accessible
@@ -802,20 +862,19 @@ def main():
     # scoring-related arguments
     ## central tendency-related arguments
     parser.add_argument('--c_1', type=float, default=1.0, help='Score parameter: coefficient for central tendency measure. Assumed positive in the default implementation')
-    parser.add_argument('--method_central_tendency', default='quantile', choices=['quantile', 'trimmed_mean', 'mean'], help='Central tendency measure. Default is `quantile` with `quantile_value` set to 0.50 (median)')
+    parser.add_argument('--method_central_tendency', default='quantile', choices=['quantile', 'tmean', 'mean'], help='Central tendency measure. Default is `quantile` with `quantile_value` set to 0.50 (median)')
     parser.add_argument('--quantile_value', type=float, default=0.50, help='Quantile value for central tendency measure. Only applies if `method_central_tendency` is set to `quantile`')
-    parser.add_argument('--trim_prop', type=float, default=0.05, help='Trim proportion for trimmed mean. Only applies if `method_central_tendency` is set to `trimmed_mean`')
+    parser.add_argument('--tprop', type=float, default=0.05, help='Trim proportion for trimmed mean (`tmean`) and/or trimmed std (`tstd`).')
 
     ## dispersion-related arguments
     parser.add_argument('--c_2', type=float, default=-1.0, help='Score parameter: coefficient for dispersion measure. Assumed negative in the default implementation')
-    parser.add_argument('--method_dispersion', default='mad', choices=['mad', 'iqr', 'std', 'var'], help='Dispersion measure')
-    parser.add_argument('--dispersion_rng', nargs='+', type=float, default=[25,75], help='Percentile for IQR dispersion measure. Only applies if `method_dispersion` is set to `iqr`')
-    
+    parser.add_argument('--method_dispersion', default='mad', choices=['mad', 'std', 'iqr', 'tstd'], help='Dispersion measure')
+    # tprop is shared with central tendency
+
     ## boundary-related arguments
     parser.add_argument('--c_3', type=float, default=1.0, help='Score parameter: coefficient for boundary measure. Assumed positive in the default implementation')
-    
     ## misc. scoring-related arguments
-    parser.add_argument('--minmax_gamma', type=float, default=-1, help='If True, scale scores to [0,gamma*(g**2)] where g is the `minmax_gamma` value. Ignored if less than or equal to zero.')
+    parser.add_argument('--minmax_gamma', action='store_true', help='If True, scale scores to [0,2*gamma + 1].')
     parser.add_argument('--eps_neg', type=float, default=-1.0e-4)
 
 
@@ -852,11 +911,6 @@ def main():
     parser.add_argument('--min_length_bp', type=int, default=None,
                         help='Minimum length of regions to output in the final BED file')
     args = vars(parser.parse_args())
-
-    if args['c_1'] < 0: 
-        logger.info('Central tendency score coefficient is negative. In the default implementation, this may reward weak signals.')
-    if args['c_2'] > 0:
-        logger.info('Dispersion score coefficient is positive. In the default implementation, this may reward regions with high variance among samples.')
     
     if any([_get_input_type(args['input_files'][i]) == 'bw' for i in range(len(args['input_files']))]):
         logger.info("Note, BigWig input files are processed 'as is' and the normalization/scaling options not applied. Ensure that the data in the BigWig files is sufficient beforehand. Alternatively, supply samples' BAM files as input.")
@@ -945,37 +999,35 @@ def main():
         logger.info(f'Scoring regions: {chrom_}')
         if clean_string(args['method_central_tendency']) == 'quantile':
             ct_scores = score_central_tendency_chrom(chrom_matrix, quantile=args['quantile_value'])
-        elif clean_string(args['method_central_tendency']) == 'trimmed_mean':
-            ct_scores = score_central_tendency_chrom(chrom_matrix, trim_prop=args['trim_prop'])
+        elif clean_string(args['method_central_tendency']) == 'tmean':
+            ct_scores = score_central_tendency_chrom(chrom_matrix, tprop=args['tprop'], method='tmean')
         elif clean_string(args['method_central_tendency']) == 'mean':
             ct_scores = score_central_tendency_chrom(chrom_matrix, method='mean')
         if clean_string(args['method_dispersion']) == 'mad':
             disp_scores = score_dispersion_chrom(chrom_matrix, method='mad')
         elif clean_string(args['method_dispersion']) == 'iqr':
-            disp_scores = score_dispersion_chrom(chrom_matrix, method='iqr', rng=[int(x) for x in args['dispersion_rng']])
+            disp_scores = score_dispersion_chrom(chrom_matrix, method='iqr')
         elif clean_string(args['method_dispersion']) == 'std':
             disp_scores = score_dispersion_chrom(chrom_matrix, method='std')
-        elif clean_string(args['method_dispersion']) == 'var':
-            disp_scores = score_dispersion_chrom(chrom_matrix, method='var')
+        elif clean_string(args['method_dispersion']) == 'tstd':
+            disp_scores = score_dispersion_chrom(chrom_matrix, tprop=args['tprop'], method='tstd')
         boundary_scores = score_boundary_chrom(ct_scores)
         
-        chrom_scores = (args['c_1']*ct_scores 
-                        + args['c_2']*disp_scores 
-                        + args['c_3']*boundary_scores)
-        if args['minmax_gamma'] > 0:
-            minmax_gamma_ = args['minmax_gamma']**2
-            chrom_scores = minmax_scale(chrom_scores, min_val=0, max_val=minmax_gamma_*chrom_gamma)
-        chrom_scores += args['eps_neg']
+        chrom_scores = score_chrom_linear(ct_scores, disp_scores, boundary_scores, gamma=chrom_gamma, c_1=args['c_1'], c_2=args['c_2'], c_3=args['c_3'], minmax_gamma=args['minmax_gamma'], eps_neg=args['eps_neg'])
+        
         score_output = pformat({
-            'Quantile=0.01': round(np.quantile(chrom_scores, q=0.01), 3),
-            'Quantile=0.10': round(np.quantile(chrom_scores, q=0.10), 3),
-            'Quantile=0.25': round(np.quantile(chrom_scores, q=0.25), 3),
-            'Quantile=0.50': round(np.median(chrom_scores), 3),
-            'Quantile=0.75': round(np.quantile(chrom_scores, q=0.75), 3),
-            'Quantile=0.90': round(np.quantile(chrom_scores, q=0.90), 3),
-            'Quantile=0.99': round(np.quantile(chrom_scores, q=0.99), 3),})
+            'Quantile=0.01': round(np.quantile(chrom_scores, q=0.01), 5),
+            'Quantile=0.10': round(np.quantile(chrom_scores, q=0.10), 5),
+            'Quantile=0.25': round(np.quantile(chrom_scores, q=0.25), 5),
+            'Quantile=0.50': round(np.median(chrom_scores), 5),
+            'Quantile=0.75': round(np.quantile(chrom_scores, q=0.75), 5),
+            'Quantile=0.90': round(np.quantile(chrom_scores, q=0.90), 5),
+            'Quantile=0.99': round(np.quantile(chrom_scores, q=0.99), 5),})
+
         logger.info(f"\nChromosome {chrom_} scores:\n{score_output}\n")
-        print(get_warm_idx(chrom_scores, chrom_budget, chrom_gamma))
+
+        warm_idx_, warm_scores_, warm_ratio_ = get_warm_idx(chrom_scores, chrom_budget, chrom_gamma)
+        logger.info(f'{chrom_}, {chrom_gamma}: warm idx: {len(warm_idx_)}, warm scores: {(warm_scores_[0], warm_scores_[-1])}, warm ratio: {warm_ratio_}')
         # optimization phase
         logger.info(f'Solving LP relaxation using {args["solver"]}')
         logger.info(f'{chrom_}: budget: {chrom_budget}\tgamma: {chrom_gamma}')

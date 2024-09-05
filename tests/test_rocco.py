@@ -131,7 +131,7 @@ def test_minmax_scale():
     x = [1, 2, 3, 4, 5]
     minval_ = 0
     maxval_ = 10
-    x_minmax = minmax_scale(x, min_val=minval_, max_val=maxval_)
+    x_minmax = minmax_scale_scores(x, min_val=minval_, max_val=maxval_)
     assert min(x_minmax) == 0, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
     assert max(x_minmax) == 10, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
     
@@ -139,6 +139,35 @@ def test_minmax_scale():
     x = [-1, 0, 1, 2, 3]
     minval_ = 0
     maxval_ = 4
-    x_minmax = minmax_scale(x, min_val=minval_, max_val=maxval_)
+    x_minmax = minmax_scale_scores(x, min_val=minval_, max_val=maxval_)
     assert min(x_minmax) == 0, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
     assert max(x_minmax) == 4, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
+
+@pytest.mark.correctness
+def test_score_central_tendency_chrom():
+    # case 1
+    X = np.array([[1, 2, 3, 4, 5], [2, 3, 4, 5, 6], [3, 4, 5, 6, 10]])
+    method = 'quantile'
+    scores = score_central_tendency_chrom(X, method=method)
+    for i,x in enumerate([2,3,4,5,6]):
+        assert scores[i] == x, f'Central tendency scoring failed : {X, scores, method}'
+
+
+    # case 2
+    method = 'mean'
+    scores = score_central_tendency_chrom(X, method=method)
+    for i,x in enumerate([2,3,4,5,7]):
+        assert scores[i] == x, f'Central tendency scoring failed : {X, scores, method}'
+    
+    # case 3
+    X = np.array([[0, 0, 0, 0, 0], [2, 3, 4, 5, 6],
+                  [1, 2, 3, 4, 5], [2, 3, 4, 5, 6], 
+                  [1, 2, 3, 4, 5], [2, 3, 4, 5, 6],
+                  [1, 2, 3, 4, 5], [5, 3, 4, 5, 6],
+                  [1, 2, 3, 4, 5], [1000, 1000, 1000, 1000, 1000]])
+    method = 'tmean'
+    scores = score_central_tendency_chrom(X, method=method, tprop=.11)
+    # output should be a list of 5 values -- the mean of the center 8 values in each column
+    for i,x in enumerate([1.875, 2.5, 3.5, 4.5, 5.5]):
+        assert scores[i] == x, f'Central tendency scoring failed : {X, scores, method}'
+    
