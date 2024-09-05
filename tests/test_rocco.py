@@ -124,6 +124,7 @@ def test_combine_chrom_results_add_names(test_setup):
     except:
         pass
 
+
 @pytest.mark.correctness
 def test_minmax_scale():
 
@@ -142,6 +143,7 @@ def test_minmax_scale():
     x_minmax = minmax_scale_scores(x, min_val=minval_, max_val=maxval_)
     assert min(x_minmax) == 0, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
     assert max(x_minmax) == 4, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
+
 
 @pytest.mark.correctness
 def test_score_central_tendency_chrom():
@@ -170,4 +172,39 @@ def test_score_central_tendency_chrom():
     # output should be a list of 5 values -- the mean of the center 8 values in each column
     for i,x in enumerate([1.875, 2.5, 3.5, 4.5, 5.5]):
         assert scores[i] == x, f'Central tendency scoring failed : {X, scores, method}'
-    
+
+
+@pytest.mark.correctness
+def test_score_dispersion_chrom():
+    # case 1
+    X = np.zeros(shape=(11,3))
+    X[:,0] = [0, 1, 1, 1, 1, 5, 25, 25, 25, 25, 100]
+    X[:,1] = np.ones(11)
+    X[:,2] = [1,1,1,0,1,0,1,0,1,0,1]
+
+
+    method = 'mad'
+    scores = score_dispersion_chrom(X, method=method)
+    for i,x in enumerate([5,0,0]):
+        assert scores[i] == x, f'Dispersion method failed: {X, scores, method}'
+
+    # case 2
+    method = 'std'
+    scores = score_dispersion_chrom(X, method=method)
+    for i,x in enumerate([27.89265, 0, 0.481045]):
+        assert np.isclose(x,scores[i], rtol=1e-4, atol=1e-4), f'Dispersion method failed : {X, scores, method}'
+
+    # case 3
+    method = 'iqr'
+    scores = score_dispersion_chrom(X, method=method)
+    for i,x in enumerate([24, 0, 1]):
+        assert scores[i] == x, f'Dispersion method failed : {X, scores, method}'
+
+
+@pytest.mark.correctness
+def test_score_boundary_chrom():
+    vec = np.array([-10,-5,0,3,10])
+    denom = 1
+    scores = score_boundary_chrom(vec, denom=denom)
+    for i,x in enumerate([5/11.0, 5/6.0, 5.0, 7/4.0, 7/11.0]):
+        assert scores[i] == x, f'Boundary scoring failed : {vec, denom}'

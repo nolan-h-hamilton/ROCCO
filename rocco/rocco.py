@@ -227,12 +227,12 @@ def score_dispersion_chrom(chrom_matrix:np.ndarray, method:str='mad', rng=(25,75
     if method_ == 'std':
         dispersion_stats = np.std(chrom_matrix, axis=0)
     if method_ == "tstd":
-        llim = np.quantile(chrom_matrix, tprop, interpolation='lower', axis=0)
-        ulim = np.quantile(chrom_matrix, 1-tprop, interpolation='higher', axis=0)
+        llim = np.quantile(chrom_matrix, tprop, method='nearest', axis=0)
+        ulim = np.quantile(chrom_matrix, 1-tprop, method='nearest', axis=0)
         dispersion_stats = stats.tstd(chrom_matrix, limits=(llim, ulim), inclusive=(True, True), axis=0)
 
     if dispersion_stats is None:
-        raise ValueError(f"Dispersion method not recognized: {method}")
+        raise ValueError(f"Dispersion method not recognized or could not successfully execute: {method}")
 
     return dispersion_stats**power
 
@@ -250,7 +250,7 @@ def score_boundary_chrom(signal_vector: np.ndarray, denom:float=1.0, power:float
     :rtype: np.ndarray
     
     """
-    boundary_stats = np.zeros_like(signal_vector)
+    boundary_stats = np.zeros_like(signal_vector, dtype=float)
     for i in range(len(signal_vector)):
         if i == 0:
             boundary_stats[i] = abs(signal_vector[i] - signal_vector[i+1])/(denom + abs(signal_vector[i]))
