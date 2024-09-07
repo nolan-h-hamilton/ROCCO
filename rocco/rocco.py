@@ -262,7 +262,7 @@ def score_boundary_chrom(signal_vector: np.ndarray, denom:float=1.0, power:float
     return boundary_stats**power
 
 
-def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, minmax_gamma:bool=False, eps_neg=-1.0e-3) -> np.ndarray:
+def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, minmax_gamma:bool=False, eps_neg=-1.0e-4) -> np.ndarray:
     r"""Return scores :math:`(\mathbf{G}\mathbf{c})^{\top}` where :math:`\mathbf{G}` is the :math:`n \times 3` matrix of central tendency scores, dispersion scores, and boundary scores for a given chromosome and :math:`\mathbf{c}` is the 3D vector of coefficients.
     
     This is the default scoring function for ROCCO, but various alternatives (e.g., log2fc) have successfully been
@@ -300,14 +300,14 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
                     + c_3*boundary_vec)
     
     if minmax_gamma:
-        unique_arr = np.array(sorted(set(np.round(chrom_scores,4))))
-        const = np.median(unique_arr) + 1
+        unique_scores = np.array(sorted(list(set(np.round(chrom_scores,3)))))
+        uq75 = np.quantile(unique_scores,q=0.75,)
         if gamma is None:
             gamma = 1.0
             logger.setLevel(logging.WARNING)
             logger.warning('`gamma` not provided. Defaulting to 1.0')
             logger.setLevel(logging.INFO)
-        chrom_scores = minmax_scale_scores(chrom_scores, min_val=0, max_val= np.exp(2*gamma + const))
+        chrom_scores = minmax_scale_scores(chrom_scores, min_val=0, max_val= 2*(gamma + uq75) + 1)
     chrom_scores += eps_neg
     return chrom_scores
 
