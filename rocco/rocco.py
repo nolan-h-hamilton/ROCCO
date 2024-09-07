@@ -262,7 +262,7 @@ def score_boundary_chrom(signal_vector: np.ndarray, denom:float=1.0, power:float
     return boundary_stats**power
 
 
-def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, minmax_gamma:bool=False, eps_neg=-1.0e-4) -> np.ndarray:
+def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, minmax_gamma:bool=False, eps_neg=-1.0e-3) -> np.ndarray:
     r"""Return scores :math:`(\mathbf{G}\mathbf{c})^{\top}` where :math:`\mathbf{G}` is the :math:`n \times 3` matrix of central tendency scores, dispersion scores, and boundary scores for a given chromosome and :math:`\mathbf{c}` is the 3D vector of coefficients.
     
     This is the default scoring function for ROCCO, but various alternatives (e.g., log2fc) have successfully been
@@ -298,24 +298,21 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
     chrom_scores = (c_1*central_tendency_vec
                     + c_2*dispersion_vec
                     + c_3*boundary_vec)
-
+    
     if minmax_gamma:
+        unique_arr = np.array(sorted(set(np.round(chrom_scores,4))))
+        const = np.median(unique_arr) + 1
         if gamma is None:
             gamma = 1.0
             logger.setLevel(logging.WARNING)
             logger.warning('`gamma` not provided. Defaulting to 1.0')
             logger.setLevel(logging.INFO)
-        # Some background for for this particular upper bound: the intervals with scores greater than 2*gamma
-        # will have negative gradients no matter the value of the proximal dvars. Promotes integrality but a tighter 
-        # and/or less arbitrary additive term for the 2*gamma bound should be considered.
-        chrom_scores = minmax_scale_scores(chrom_scores, min_val=0, max_val= 10*(gamma) + np.log2(max(chrom_scores)+ 1))
-
+        chrom_scores = minmax_scale_scores(chrom_scores, min_val=0, max_val= np.exp(2*gamma + const))
     chrom_scores += eps_neg
-
     return chrom_scores
 
 
-def get_warm_idx(scores, budget, gamma) -> Tuple[np.ndarray, np.ndarray, float]:
+def get_warm_idx(scores, budget, gamma, warm_thresh=None) -> Tuple[np.ndarray, np.ndarray, float]:
     r"""Prior to solving, identify 'warm' indices--those with scores greater than the worst-case fragmentation penalty
     that could be incurred by their selection
 
@@ -325,6 +322,8 @@ def get_warm_idx(scores, budget, gamma) -> Tuple[np.ndarray, np.ndarray, float]:
     :type budget: float
     :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere.
     :type: gamma: float
+    :param warm_thresh: Threshold for warm indices. If None, the threshold is set to 2*gamma
+    :type warm_thresh: float
     :return: 
     :rtype: Tuple[np.ndarray, np.ndarray, float]
     
@@ -333,8 +332,10 @@ def get_warm_idx(scores, budget, gamma) -> Tuple[np.ndarray, np.ndarray, float]:
     max_selections = np.floor(n*budget)
     warm_idx = []
     warm_scores = []
+    if warm_thresh is None:
+        warm_thresh = 2*gamma
     for i in range(n):
-        if scores[i] > 2*gamma:
+        if scores[i] > warm_thresh:
             warm_idx.append(i)
             warm_scores.append(scores[i])
     warm_idx = np.array([int(x) for _, x in sorted(zip(warm_scores, warm_idx), reverse=True, key=lambda pair: pair[0])], dtype=int)
@@ -375,7 +376,7 @@ def solve_relaxation_chrom_pdlp(scores,
     :type pdlp_termination_criteria_eps_optimal_relative: float
     :param pdlp_use_low_precision: Use "loose solve"/low precision mode. This will override the termination arguments to weakened criteria (1.0e-4).
     :type pdlp_use_low_precision: bool
-    :param threads: Number of threads to use for optimization. Default is 0 (use default number of threads defined in `solvers.proto`). If threads is negative, the number of threads used will be the maximum of the number of available CPUs minus 2, or 1.
+    :param threads: Number of threads to use for optimization. Default is 0 (use default number of threads defined in `solvers.proto`). If threads is negative, the number of threads used will be the maximum of the number of available CPUs minus 1, or 1 in the case of a single-core machine.
     :type threads: int
     :param verbose: Enable verbose output
     :type verbose: bool
@@ -405,7 +406,7 @@ def solve_relaxation_chrom_pdlp(scores,
     if threads >= 1:
         solver.SetNumThreads(threads)
     elif threads < 0:
-        solver.SetNumThreads(max(multiprocessing.cpu_count()-2,1))
+        solver.SetNumThreads(max(multiprocessing.cpu_count()-1,1))
 
     if verbose:
         solver.EnableOutput()
@@ -446,7 +447,7 @@ def solve_relaxation_chrom_pdlp(scores,
     if threads > 0:
         solver.SetNumThreads(threads)
     elif threads < 0:
-        solver.SetNumThreads(max(multiprocessing.cpu_count()-2,1))
+        solver.SetNumThreads(max(multiprocessing.cpu_count()-1,1))
 
     logger.info('Solving...')
     solver.Solve()
@@ -511,7 +512,7 @@ def solve_relaxation_chrom_glop(scores,
     :type glop_use_scaling: bool
     :param glop_initial_basis: Determines which of the glop-supported heuristics to identify an initial basis is executed. Options are `'NONE'`, `'TRIANGULAR'`, and `'MAROS'`. `'TRIANGULAR'` is the default and recommended option.
     :type glop_initial_basis: str
-    :param threads: Number of threads to use for optimization. Default is 0 (use default number of threads defined in `solvers.proto`). If threads is negative, the number of threads used will be the maximum of the number of available CPUs minus 2, or 1.
+    :param threads: Number of threads to use for optimization. Default is 0 (use default number of threads defined in `solvers.proto`). If threads is negative, the number of threads used will be the maximum of the number of available CPUs minus 1, or 1 in the case of a single-core machine.
     :type threads: int
     :param verbose: Enable verbose output
     :type verbose: bool
@@ -585,7 +586,7 @@ def solve_relaxation_chrom_glop(scores,
     if threads > 0:
         solver.SetNumThreads(threads)
     elif threads < 0:
-        solver.SetNumThreads(max(multiprocessing.cpu_count()-2,1))
+        solver.SetNumThreads(max(multiprocessing.cpu_count()-1,1))
 
     if verbose:
         solver.EnableOutput()

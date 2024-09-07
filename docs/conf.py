@@ -7,7 +7,6 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 import os
 import sys
-#sys.path.insert(0, os.path.abspath('../rocco'))
 import rocco
 project = 'ROCCO'
 author = 'Nolan H. Hamilton'
@@ -41,7 +40,7 @@ latex_elements = {'classoptions': ',openany,oneside',     'babel' : '\\usepackag
 
 
 # -- Options for autodoc extension -------------------------------------------
-autodoc_member_order = 'alphabetical'
+# https://www.sphinx-doc.org/en/master/usage/extensions/autodoc.html#module-sphinx.ext.autodoc
 autodoc_mock_imports = ["numpy","scipy", "pybedtools", "pandas", "pyBigWig", "deeptools", "ortools", "typing", "pysam"]
 autodoc_typehints = 'both'
 autodoc_typehints_format = 'fully-qualified'
