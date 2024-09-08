@@ -262,7 +262,7 @@ def score_boundary_chrom(signal_vector: np.ndarray, denom:float=1.0, power:float
     return boundary_stats**power
 
 
-def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, minmax_gamma:bool=False, eps_neg=-1.0e-4) -> np.ndarray:
+def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, eps_neg=-1.0e-2, use_custsig=False) -> np.ndarray:
     r"""Return scores :math:`(\mathbf{G}\mathbf{c})^{\top}` where :math:`\mathbf{G}` is the :math:`n \times 3` matrix of central tendency scores, dispersion scores, and boundary scores for a given chromosome and :math:`\mathbf{c}` is the 3D vector of coefficients.
     
     This is the default scoring function for ROCCO, but various alternatives (e.g., log2fc) have successfully been
@@ -282,8 +282,8 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
     :type c_2: float
     :param c_3: Coefficient for boundary scores (:math:`c_3 g_3(i),~i=1,\ldots,n` in the paper)
     :type c_3: float
-    :param minmax_gamma: If True, scale the scores to the range [0,2\gamma+1]. Default is False
-    :type minmax_gamma: bool
+    :param use_custsig: If True, apply the custom sigmoid transformation to the scores
+    :type use_custsig: False
     :param eps_neg: Negative epsilon value to add to the scores
     :type eps_neg: float
     :return: chromosome scores
@@ -299,17 +299,34 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
                     + c_2*dispersion_vec
                     + c_3*boundary_vec)
     
-    if minmax_gamma:
-        unique_scores = np.array(sorted(list(set(np.round(chrom_scores,3)))))
-        uq75 = np.quantile(unique_scores,q=0.75,)
-        if gamma is None:
-            gamma = 1.0
-            logger.setLevel(logging.WARNING)
-            logger.warning('`gamma` not provided. Defaulting to 1.0')
-            logger.setLevel(logging.INFO)
-        chrom_scores = minmax_scale_scores(chrom_scores, min_val=0, max_val= 2*(gamma + uq75) + 1)
+    if use_custsig:
+        chrom_scores = get_custsig(chrom_scores, gamma)
+        
     chrom_scores += eps_neg
     return chrom_scores
+
+def get_custsig(scores, gamma, a=.90, b=.99, M=None, steepness=1/2.0):
+    """Apply a parameterized sigmoid function to the scores to amplify the dual values for decision variables with higher scores.
+    
+    :param scores: Scores for each genomic position within a given chromosome
+    :type scores: np.ndarray
+    :param gamma: :math:`\gamma` is the coefficient for the fragmentation (or TV) penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere.
+    :type: gamma: float
+    :param a: Lower quantile of values at which the sigmoid function experiences an inflection.
+    :type a: float
+    :param b: Upper quantile of values at which the sigmoid function experiences an inflection.
+    :type b: float
+    :param M: Maximum value of the sigmoid function. If None, the maximum value is set to the median of the scores plus 2*gamma.
+    :type M: float
+    :param steepness: Loosely, the slope between the inflection points
+    :type steepness: float
+    """
+    
+    unique_scores = np.array(sorted(list(set(np.round(scores,3)))))
+    a_ = np.quantile(scores,q=a, method='nearest')
+    b_ = np.quantile(scores,q=b, method='nearest')
+    M_ = (2*(gamma + np.median(unique_scores)) + 1) if M is None else M
+    return M_ / (1 + np.exp(-steepness * (scores - (a_ + b_) / 2)))
 
 
 def get_warm_idx(scores, budget, gamma, warm_thresh=None) -> Tuple[np.ndarray, np.ndarray, float]:
@@ -333,7 +350,7 @@ def get_warm_idx(scores, budget, gamma, warm_thresh=None) -> Tuple[np.ndarray, n
     warm_idx = []
     warm_scores = []
     if warm_thresh is None:
-        warm_thresh = 2*gamma
+        warm_thresh = 2*gamma + 1
     for i in range(n):
         if scores[i] > warm_thresh:
             warm_idx.append(i)
@@ -875,7 +892,7 @@ def main():
     ## boundary-related arguments
     parser.add_argument('--c_3', type=float, default=1.0, help='Score parameter: coefficient for boundary measure. Assumed positive in the default implementation')
     ## misc. scoring-related arguments
-    parser.add_argument('--minmax_gamma', action='store_true', help='If True, scale scores to [0,2*gamma + 1].')
+    parser.add_argument('--use_custsig', action='store_true', help='If True, apply custom sigmoid transformation to scores')
     parser.add_argument('--eps_neg', type=float, default=-1.0e-4)
 
 
@@ -1014,16 +1031,20 @@ def main():
             disp_scores = score_dispersion_chrom(chrom_matrix, tprop=args['tprop'], method='tstd')
         boundary_scores = score_boundary_chrom(ct_scores)
         
-        chrom_scores = score_chrom_linear(ct_scores, disp_scores, boundary_scores, gamma=chrom_gamma, c_1=args['c_1'], c_2=args['c_2'], c_3=args['c_3'], minmax_gamma=args['minmax_gamma'], eps_neg=args['eps_neg'])
+        chrom_scores = score_chrom_linear(ct_scores, disp_scores, boundary_scores, gamma=chrom_gamma, c_1=args['c_1'], c_2=args['c_2'], c_3=args['c_3'], eps_neg=args['eps_neg'], use_custsig=args['use_custsig'])
         
         score_output = pformat({
-            'Quantile=0.01': round(np.quantile(chrom_scores, q=0.01), 5),
-            'Quantile=0.10': round(np.quantile(chrom_scores, q=0.10), 5),
-            'Quantile=0.25': round(np.quantile(chrom_scores, q=0.25), 5),
+            'Quantile=0.0001': round(np.quantile(chrom_scores, q=0.0001, method='higher'), 5),
+            'Quantile=0.001': round(np.quantile(chrom_scores, q=0.001, method='higher'), 5),
+            'Quantile=0.01': round(np.quantile(chrom_scores, q=0.01, method='higher'), 5),
+            'Quantile=0.10': round(np.quantile(chrom_scores, q=0.10, method='higher'), 5),
+            'Quantile=0.25': round(np.quantile(chrom_scores, q=0.25, method='higher'), 5),
             'Quantile=0.50': round(np.median(chrom_scores), 5),
-            'Quantile=0.75': round(np.quantile(chrom_scores, q=0.75), 5),
-            'Quantile=0.90': round(np.quantile(chrom_scores, q=0.90), 5),
-            'Quantile=0.99': round(np.quantile(chrom_scores, q=0.99), 5),})
+            'Quantile=0.75': round(np.quantile(chrom_scores, q=0.75, method='higher'), 5),
+            'Quantile=0.90': round(np.quantile(chrom_scores, q=0.90, method='higher'), 5),
+            'Quantile=0.99': round(np.quantile(chrom_scores, q=0.99, method='higher'), 5),
+            'Quantile=0.999': round(np.quantile(chrom_scores, q=0.99, method='higher'), 5),
+            'Quantile=0.9999': round(np.quantile(chrom_scores, q=0.9999, method='higher'), 5)})
 
         logger.info(f"\nChromosome {chrom_} scores:\n{score_output}\n")
 
