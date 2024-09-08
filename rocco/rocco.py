@@ -262,7 +262,7 @@ def score_boundary_chrom(signal_vector: np.ndarray, denom:float=1.0, power:float
     return boundary_stats**power
 
 
-def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, eps_neg=-1.0e-2, use_custsig=False) -> np.ndarray:
+def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, eps_neg=-1.0e-2, modsig_B=None, modsig_R=None) -> np.ndarray:
     r"""Return scores :math:`(\mathbf{G}\mathbf{c})^{\top}` where :math:`\mathbf{G}` is the :math:`n \times 3` matrix of central tendency scores, dispersion scores, and boundary scores for a given chromosome and :math:`\mathbf{c}` is the 3D vector of coefficients.
     
     This is the default scoring function for ROCCO, but various alternatives (e.g., log2fc) have successfully been
@@ -282,8 +282,8 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
     :type c_2: float
     :param c_3: Coefficient for boundary scores (:math:`c_3 g_3(i),~i=1,\ldots,n` in the paper)
     :type c_3: float
-    :param use_custsig: If True, apply the custom sigmoid transformation to the scores
-    :type use_custsig: False
+    :param use_modsig: If True, apply the custom sigmoid transformation to the scores
+    :type use_modsig: False
     :param eps_neg: Negative epsilon value to add to the scores
     :type eps_neg: float
     :return: chromosome scores
@@ -298,34 +298,46 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
     chrom_scores = (c_1*central_tendency_vec
                     + c_2*dispersion_vec
                     + c_3*boundary_vec)
-    chrom_scores += eps_neg
-    if use_custsig:
-        chrom_scores = get_custsig(chrom_scores, gamma)
 
+    if modsig_B is not None or modsig_R is not None:
+        chrom_scores = modsig(chrom_scores, gamma, modsig_B=modsig_B, modsig_R=modsig_R)
+    chrom_scores += eps_neg
     return chrom_scores
 
-def get_custsig(scores, gamma, a=.95, b=.99, M=None, steepness=1/2.0):
-    """Apply a parameterized sigmoid function to the scores to amplify the dual values for decision variables with higher scores.
+
+def modsig(scores, gamma=None, modsig_B=None, modsig_M=None, modsig_R=None):
+    """Apply a sigmoid-like function to the scores to amplify the dual values of decision variables with high scores.
+    
+    In encountered use-cases, the distribution of scores has been sufficiently U-shaped + zero-inflated
+    to ensure a sufficient number of large dual values to push a substantial fraction of dvars toward
+    their integral bounds, which prevents overreliance on the stochastic ROCCO-RR procedure. This function
+    promotes this aspect explicitly.
     
     :param scores: Scores for each genomic position within a given chromosome
     :type scores: np.ndarray
-    :param gamma: :math:`\gamma` is the coefficient for the fragmentation (or TV) penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere.
+    :param gamma: :math:`\gamma` is the coefficient for the fragmentation/TV penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere.
     :type: gamma: float
-    :param a: Lower quantile of values at which the sigmoid function experiences an inflection.
-    :type a: float
-    :param b: Upper quantile of values at which the sigmoid function experiences an inflection.
-    :type b: float
-    :param M: Maximum value of the sigmoid function. If None, the maximum value is set to the median of the scores plus 2*gamma.
-    :type M: float
-    :param steepness: Loosely, the slope between the inflection points
-    :type steepness: float
+    :param modsig_B: Quantile for the baseline value
+    :type modsig_B: float
+    :param modsig_M: Maximum value for the sigmoid function
+    :type modsig_M: float
+    :param modsig_R: Scales the rate of change
+    :type modsig_R: float
+    :return: Sigmoid-transformed scores
+    :rtype: np.ndarray
+
     """
-    
-    unique_scores = np.array(sorted(list(set(np.round(scores,3)))))
-    a_ = max(np.min(scores) + 1e-3, np.quantile(scores,q=a, method='nearest'))
-    b_ = np.quantile(scores,q=b, method='nearest')
-    M_ = (2*(gamma + np.median(unique_scores)) + 1) if M is None else M
-    return M_ / (1 + np.exp(-steepness * (scores - (a_ + b_) / 2)))
+
+    if gamma is None:
+        gamma = 1.0
+    if modsig_B is None:
+        modsig_B = 0.95
+    if modsig_R is None:
+        modsig_R= 1.0
+    B_ = np.quantile(scores, modsig_B) 
+    M_ = (2*gamma + abs(np.quantile(scores,q=(1 - 1.0e-4)))/2 + 1) if modsig_M is None else modsig_M
+    modsig_values = M_ / (1 + np.exp(-(modsig_R * ((scores - B_)))))
+    return modsig_values - np.min(modsig_values)
 
 
 def get_warm_idx(scores, budget, gamma, warm_thresh=None) -> Tuple[np.ndarray, np.ndarray, float]:
@@ -355,6 +367,10 @@ def get_warm_idx(scores, budget, gamma, warm_thresh=None) -> Tuple[np.ndarray, n
             warm_idx.append(i)
             warm_scores.append(scores[i])
     warm_idx = np.array([int(x) for _, x in sorted(zip(warm_scores, warm_idx), reverse=True, key=lambda pair: pair[0])], dtype=int)
+    
+    if len(warm_idx) == 0:
+        return np.array([]), np.array([]), 0.0
+
     return warm_idx, scores[warm_idx], len(warm_idx)/max_selections
 
 
@@ -891,9 +907,10 @@ def main():
     ## boundary-related arguments
     parser.add_argument('--c_3', type=float, default=1.0, help='Score parameter: coefficient for boundary measure. Assumed positive in the default implementation')
     ## misc. scoring-related arguments
-    parser.add_argument('--use_custsig', action='store_true', help='If True, apply custom sigmoid transformation to scores')
-    parser.add_argument('--eps_neg', type=float, default=-1.0e-4)
-
+    parser.add_argument('--use_modsig', action='store_true', help='Apply `modsig` function to scores')    
+    parser.add_argument('--modsig_B', type=float, default=None, help='modsig function `B` parameter')
+    parser.add_argument('--modsig_R', type=float, default=None, help='modsig function `R` parameter')
+    parser.add_argument('--eps_neg', type=float, default=-1.0e-3)
 
     # count track/matrix generation and processing arguments
     parser.add_argument('--step', '-w', type=int, default=50,
@@ -1030,7 +1047,14 @@ def main():
             disp_scores = score_dispersion_chrom(chrom_matrix, tprop=args['tprop'], method='tstd')
         boundary_scores = score_boundary_chrom(ct_scores)
         
-        chrom_scores = score_chrom_linear(ct_scores, disp_scores, boundary_scores, gamma=chrom_gamma, c_1=args['c_1'], c_2=args['c_2'], c_3=args['c_3'], eps_neg=args['eps_neg'], use_custsig=args['use_custsig'])
+        if (args['modsig_B'] is not None or args['modsig_R'] is not None) and args['use_modsig'] is False:
+            args['use_modsig'] = True
+        if args['use_modsig'] and args['modsig_B'] is None:
+            args['modsig_B'] = (1-chrom_budget) - 1.0e-2
+        if args['use_modsig'] and args['modsig_R'] is None:
+            args['modsig_R'] = 1.0
+
+        chrom_scores = score_chrom_linear(ct_scores, disp_scores, boundary_scores, gamma=chrom_gamma, c_1=args['c_1'], c_2=args['c_2'], c_3=args['c_3'], eps_neg=args['eps_neg'], modsig_B=args['modsig_B'], modsig_R=args['modsig_R'])
         
         score_output = pformat({
             'Quantile=0.01': round(np.quantile(chrom_scores, q=0.01, method='higher'), 5),
