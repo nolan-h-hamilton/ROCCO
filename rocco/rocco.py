@@ -298,14 +298,13 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
     chrom_scores = (c_1*central_tendency_vec
                     + c_2*dispersion_vec
                     + c_3*boundary_vec)
-    
+    chrom_scores += eps_neg
     if use_custsig:
         chrom_scores = get_custsig(chrom_scores, gamma)
-        
-    chrom_scores += eps_neg
+
     return chrom_scores
 
-def get_custsig(scores, gamma, a=.90, b=.99, M=None, steepness=1/2.0):
+def get_custsig(scores, gamma, a=.95, b=.99, M=None, steepness=1/2.0):
     """Apply a parameterized sigmoid function to the scores to amplify the dual values for decision variables with higher scores.
     
     :param scores: Scores for each genomic position within a given chromosome
@@ -323,7 +322,7 @@ def get_custsig(scores, gamma, a=.90, b=.99, M=None, steepness=1/2.0):
     """
     
     unique_scores = np.array(sorted(list(set(np.round(scores,3)))))
-    a_ = np.quantile(scores,q=a, method='nearest')
+    a_ = max(np.min(scores) + 1e-3, np.quantile(scores,q=a, method='nearest'))
     b_ = np.quantile(scores,q=b, method='nearest')
     M_ = (2*(gamma + np.median(unique_scores)) + 1) if M is None else M
     return M_ / (1 + np.exp(-steepness * (scores - (a_ + b_) / 2)))
@@ -1034,17 +1033,13 @@ def main():
         chrom_scores = score_chrom_linear(ct_scores, disp_scores, boundary_scores, gamma=chrom_gamma, c_1=args['c_1'], c_2=args['c_2'], c_3=args['c_3'], eps_neg=args['eps_neg'], use_custsig=args['use_custsig'])
         
         score_output = pformat({
-            'Quantile=0.0001': round(np.quantile(chrom_scores, q=0.0001, method='higher'), 5),
-            'Quantile=0.001': round(np.quantile(chrom_scores, q=0.001, method='higher'), 5),
             'Quantile=0.01': round(np.quantile(chrom_scores, q=0.01, method='higher'), 5),
             'Quantile=0.10': round(np.quantile(chrom_scores, q=0.10, method='higher'), 5),
             'Quantile=0.25': round(np.quantile(chrom_scores, q=0.25, method='higher'), 5),
             'Quantile=0.50': round(np.median(chrom_scores), 5),
             'Quantile=0.75': round(np.quantile(chrom_scores, q=0.75, method='higher'), 5),
             'Quantile=0.90': round(np.quantile(chrom_scores, q=0.90, method='higher'), 5),
-            'Quantile=0.99': round(np.quantile(chrom_scores, q=0.99, method='higher'), 5),
-            'Quantile=0.999': round(np.quantile(chrom_scores, q=0.99, method='higher'), 5),
-            'Quantile=0.9999': round(np.quantile(chrom_scores, q=0.9999, method='higher'), 5)})
+            'Quantile=0.99': round(np.quantile(chrom_scores, q=0.99, method='higher'), 5)})
 
         logger.info(f"\nChromosome {chrom_} scores:\n{score_output}\n")
 
