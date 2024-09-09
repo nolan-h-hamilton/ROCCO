@@ -208,3 +208,13 @@ def test_score_boundary_chrom():
     scores = score_boundary_chrom(vec, denom=denom)
     for i,x in enumerate([5/11.0, 5/6.0, 5.0, 7/4.0, 7/11.0]):
         assert scores[i] == x, f'Boundary scoring failed : {vec, denom}'
+
+@pytest.mark.correctness
+def test_parsig_default_parameters():
+    scores = np.array([-50, 1, 2, 3, 4, 5, 50]) 
+    B_ = 0.80
+    M_ = 10
+    R_ = 5
+    transformed_scores = parsig(scores, gamma=1.0, parsig_B=B_, parsig_M=M_, parsig_R=R_)
+    assert np.min(transformed_scores) >= 0, f'Negative values found in transformed scores: {transformed_scores}'
+    assert np.max(transformed_scores) <= 10, f'Maximum value of transformed scores is unexpected: {np.max(transformed_scores)}'
