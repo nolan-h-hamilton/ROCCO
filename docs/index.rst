@@ -6,5 +6,5 @@
 
 .. automodule:: rocco.readtracks
 
-.. automodule:: rocco.constants
+
 

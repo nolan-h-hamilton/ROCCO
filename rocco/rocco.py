@@ -262,7 +262,7 @@ def score_boundary_chrom(signal_vector: np.ndarray, denom:float=1.0, power:float
     return boundary_stats**power
 
 
-def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, eps_neg=-1.0e-3, modsig_B=None, modsig_R=None) -> np.ndarray:
+def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, eps_neg=-1.0e-3, parsig_B=None, parsig_M=None, parsig_R=None) -> np.ndarray:
     r"""Return scores :math:`(\mathbf{G}\mathbf{c})^{\top}` where :math:`\mathbf{G}` is the :math:`n \times 3` matrix of central tendency scores, dispersion scores, and boundary scores for a given chromosome and :math:`\mathbf{c}` is the 3D vector of coefficients.
     
     This is the default scoring function for ROCCO, but various alternatives (e.g., log2fc) have successfully been
@@ -282,8 +282,8 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
     :type c_2: float
     :param c_3: Coefficient for boundary scores (:math:`c_3 g_3(i),~i=1,\ldots,n` in the paper)
     :type c_3: float
-    :param use_modsig: If True, apply the custom sigmoid transformation to the scores
-    :type use_modsig: False
+    :param use_parsig: If True, apply the custom sigmoid transformation to the scores
+    :type use_parsig: False
     :param eps_neg: Negative epsilon value to add to the scores
     :type eps_neg: float
     :return: chromosome scores
@@ -299,23 +299,27 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
                     + c_2*dispersion_vec
                     + c_3*boundary_vec)
 
-    if modsig_B is not None or modsig_R is not None:
-        chrom_scores = modsig(chrom_scores, gamma, modsig_B=modsig_B, modsig_R=modsig_R)
+    if parsig_B is not None or parsig_R is not None or parsig_M is not None:
+        chrom_scores = parsig(chrom_scores, gamma, parsig_B=parsig_B, parsig_M=parsig_M, parsig_R=parsig_R)
     chrom_scores += eps_neg
     return chrom_scores
 
 
-def modsig(scores, gamma=None, modsig_B=None, modsig_M=None, modsig_R=None):
-    """Apply a parameterized sigmoid function to the scores to amplify the dual values of the most appealing loci/dvars
+def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scale_quantile:float=0.50) -> np.ndarray:
+    """'Parametric sigmoid function' that can be used to transform scores, amplifying the reduced costs/(negative dual price in the primal formulation) values of the most appealing loci/dvars. This can be used to further promote integrality.
     
-    :param scores: Scores for each genomic position within a given chromosome
+    :param scores: Scores for each genomic position within a given chromosome. Assumed to be scores generated with :func:`score_chrom_linear`, but can work for others as well.
     :type scores: np.ndarray
     :param gamma: :math:`\gamma` is the coefficient for the fragmentation/TV penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere.
     :type: gamma: float
-    :param modsig_M: Maximum value
-    :type modsig_M: float
-    :param modsig_R: Scales the rate of change of the function between its bounds
-    :type modsig_R: float
+    :param parsig_M: Upper bound (sup.) of scores under the transformation
+    :type parsig_M: float
+    :param parsig_B: An inflection point occurs in the transformation at `quantile(scores, parsig_B)/2`. For a given `parsig_R`, larger `parsig_B` value will result in more scores being pushed toward the minimum value of the transformed scores.
+    :type parsig_B: float
+    :param parsig_R: Scales the rate of change around the inflection point at `quantile(scores, parsig_B)/2`. Higher values of `parsig_R` will result in a steeper sigmoid curve, approaching a step function in the limit with two distinct values.
+    :type parsig_R: float
+    :param scale_quantile: Quantile of unique values in initial scores used to extend the new range of scores under the transformation
+    :type scale_quantile: float
     :return: transformed scores
     :rtype: np.ndarray
 
@@ -323,14 +327,29 @@ def modsig(scores, gamma=None, modsig_B=None, modsig_M=None, modsig_R=None):
 
     if gamma is None:
         gamma = 1.0
-    if modsig_B is None:
-        modsig_B = 0.95
-    if modsig_R is None:
-        modsig_R= 1.0
-    B_ = np.quantile(scores, modsig_B)
-    M_ = (2*gamma + abs(np.quantile(scores,q=(1 - 1.0e-2)))/2 + 1) if modsig_M is None else modsig_M
-    modsig_values = M_ / (1 + np.exp(-(modsig_R * ((scores - B_ / 2)))))
-    return modsig_values - np.min(modsig_values)
+
+    if parsig_B is None:
+        parsig_B = 0.95
+    elif parsig_B < 0 or parsig_B > 1:
+        raise ValueError('`parsig_B` must be in the range (0,1)')
+    
+    if parsig_R is None:
+        parsig_R= 2.0
+    elif parsig_R < 0:
+        raise ValueError('`parsig_R` must be greater than zero')
+
+    scores_ = np.array(scores)
+    scores_unique = np.array(sorted(list(set(list(scores)))))
+    scale_ = abs(np.quantile(scores_unique, q=scale_quantile, method='nearest'))
+    M_ = (2*gamma +1) + scale_ if parsig_M is None else parsig_M
+    if M_ < 0:
+        raise ValueError('`parsig_M` must be greater than zero')
+
+    B_ = np.quantile(scores_, parsig_B, method='nearest')
+    parsig_values = M_ / (1 + np.exp(-(parsig_R * ((scores - (B_ / 2))))))
+    parsig_values = parsig_values - np.min(parsig_values) # in case first inflection occurs below zero
+    logger.info(f'Parsig transformation applied with M={M_}, B={B_}, R={parsig_R}')
+    return parsig_values
 
 
 def get_warm_idx(scores, budget, gamma, warm_thresh=None) -> Tuple[np.ndarray, np.ndarray, float]:
@@ -901,9 +920,10 @@ def main():
     ## boundary-related arguments
     parser.add_argument('--c_3', type=float, default=1.0, help='Score parameter: coefficient for boundary measure. Assumed positive in the default implementation')
     ## misc. scoring-related arguments
-    parser.add_argument('--use_modsig', action='store_true', help='Apply `modsig` function to scores')    
-    parser.add_argument('--modsig_B', type=float, default=None, help='modsig function `B` parameter')
-    parser.add_argument('--modsig_R', type=float, default=None, help='modsig function `R` parameter')
+    parser.add_argument('--use_parsig', action='store_true', help='Apply `parsig` function to scores')    
+    parser.add_argument('--parsig_B', type=float, default=None, help='parsig function `B` parameter')
+    parser.add_argument('--parsig_M', type=float, default=None, help='parsig function `M` parameter')
+    parser.add_argument('--parsig_R', type=float, default=None, help='parsig function `R` parameter')
     parser.add_argument('--eps_neg', type=float, default=-1.0e-3)
 
     # count track/matrix generation and processing arguments
@@ -1041,14 +1061,14 @@ def main():
             disp_scores = score_dispersion_chrom(chrom_matrix, tprop=args['tprop'], method='tstd')
         boundary_scores = score_boundary_chrom(ct_scores)
         
-        if (args['modsig_B'] is not None or args['modsig_R'] is not None) and args['use_modsig'] is False:
-            args['use_modsig'] = True
-        if args['use_modsig'] and args['modsig_B'] is None:
-            args['modsig_B'] = (1-chrom_budget) - 1.0e-4
-        if args['use_modsig'] and args['modsig_R'] is None:
-            args['modsig_R'] = 1.0
+        if (args['parsig_B'] is not None or args['parsig_R'] is not None or args['parsig_M'] is not None) and args['use_parsig'] is False:
+            args['use_parsig'] = True
+        if args['use_parsig'] and args['parsig_B'] is None:
+            args['parsig_B'] = (1 - chrom_budget) + 1e-3
+        if args['use_parsig'] and args['parsig_R'] is None:
+            args['parsig_R'] = 2
 
-        chrom_scores = score_chrom_linear(ct_scores, disp_scores, boundary_scores, gamma=chrom_gamma, c_1=args['c_1'], c_2=args['c_2'], c_3=args['c_3'], eps_neg=args['eps_neg'], modsig_B=args['modsig_B'], modsig_R=args['modsig_R'])
+        chrom_scores = score_chrom_linear(ct_scores, disp_scores, boundary_scores, gamma=chrom_gamma, c_1=args['c_1'], c_2=args['c_2'], c_3=args['c_3'], eps_neg=args['eps_neg'], parsig_B=args['parsig_B'], parsig_R=args['parsig_R'], parsig_M=args['parsig_M'])
         
         score_output = pformat({
             'Quantile=0.01': round(np.quantile(chrom_scores, q=0.01, method='higher'), 5),
@@ -1060,9 +1080,10 @@ def main():
             'Quantile=0.99': round(np.quantile(chrom_scores, q=0.99, method='higher'), 5)})
 
         logger.info(f"\nChromosome {chrom_} scores:\n{score_output}\n")
-
+        
         warm_idx_, warm_scores_, warm_ratio_ = get_warm_idx(chrom_scores, chrom_budget, chrom_gamma)
-        logger.info(f'{chrom_}, {chrom_gamma}: warm idx: {len(warm_idx_)}, warm scores: {(warm_scores_[0], warm_scores_[-1])}, warm ratio: {warm_ratio_}')
+        if len(warm_idx_) > 1:
+            logger.info(f'{chrom_}, {chrom_gamma}: warm idx: {len(warm_idx_)}, warm scores: {(warm_scores_[0], warm_scores_[-1])}, warm ratio: {warm_ratio_}')
         # optimization phase
         logger.info(f'Solving LP relaxation using {args["solver"]}')
         logger.info(f'{chrom_}: budget: {chrom_budget}\tgamma: {chrom_gamma}')
