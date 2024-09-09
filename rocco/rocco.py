@@ -262,7 +262,7 @@ def score_boundary_chrom(signal_vector: np.ndarray, denom:float=1.0, power:float
     return boundary_stats**power
 
 
-def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, eps_neg=-1.0e-2, modsig_B=None, modsig_R=None) -> np.ndarray:
+def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, eps_neg=-1.0e-3, modsig_B=None, modsig_R=None) -> np.ndarray:
     r"""Return scores :math:`(\mathbf{G}\mathbf{c})^{\top}` where :math:`\mathbf{G}` is the :math:`n \times 3` matrix of central tendency scores, dispersion scores, and boundary scores for a given chromosome and :math:`\mathbf{c}` is the 3D vector of coefficients.
     
     This is the default scoring function for ROCCO, but various alternatives (e.g., log2fc) have successfully been
@@ -306,24 +306,17 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
 
 
 def modsig(scores, gamma=None, modsig_B=None, modsig_M=None, modsig_R=None):
-    """Apply a sigmoid-like function to the scores to amplify the dual values of decision variables with high scores.
-    
-    In encountered use-cases, the distribution of scores has been sufficiently U-shaped + zero-inflated
-    to ensure a sufficient number of large dual values to push a substantial fraction of dvars toward
-    their integral bounds, which prevents overreliance on the stochastic ROCCO-RR procedure. This function
-    promotes this aspect explicitly.
+    """Apply a parameterized sigmoid function to the scores to amplify the dual values of the most appealing loci/dvars
     
     :param scores: Scores for each genomic position within a given chromosome
     :type scores: np.ndarray
     :param gamma: :math:`\gamma` is the coefficient for the fragmentation/TV penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere.
     :type: gamma: float
-    :param modsig_B: Quantile for the baseline value
-    :type modsig_B: float
-    :param modsig_M: Maximum value for the sigmoid function
+    :param modsig_M: Maximum value
     :type modsig_M: float
-    :param modsig_R: Scales the rate of change
+    :param modsig_R: Scales the rate of change of the function between its bounds
     :type modsig_R: float
-    :return: Sigmoid-transformed scores
+    :return: transformed scores
     :rtype: np.ndarray
 
     """
@@ -334,9 +327,9 @@ def modsig(scores, gamma=None, modsig_B=None, modsig_M=None, modsig_R=None):
         modsig_B = 0.95
     if modsig_R is None:
         modsig_R= 1.0
-    B_ = np.quantile(scores, modsig_B) 
-    M_ = (2*gamma + abs(np.quantile(scores,q=(1 - 1.0e-4)))/2 + 1) if modsig_M is None else modsig_M
-    modsig_values = M_ / (1 + np.exp(-(modsig_R * ((scores - B_)))))
+    B_ = np.quantile(scores, modsig_B)
+    M_ = (2*gamma + abs(np.quantile(scores,q=(1 - 1.0e-2)))/2 + 1) if modsig_M is None else modsig_M
+    modsig_values = M_ / (1 + np.exp(-(modsig_R * ((scores - B_ / 2)))))
     return modsig_values - np.min(modsig_values)
 
 
@@ -684,7 +677,7 @@ def get_floor_eps_sol(chrom_lp_sol:np.ndarray, budget:float,
         raise ValueError('`eps_mult` must be greater than 1')
 
     n = len(chrom_lp_sol)
-    plus_half = np.array([x for x in chrom_lp_sol if x > .50 and x < 1])
+    plus_half = np.array([x for x in chrom_lp_sol if x > 0 and x < 1])
     if plus_half is None or len(plus_half) == 0:
         eps_cpy = 0
     else:
@@ -738,11 +731,12 @@ def get_rround_sol(chrom_lp_sol, scores, budget, gamma,
     if rand_iter <= 0:
         return init_sol, init_score
 
-    nonint_loci = np.array([i for i in range(len(chrom_lp_sol)) if chrom_lp_sol[i] > int_tol and chrom_lp_sol[i] < 1-int_tol])
+    nonint_loci = np.array([i for i in range(len(chrom_lp_sol)) if chrom_lp_sol[i] > int_tol and chrom_lp_sol[i] < 1-int_tol], dtype=int)
     logger.info(f'Number of fractional decision variables in LP (tol={int_tol}): {len(nonint_loci)}')
-
+    if len(nonint_loci) > 0:
+        logger.info(f"{nonint_loci}, {chrom_lp_sol[nonint_loci]}\n")
     if len(nonint_loci) == 0:
-        logger.info('LP solution is integral. Returning.')
+        logger.info('LP solution is integral. Returning.\n')
         return init_sol, init_score
  
     rround_sol = copy.copy(init_sol)
@@ -1050,7 +1044,7 @@ def main():
         if (args['modsig_B'] is not None or args['modsig_R'] is not None) and args['use_modsig'] is False:
             args['use_modsig'] = True
         if args['use_modsig'] and args['modsig_B'] is None:
-            args['modsig_B'] = (1-chrom_budget) - 1.0e-2
+            args['modsig_B'] = (1-chrom_budget) - 1.0e-4
         if args['use_modsig'] and args['modsig_R'] is None:
             args['modsig_R'] = 1.0
 
