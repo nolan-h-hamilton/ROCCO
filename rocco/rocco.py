@@ -1096,8 +1096,7 @@ def main():
     if os.path.exists(final_output):
         logger.info(f'Final output: {final_output}')
 
-    
-    
+    logger.info('Cleaning up temporary files')
     for tmp_file in tmp_chrom_bed_files:
         try:
             os.remove(tmp_file)
