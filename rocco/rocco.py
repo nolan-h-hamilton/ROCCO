@@ -15,7 +15,7 @@ ROCCO is an algorithm for efficient identification of "consensus peaks" in multi
 How
 ---
 
-ROCCO models consensus peak calling as a constrained optimization problem with an upper-bound on the total proportion of the genome selected as open/accessible and a fragmentation penalty to promote spatial consistency in active regions and sparsity elsewhere.
+ROCCO models consensus peak calling as a constrained optimization problem with an upper-bound on the total proportion of the genome selected as open/accessible and a 'total variation' or 'fragmentation' penalty to promote spatial consistency in active regions and sparsity elsewhere.
 
 Why
 ---
@@ -50,22 +50,57 @@ Documentation
 
 ROCCO's documentation is available at `https://nolan-h-hamilton.github.io/ROCCO/ <https://nolan-h-hamilton.github.io/ROCCO/>`_
 
-Installation
-------------
 
-.. code-block:: text
+Installation:
+-------------
 
-   pip install rocco
+**PyPI (pip)**:
 
-ROCCO utilizes the popular bioinformatics software `Samtools <http://www.htslib.org>`_ and `bedtools <https://bedtools.readthedocs.io/en/latest/>`_. If not available already, these system dependencies can be installed with standard MacOS or Linux/Unix package managers, e.g., ``brew install samtools`` (Homebrew), ``sudo apt-get install samtools`` (APT).
+To install ROCCO via PyPI, use the following command:
+    pip install rocco
 
-Input/Output
-------------
+**Build from Source**
 
-For command-line use, input is `-i sample1.bam sample2.bam ...` (or `.bw`) and output is a BED file of consensus peak regions.
 
-Using the module(s) themselves programmatically, the input can be a matrix of read densities or scores for each genomic position in each sample.
+To build ROCCO from source:
+
+1. Clone or download the repository:
+    git clone https://github.com/nolan-h-hamilton/ROCCO.git
+    cd ROCCO
+
+2. Install required tools if you haven't already:
+    pip install setuptools wheel
+
+3. Build and install the package:
+    python setup.py sdist bdist_wheel
+    pip install -e .
+
+Dependencies:
+-------------
+ROCCO utilizes the popular bioinformatics software Samtools (http://www.htslib.org) and bedtools (https://bedtools.readthedocs.io/en/latest/). 
+If these are not already installed, you can either setup a conda environment for ROCCO or install system-wide, e.g., 
+
+For Homebrew (MacOS):
+    brew install samtools
+    brew install bedtools
+
+For APT (Linux):
+    sudo apt-get install samtools
+    sudo apt-get install bedtools
+
+
+Input/Output:
+-------------
+* Input: BAM alignments or BigWig tracks from multiple data samples
+* Output: BED file of consensus peak regions
+
+
+.. note::
+
+    Using the module(s) themselves programmatically instead of the command-line interface will allow greater flexibility in terms of input/output, data preprocessing/postprocessing, and parallelization but will require more coding on the user's end.
+
 """
+
 
 #!/usr/bin/env python
 import argparse
@@ -98,6 +133,8 @@ from .readtracks import *
 # set up logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO,
+                    format='%(filename)s: %(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.WARNING,
                     format='%(filename)s: %(asctime)s - %(levelname)s - %(message)s')
 
 
@@ -282,7 +319,7 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
     :type dispersion_vec: np.ndarray
     :param boundary_vec: Boundary scores for a given chromosome
     :type boundary_vec: np.ndarray
-    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere.
+    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere. The ideal value of `gamma` is for a given dataset is dependent on the user's preference. Increase to encourage solutions that are 'block-like'.
     :type: gamma: float
     :param c_1: Coefficient for central tendency scores (:math:`c_1 g_1(i),~i=1,\ldots,n` in the paper)
     :type c_1: float
@@ -292,6 +329,12 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
     :type c_3: float
     :param use_parsig: If True, apply the custom sigmoid transformation to the scores
     :type use_parsig: False
+    :param parsig_M: Upper bound (sup.) of scores under the transformation
+    :type parsig_M: float
+    :param parsig_B: An inflection point occurs in the transformation at `quantile(scores, parsig_B)/2`. For a given `parsig_R`, larger `parsig_B` value will result in more scores being pushed toward the minimum value of the transformed scores.
+    :type parsig_B: float
+    :param parsig_R: Scales the rate of change around the inflection point at `quantile(scores, parsig_B)/2`. Higher values of `parsig_R` will result in a steeper sigmoid curve, approaching a step function in the limit with two distinct values.
+    :type parsig_R: float
     :param eps_neg: Negative epsilon value to add to the scores
     :type eps_neg: float
     :return: chromosome scores
@@ -318,7 +361,7 @@ def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scal
     
     :param scores: Scores for each genomic position within a given chromosome. Assumed to be scores generated with :func:`score_chrom_linear`, but can work for others as well.
     :type scores: np.ndarray
-    :param gamma: :math:`\gamma` is the coefficient for the fragmentation/TV penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere.
+    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere. The ideal value of `gamma` is for a given dataset is dependent on the user's preference. Increase to encourage solutions that are 'block-like'.
     :type: gamma: float
     :param parsig_M: Upper bound (sup.) of scores under the transformation
     :type parsig_M: float
@@ -361,18 +404,17 @@ def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scal
 
 
 def get_warm_idx(scores, budget, gamma, warm_thresh=None) -> Tuple[np.ndarray, np.ndarray, float]:
-    r"""Prior to solving, identify 'warm' indices--those with scores greater than the worst-case fragmentation penalty
-    that could be incurred by their selection
+    r"""Prior to solving, identify 'warm' indices--those with scores greater than the worst-case fragmentation penalty that could be incurred by their selection assuming integrality (`2*gamma`).
 
     :param scores: Scores for each genomic position within a given chromosome
     :type scores: np.ndarray
     :param budget: :math:`b` upper bounds the proportion of the chromosome that can be selected as open/accessible
     :type budget: float
-    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere.
+    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere. The ideal value of `gamma` is for a given dataset is dependent on the user's preference. Increase to encourage solutions that are 'block-like'.
     :type: gamma: float
     :param warm_thresh: Threshold for warm indices. If None, the threshold is set to 2*gamma
     :type warm_thresh: float
-    :return: 
+    :return: Warm indices, warm scores, and the proportion of warm indices to the maximum number of selections
     :rtype: Tuple[np.ndarray, np.ndarray, float]
     
     """
@@ -406,7 +448,7 @@ def solve_relaxation_chrom_pdlp(scores,
                     threads:int=0,
                     verbose:bool=False,
                     save_model:str=None) -> Tuple[np.ndarray, float]:
-    r"""Solve the relaxation using the *first-order* method, pdlp
+    r"""Solve the relaxation for a specific chromosome using the *first-order* method, pdlp
     
     See the  `full paper for pdlp <https://proceedings.neurips.cc/paper/2021/hash/a8fbbd3b11424ce032ba813493d95ad7-Abstract.html>`_ for a complete technical exposition.
     
@@ -416,7 +458,7 @@ def solve_relaxation_chrom_pdlp(scores,
     :type scores: np.ndarray
     :param budget: :math:`b` upper bounds the proportion of the chromosome that can be selected as open/accessible
     :type budget: float
-    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere.
+    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere. The ideal value of `gamma` is for a given dataset is dependent on the user's preference. Increase to encourage solutions that are 'block-like'.
     :type: gamma: float
     :param pdlp_proto: pdlp-specific protocol buffer. If this is not None, the explicit solver arguments in this function definition are ignored. See `<https://protobuf.dev>`_ for more information on protocol buffers and `solvers.proto <https://github.com/google/or-tools/blob/2c333f58a37d7c75d29a58fd772c9b3f94e2ca1c/ortools/pdlp/solvers.proto>`_ for Google's pdlp-specific protocol buffer.
     :type pdlp_proto: solvers_pb2.PrimalDualHybridGradientParams
@@ -541,7 +583,7 @@ def solve_relaxation_chrom_glop(scores,
                      threads:int=0,
                      verbose:bool=False,
                      save_model:str=None) -> Tuple[np.ndarray, float]:
-    r"""Solve the relaxation using the *simplex-based* method, glop
+    r"""Solve the relaxation for a specific chromosome using the *simplex-based* method, glop
 
     `OR-tools linear programming resources and documentation <https://developers.google.com/optimization/lp>`_
     
@@ -552,7 +594,7 @@ def solve_relaxation_chrom_glop(scores,
     :type scores: np.ndarray
     :param budget: :math:`b` upper bounds the proportion of the chromosome that can be selected as open/accessible
     :type budget: float
-    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere.
+    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere. The ideal value of `gamma` is for a given dataset is dependent on the user's preference. Increase to encourage solutions that are 'block-like'.
     :type: gamma: float
     :param glop_parameters: glop-specific protocol buffer. If this is not None, the explicit solver arguments in this function definition are ignored. See `<https://protobuf.dev>`_ for more information on protocol buffers and `parameters.proto <https://github.com/google/or-tools/blob/stable/ortools/glop/parameters.proto>`_ for Google's glop-specific protocol buffer.
     :type glop_parameters: parameters_pb2.GlopParameters
@@ -891,7 +933,7 @@ def main():
     parser = argparse.ArgumentParser(description='ROCCO (Robust Open Chromatin Detection via Convex Optimization) Consensus Peak Caller')
     parser.add_argument('--input_files', '-i', nargs='+', help='BAM alignment files or BigWig files corresponding to samples')
     parser.add_argument('--output', '--outfile', '-o', type=str, default=f"rocco_peaks_output_{ID}.bed")
-    parser.add_argument('--genome', '-g', default=None, help='Genome assembly. Invoking this argument with a supported assembly (hg38, hg19, mm10, mm39) will use default resources (`--chrom_sizes_file`) and parameters (`--params`) specific to that assembly that come with the ROCCO package by default. If not specified, the user can provide a chromosome sizes file (`--chrom_sizes_file`) and/or effective genome size (`--effective_genome_size`) and/or chromosome-specific parameter file (`--params`).')
+    parser.add_argument('--genome', '-g', default=None, help='Genome assembly. Invoking this argument with a supported assembly (hg38, hg19, mm10, mm39, dm6) will use default resources (`--chrom_sizes_file`), parameters (`--params`) and EGS (`--effective_genome_size`) specific to that assembly that come with the ROCCO package by default. If this argument is not invoked, you can just supply the required arguments manually with the command-line arguments.')
     parser.add_argument('--chrom_sizes_file', '-s', default=None, help='Chromosome sizes file. Required if genome is not specified')
     parser.add_argument('--effective_genome_size', type=int, default=None, help='Effective genome size. Required if genome is not specified and using RPGC normalization')
     parser.add_argument('--chroms', nargs='+', type=str, default=[], help='Chromosomes to process. If not specified, all chromosomes will be processed')
@@ -904,9 +946,9 @@ def main():
     parser.add_argument('--int_tol', type=float, default=1.0e-6, help='If a decision variable is within `int_tol` of 0 or 1, it is considered integral.')
     parser.add_argument('--eps_mult', type=float, default=1.01, help='Successively divides the floor_eps solution epsilon value until the floor_eps solution, floor(lp_solution + ε) is feasible.')
     parser.add_argument('--rand_iter', type=int, default=1000, help='Number of random iterations for the ROCCO-RR randomization procedure. If less than or equal to zero, ROCCO-RR is not applied and one of the floor-based heuristics is used to obtain an integer feasible solution.')
-    parser.add_argument('--budget', type=float, default=None, help='Upper bounds the proportion of the genome that can be selected as open chromatin. Note, if invoked, this argument value will override the chromosome-specific budget values in (`--params`), assuming they were provided.')
-    parser.add_argument('--gamma', type=float, default=None, help='Gamma penalty in the optimization problem. Controls weight of the "fragmentation penalty" to promote spatial consistency over enriched regions and sparsity elsewhere.  This value will override the chromosome-specific gamma values (`--params`) if not None.')
-    parser.add_argument('--params', type=str, default=None, help='CSV file containing chromosome-specific optimization parameters. Each supported genome has a custom `--params` file packaged with ROCCO, but a custom file can be easily be created manually and passed to ROCCO with this argument.')
+    parser.add_argument('--budget', type=float, default=None, help='Upper bounds the proportion of the genome that can be selected as open chromatin. NOTE: if invoked, this argument value will override the chromosome-specific budget values in (`--params`), assuming they were provided.')
+    parser.add_argument('--gamma', type=float, default=None, help='Gamma penalty in the optimization problem. Controls weight of the "fragmentation penalty" to promote spatial consistency over enriched regions and sparsity elsewhere.  NOTE: if invoked, this value will override the chromosome-specific gamma values (`--params`), assuming they were provided.')
+    parser.add_argument('--params', type=str, default=None, help='CSV file containing chromosome-specific optimization parameters. Each supported genome has a custom `--params` file packaged with ROCCO, but a custom file can be easily be created manually and passed to ROCCO with this argument. Consider using this argument to set chromosome-specific budget and gamma values custom to your data and preferences.')
     parser.add_argument('--threads', type=int, default=-1, help='Number of threads to use for optimization. Default is -1 (use all available threads)')
     parser.add_argument('--eps_optimal_absolute', '--atol', type=float, default=1.0e-8, help="pdlp solver only. One component of the bound on the duality gap used to check for convergence. If computational resources are limited, consider using `1.0e-4` per the `ortools` documentation")
     parser.add_argument('--eps_optimal_relative', '--rtol', type=float, default=1.0e-8, help="pdlp solver only. One component of the bound on the duality gap used to check for convergence. If computational resources are limited, consider using `1.0e-4` per the `ortools` documentation")
@@ -994,7 +1036,6 @@ def main():
         raise ValueError('Genome is not specified: Chromosome sizes file is required')
     if args['effective_genome_size'] is None and args['norm_method'] == 'RPGC':
         raise ValueError('Genome is not specified: RPGC normalization requires an effective genome size')
-    
     bam_files = []
     bigwig_files = []
     for file_ in args['input_files']:
@@ -1037,6 +1078,7 @@ def main():
         chrom_gamma = None
         #check if chrom in params_df
         if args['params'] is not None:
+            logger.info(f'Attempting to use custom parameters file: {args["params"]}')
             params_df = pd.read_csv(args['params'], sep=',')
             if chrom_ in params_df['chrom'].values:
                 # assign float values
@@ -1058,6 +1100,13 @@ def main():
         else:
             chrom_intervals, chrom_matrix = generate_chrom_matrix(chrom_, bigwig_files, args['chrom_sizes_file'], args['step'], round_digits=args['round_digits'], log_plus_const=args['log_plus_const'], log_const=args['log_const'])
         logger.info(f'Chromosome {chrom_} Matrix: {chrom_matrix.shape}')
+
+        try:
+            # scale gamma so that it has the same interpretation across different step sizes
+            step = float(chrom_intervals[1] - chrom_intervals[0])
+            chrom_gamma = (chrom_gamma / step)*50.0
+        except Exception as e:
+            logger.info(f'Could not scale gamma based on step size: {e}')
         
         # scoring phase
         logger.info(f'Scoring regions: {chrom_}')

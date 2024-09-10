@@ -1,0 +1,8 @@
+chrom,budget,gamma
+chr2L,.05,1.0
+chr2R,.05,1.0
+chr3L,.05,1.0
+chr3R,.05,1.0
+chr4,.005,1.0
+chrX,.05,1.0
+chrY,.005,1.0
