@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 r"""
 ROCCO: (R)obust (O)pen (C)hromatin Detection via (C)onvex (O)ptimization
 ==================================================================================
@@ -181,11 +182,18 @@ def score_central_tendency_chrom(chrom_matrix, method='quantile', quantile=0.50,
     central_tendency_stats = None
 
     if method_ == 'quantile':
-        central_tendency_stats = np.quantile(chrom_matrix, quantile, axis=0)
+        central_tendency_stats = np.quantile(chrom_matrix, quantile, axis=0, method='nearest')
+
     if method_ == "tmean":
-        llim = np.quantile(chrom_matrix, tprop, method='nearest', axis=0)
-        ulim = np.quantile(chrom_matrix, 1-tprop, method='nearest', axis=0)
-        central_tendency_stats = stats.tmean(chrom_matrix, limits=(llim, ulim), inclusive=(True, True), axis=0)
+        # Calculate lower and upper limits for trimming
+        llim = np.quantile(chrom_matrix, tprop, axis=0, method='nearest')
+        ulim = np.quantile(chrom_matrix, 1-tprop, axis=0, method='nearest')
+        
+        # Apply trimmed mean column-wise
+        central_tendency_stats = np.array([
+            stats.tmean(chrom_matrix[:, i], limits=(llim[i], ulim[i]), inclusive=(True, True))
+            for i in range(chrom_matrix.shape[1])
+        ])
 
     if method_ == "mean":
         central_tendency_stats = np.mean(chrom_matrix, axis=0)
@@ -306,7 +314,7 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
 
 
 def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scale_quantile:float=0.50) -> np.ndarray:
-    """'Parametric sigmoid function' that can be used to transform scores, amplifying the reduced costs/(negative dual price in the primal formulation) values of the most appealing loci/dvars. This can be used to further promote integrality.
+    r"""'Parametric sigmoid function' that can be used to transform scores, amplifying the reduced costs/(negative dual price in the primal formulation) values of the most appealing loci/dvars. This can be used to further promote integrality.
     
     :param scores: Scores for each genomic position within a given chromosome. Assumed to be scores generated with :func:`score_chrom_linear`, but can work for others as well.
     :type scores: np.ndarray
@@ -665,8 +673,9 @@ def get_floor_eps_sol(chrom_lp_sol:np.ndarray, budget:float,
                       eps_mult:float=1.01) -> np.ndarray:
     r"""Compute the `floor_eps` heuristic from the relaxation
     
-    Adds a small :math:`\epsilon` to each decision variable before returning the floor of each to ensure feasibility/integrality.  The `floor_eps` heuristic is a crude heuristic to obtain an initial integer-feasible solution from the LP relaxation, but is
-    well-suited as an initial reference point for the ROCCO-RR heuristic.
+    Adds a small :math:`\epsilon` to each decision variable before applying the floor function. Addresses solutions in the interior of the feasible region near integer corner point solutions.  The `floor_eps` approach is a crude heuristic to obtain an initial integer-feasible solution from the LP relaxation, but is
+    well-suited as an initial reference point for the ROCCO-RR heuristic. In many cases, the relaxed LP solution is
+    nearly integral and the `floor_eps` heuristic and randomized `ROCCO-RR` procedure has little effect.
     
     :param chrom_lp_sol: Solution vector from the LP relaxation
     :type chrom_lp_sol: np.ndarray
@@ -700,7 +709,7 @@ def get_floor_eps_sol(chrom_lp_sol:np.ndarray, budget:float,
     if plus_half is None or len(plus_half) == 0:
         eps_cpy = 0
     else:
-        eps_cpy = sorted(np.array(1 - plus_half), reverse=True)[-1]
+        eps_cpy = (1/2) + 1.0e-4
     init_sol = np.floor(chrom_lp_sol + eps_cpy)
     floor_eps_iter_ct = 0
     while np.sum(init_sol) > np.floor(n*budget):
@@ -740,7 +749,7 @@ def get_rround_sol(chrom_lp_sol, scores, budget, gamma,
     floor_eps_score = _objective_function(sol=floor_eps_sol, scores=scores, gamma=gamma)
     init_sol = None
     init_score = None
-    if floor_eps_score < floor_score:
+    if floor_eps_score < floor_score and np.sum(floor_eps_sol) <= np.floor(n*budget):
         init_sol = floor_eps_sol
         init_score = floor_eps_score
     else:
@@ -748,6 +757,7 @@ def get_rround_sol(chrom_lp_sol, scores, budget, gamma,
         init_score = floor_score
 
     if rand_iter <= 0:
+        logger.info('`rand_iter < 0`, returning floor-based solution.')
         return init_sol, init_score
 
     nonint_loci = np.array([i for i in range(len(chrom_lp_sol)) if chrom_lp_sol[i] > int_tol and chrom_lp_sol[i] < 1-int_tol], dtype=int)
@@ -784,7 +794,7 @@ def get_rround_sol(chrom_lp_sol, scores, budget, gamma,
 
 def chrom_solution_to_bed(chromosome, intervals, solution, ID=None,
                           check_gaps_intervals=True, min_length_bp=None)-> str:
-    r"""Convert the ROCCO solution for a given chromosome to a BED file
+    r"""Convert the ROCCO-generated vector of decision variables for a given chromosome to a BED file
     
     :param chromosome: Chromosome name
     :type chromosome: str
@@ -831,7 +841,8 @@ def chrom_solution_to_bed(chromosome, intervals, solution, ID=None,
 
 
 def combine_chrom_results(chrom_bed_files:list, output_file:str, name_features:bool=False) -> str:
-    r"""Combine the results from individual chromosome solutions into a single BED file
+    r"""Combine the results from individual chromosome solutions into a single BED file after running
+    ROCCO on each chromosome
     
     :param chrom_bed_files: List of BED files for each chromosome
     :type chrom_bed_files: list
@@ -880,7 +891,7 @@ def main():
     parser = argparse.ArgumentParser(description='ROCCO (Robust Open Chromatin Detection via Convex Optimization) Consensus Peak Caller')
     parser.add_argument('--input_files', '-i', nargs='+', help='BAM alignment files or BigWig files corresponding to samples')
     parser.add_argument('--output', '--outfile', '-o', type=str, default=f"rocco_peaks_output_{ID}.bed")
-    parser.add_argument('--genome', '-g', default=None)
+    parser.add_argument('--genome', '-g', default=None, help='Genome assembly. Invoking this argument with a supported assembly (hg38, hg19, mm10, mm39) will use default resources (`--chrom_sizes_file`) and parameters (`--params`) specific to that assembly that come with the ROCCO package by default. If not specified, the user can provide a chromosome sizes file (`--chrom_sizes_file`) and/or effective genome size (`--effective_genome_size`) and/or chromosome-specific parameter file (`--params`).')
     parser.add_argument('--chrom_sizes_file', '-s', default=None, help='Chromosome sizes file. Required if genome is not specified')
     parser.add_argument('--effective_genome_size', type=int, default=None, help='Effective genome size. Required if genome is not specified and using RPGC normalization')
     parser.add_argument('--chroms', nargs='+', type=str, default=[], help='Chromosomes to process. If not specified, all chromosomes will be processed')
@@ -889,28 +900,28 @@ def main():
 
 
     # optimization-related arguments
-    parser.add_argument('--solver', default='pdlp', choices=['glop', 'pdlp', 'GLOP', 'PDLP'], help='Solver to use for optimization. Default is pdlp (first-order method) but glop (simplex-based method) is also supported. See module documentation for more information.')
-    parser.add_argument('--int_tol', type=float, default=1.0e-6, help='If a decision variable is within `int_tol` of 0 or 1, it is considered integral')
-    parser.add_argument('--eps_mult', type=float, default=1.01, help='Successively divides the floor_eps solution epsilon value')
-    parser.add_argument('--rand_iter', type=int, default=1000, help='Number of random iterations for the ROCCO-RR heuristic')
-    parser.add_argument('--budget', type=float, default=None, help='Upper bounds the proportion of the genome that can be selected as open chromatin. This value will override the chromosome-specific budget values (`--params`) if not None.')
+    parser.add_argument('--solver', default='pdlp', choices=['glop', 'pdlp', 'GLOP', 'PDLP'], help='Solver to use for optimization. Default is pdlp (first-order pdhg method) but glop (simplex-based method) is also supported. See module documentation for more information.')
+    parser.add_argument('--int_tol', type=float, default=1.0e-6, help='If a decision variable is within `int_tol` of 0 or 1, it is considered integral.')
+    parser.add_argument('--eps_mult', type=float, default=1.01, help='Successively divides the floor_eps solution epsilon value until the floor_eps solution, floor(lp_solution + ε) is feasible.')
+    parser.add_argument('--rand_iter', type=int, default=1000, help='Number of random iterations for the ROCCO-RR randomization procedure. If less than or equal to zero, ROCCO-RR is not applied and one of the floor-based heuristics is used to obtain an integer feasible solution.')
+    parser.add_argument('--budget', type=float, default=None, help='Upper bounds the proportion of the genome that can be selected as open chromatin. Note, if invoked, this argument value will override the chromosome-specific budget values in (`--params`), assuming they were provided.')
     parser.add_argument('--gamma', type=float, default=None, help='Gamma penalty in the optimization problem. Controls weight of the "fragmentation penalty" to promote spatial consistency over enriched regions and sparsity elsewhere.  This value will override the chromosome-specific gamma values (`--params`) if not None.')
-    parser.add_argument('--params', type=str, default=None, help='CSV file containing chromosome-specific optimization parameters. Each supported genome has a custom `--params` file, but a custom file can be provided here.')
+    parser.add_argument('--params', type=str, default=None, help='CSV file containing chromosome-specific optimization parameters. Each supported genome has a custom `--params` file packaged with ROCCO, but a custom file can be easily be created manually and passed to ROCCO with this argument.')
     parser.add_argument('--threads', type=int, default=-1, help='Number of threads to use for optimization. Default is -1 (use all available threads)')
-    parser.add_argument('--eps_optimal_absolute', '--atol', type=float, default=1.0e-8, help="pdlp only. One component of the bound on the duality gap used to check for convergence. If computational resources are limited, consider using `1.0e-4` per the `ortools` documentation")
-    parser.add_argument('--eps_optimal_relative', '--rtol', type=float, default=1.0e-8, help="pdlp only. One component of the bound on the duality gap used to check for convergence. If computational resources are limited, consider using `1.0e-4` per the `ortools` documentation")
-    parser.add_argument('--primal_feasibility_tolerance', type=float, default=1.0e-8, help="glop-solver only.")
-    parser.add_argument('--dual_feasibility_tolerance', type=float, default=1.0e-8, help="glop-solver only.")
-    parser.add_argument('--pdlp_presolve_use_glop', action='store_true', help="pdlp-solver only. Use glop's presolve routines but solve with pdlp")
-    parser.add_argument('--loose_solve', action='store_true', help="This will run pdlp (not glop) with weakened termination criteria")
+    parser.add_argument('--eps_optimal_absolute', '--atol', type=float, default=1.0e-8, help="pdlp solver only. One component of the bound on the duality gap used to check for convergence. If computational resources are limited, consider using `1.0e-4` per the `ortools` documentation")
+    parser.add_argument('--eps_optimal_relative', '--rtol', type=float, default=1.0e-8, help="pdlp solver only. One component of the bound on the duality gap used to check for convergence. If computational resources are limited, consider using `1.0e-4` per the `ortools` documentation")
+    parser.add_argument('--primal_feasibility_tolerance', type=float, default=1.0e-8, help="glop solver only.")
+    parser.add_argument('--dual_feasibility_tolerance', type=float, default=1.0e-8, help="glop solver only.")
+    parser.add_argument('--pdlp_presolve_use_glop', action='store_true', help="pdlp solver only. Use glop's presolve routines but solve with pdlp. Recommended for most cases.")
+    parser.add_argument('--loose_solve', action='store_true', help="This will run pdlp (not glop) with weakened termination criteria. Consider using if computational resources are limited.")
 
 
     # scoring-related arguments
     ## central tendency-related arguments
     parser.add_argument('--c_1', type=float, default=1.0, help='Score parameter: coefficient for central tendency measure. Assumed positive in the default implementation')
     parser.add_argument('--method_central_tendency', default='quantile', choices=['quantile', 'tmean', 'mean'], help='Central tendency measure. Default is `quantile` with `quantile_value` set to 0.50 (median)')
-    parser.add_argument('--quantile_value', type=float, default=0.50, help='Quantile value for central tendency measure. Only applies if `method_central_tendency` is set to `quantile`')
-    parser.add_argument('--tprop', type=float, default=0.05, help='Trim proportion for trimmed mean (`tmean`) and/or trimmed std (`tstd`).')
+    parser.add_argument('--quantile_value', type=float, default=0.50, help='Quantile value for central tendency measure--Only applies if `method_central_tendency` is set to `quantile`')
+    parser.add_argument('--tprop', type=float, default=0.05, help='Trim proportion for  (`tmean`)--Only applies for trimmed mean central tendency measure.')
 
     ## dispersion-related arguments
     parser.add_argument('--c_2', type=float, default=-1.0, help='Score parameter: coefficient for dispersion measure. Assumed negative in the default implementation')
@@ -919,8 +930,10 @@ def main():
 
     ## boundary-related arguments
     parser.add_argument('--c_3', type=float, default=1.0, help='Score parameter: coefficient for boundary measure. Assumed positive in the default implementation')
-    ## misc. scoring-related arguments
-    parser.add_argument('--use_parsig', action='store_true', help='Apply `parsig` function to scores')    
+
+
+    ## parsig-related arguments
+    parser.add_argument('--use_parsig', action='store_true', help='Apply `parsig` function to scores. Consider using to promote already-integral solutions in the LP relaxed version of the problem, thereby reducing over-dependence on the ROCCO-RR procedure, which is stochastic. Default parameters work well for most cases but see documentation for more information.')    
     parser.add_argument('--parsig_B', type=float, default=None, help='parsig function `B` parameter')
     parser.add_argument('--parsig_M', type=float, default=None, help='parsig function `M` parameter')
     parser.add_argument('--parsig_R', type=float, default=None, help='parsig function `R` parameter')
@@ -928,37 +941,40 @@ def main():
 
     # count track/matrix generation and processing arguments
     parser.add_argument('--step', '-w', type=int, default=50,
-                        help='Size of the intervals to use for the Consenrich filter. "Step" is used synonymously with "bin size", "window size", etc. Note intervals are fixed-size and contiguous.')
+                        help='Size of contiguous, fixed-width genomic intervals over which reads are counted (referred to as "loci" in the paper). Larger `--step` values will capture less substructure within peak regions, but this may be desired for some analyses and reduces runtime/memory use, as well. Default is 50 bp. If using BigWig files as input, this value is ignored.')
     parser.add_argument('--norm_method', default='RPGC',
-                        choices=['RPGC', 'CPM', 'RPKM', 'BPM', 'rpgc', 'cpm', 'rpkm', 'bpm'])
-    parser.add_argument('--min_mapping_score', type=int, default=-1, help='Equivalent to samtools view -q')
-    parser.add_argument('--flag_include', type=int, default=66, help='Equivalent to samtools view -f')
-    parser.add_argument('--flag_exclude', type=int, default=1284, help='Equivalent to samtools view -F')
-    parser.add_argument('--extend_reads', type=int, default=-1, help='See `deeptools bamCoverage --extendReads`')
-    parser.add_argument('--center_reads', action='store_true', help='See `deeptools bamCoverage --centerReads`')
-    parser.add_argument('--ignore_for_norm', nargs='+', default=[], help='Chromosomes to ignore for normalization')
+                        choices=['RPGC', 'CPM', 'RPKM', 'BPM', 'rpgc', 'cpm', 'rpkm', 'bpm'], help='Normalization method. Default is RPGC (Reads Per Genomic Content), for which the `--effective_genome_size` argument is required (default EGS values supplied automatically for supported genomes). Ignored if input files are BigWig files.')
+    parser.add_argument('--min_mapping_score', type=int, default=-1, help='Equivalent to samtools view -q. Ignored if input files are BigWig files.')
+    parser.add_argument('--flag_include', type=int, default=66, help='Equivalent to samtools view -f. Ignored if input files are BigWig files.')
+    parser.add_argument('--flag_exclude', type=int, default=1284, help='Equivalent to samtools view -F. Ignored if input files are BigWig files.')
+    parser.add_argument('--extend_reads', type=int, default=-1, help='See `deeptools bamCoverage --extendReads`. Ignored if input files are BigWig files.')
+    parser.add_argument('--center_reads', action='store_true', help='See `deeptools bamCoverage --centerReads`. Ignored if input files are BigWig files.')
+    parser.add_argument('--ignore_for_norm', nargs='+', default=[], help='Chromosomes to ignore for normalization. Ignored if input files are BigWig files.')
     parser.add_argument('--scale_factor', type=float, default=1.0,
-                        help='bamCoverage scale factor argument. See `deeptools bamCoverage --scaleFactor`')
+                        help='bamCoverage scale factor argument. See `deeptools bamCoverage --scaleFactor`. Ignored if input files are BigWig files.')
     parser.add_argument('--use_existing_bigwigs', action='store_true',
                         help='If True, use existing BigWig files instead of generating new ones (name must match the input BAM files and parameters used.)')
     parser.add_argument('--round_digits', type=int, default=5,
                         help='Number of digits to round values to where applicable')
     parser.add_argument('--use_savgol_filter', action='store_true',
-                        help='Use Savitzky-Golay filter (local least squares) on count tracks after normalization')
-    parser.add_argument('--savgol_window_bp', type=int, default=None, help='Window size for Savitzky-Golay filter in base pairs. If None, the window size is set in `readtracks.py`.')
-    parser.add_argument('--savgol_order', type=int, default=None, help='Polynomial degree for the least-squares approximation at each step. If None, the degree is set to roughly window_size-3')
+                        help='Use Savitzky-Golay filter (local least squares) on count tracks after normalization. Ignored for BigWig input unless using the API directly.')
+    parser.add_argument('--savgol_window_bp', type=int, default=None, help='Window size for Savitzky-Golay filter in base pairs.')
+    parser.add_argument('--savgol_order', type=int, default=None, help='Polynomial degree for the least-squares approximation at each step. If None, the degree is set to roughly window_size-3.')
     parser.add_argument('--use_median_filter', action='store_true',
-                        help='Apply median filter to count tracks after normalization')
-    parser.add_argument('--median_filter_kernel', type=int, default=None, help='Kernel (window) size for median filter in units of base pairs. If None, the window size is set in `readtracks.py`.')
+                        help='Apply median filter to count tracks after normalization.')
+    parser.add_argument('--median_filter_kernel', type=int, default=None, help='Kernel (window) size for median filter in units of base pairs. If None, the window size is set in `readtracks.py`')
     parser.add_argument('--log_plus_const', action='store_true',
-                        help='If invoked, count matrices will have their elements scaled as log(x + c) where c is a constant (see `--log_const`)')
+                        help='If invoked, count matrices will have their elements scaled as log(x + c) where c is a constant (see `--log_const`). Ignored for BigWig input unless using the API directly.')
     parser.add_argument('--log_const', type=float, default=0.50,
-                        help='Constant to add before log transformation')
+                        help='Constant to add before log transformation.')
 
     # post-processing-related arguments
     parser.add_argument('--min_length_bp', type=int, default=None,
                         help='Minimum length of regions to output in the final BED file')
     args = vars(parser.parse_args())
+    
+    if len(args['input_files']) == 0:
+        raise ValueError('No input files provided')
     
     if any([_get_input_type(args['input_files'][i]) == 'bw' for i in range(len(args['input_files']))]):
         logger.info("Note, BigWig input files are processed 'as is' and the normalization/scaling options not applied. Ensure that the data in the BigWig files is sufficient beforehand. Alternatively, supply samples' BAM files as input.")

@@ -40,11 +40,29 @@ If using ROCCO in your research, please cite the [original paper](https://doi.or
 
 ROCCO's documentation is available at <https://nolan-h-hamilton.github.io/ROCCO/>
 
+Note that using the module-level functions directly may allow for greater flexibility in applications than using the command-line interface, which is limited in scope.
+
 ### Installation
 
-   ```plaintext
+#### PyPI (`pip`)
+
+   ```shell
    pip install rocco
    ```
+
+#### Build from Source
+
+You can also build from source directly if preferred.
+
+* Clone or download this repository
+
+  ```shell
+  git clone https://github.com/nolan-h-hamilton/ROCCO.git
+  cd ROCCO
+  # if you haven't already before, run `pip install setuptools wheel`
+  python setup.py sdist bdist_wheel
+  pip install -e .
+  ```
 
 ROCCO utilizes the popular bioinformatics software [Samtools](http://www.htslib.org) and [bedtools](https://bedtools.readthedocs.io/en/latest/). If not available already, these system dependencies can be installed with standard MacOS or Linux/Unix package managers, e.g., `brew install samtools` (Homebrew), `sudo apt-get install samtools` (APT).
 

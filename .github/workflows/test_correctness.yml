@@ -5,7 +5,7 @@ on:
     paths:
       - '**.py'
     branches:
-      - main
+      - v1_updates
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -32,4 +32,4 @@ jobs:
     - name: run test_rocco.py
       working-directory: ./tests
       run: |
-        pytest -v -rPA -l test_rocco.py
+        pytest -v -rPA -l -k "correctness" test_rocco.py

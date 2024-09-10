@@ -1,10 +1,9 @@
 name: API
 
-# build the documentation whenever there are new commits in dev,main
+# build the documentation whenever there are new commits in main
 on:
   push:
     branches:
-      - dev
       - main
     paths:
       - '**.py'
@@ -27,7 +26,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install sphinx myst_parser pytest pybedtools pysam numpy scipy pandas pyBigWig cvxpy matplotlib deeptools
+          pip install sphinx myst_parser pytest pybedtools pysam numpy scipy pandas pyBigWig matplotlib deeptools ortools
 
       - name: Sphinx build
         run: |

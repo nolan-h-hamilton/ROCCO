@@ -209,6 +209,7 @@ def test_score_boundary_chrom():
     for i,x in enumerate([5/11.0, 5/6.0, 5.0, 7/4.0, 7/11.0]):
         assert scores[i] == x, f'Boundary scoring failed : {vec, denom}'
 
+
 @pytest.mark.correctness
 def test_parsig_default_parameters():
     scores = np.array([-50, 1, 2, 3, 4, 5, 50]) 
@@ -218,3 +219,40 @@ def test_parsig_default_parameters():
     transformed_scores = parsig(scores, gamma=1.0, parsig_B=B_, parsig_M=M_, parsig_R=R_)
     assert np.min(transformed_scores) >= 0, f'Negative values found in transformed scores: {transformed_scores}'
     assert np.max(transformed_scores) <= 10, f'Maximum value of transformed scores is unexpected: {np.max(transformed_scores)}'
+
+
+@pytest.mark.correctness
+def test_get_floor_eps_sol_basic():
+    chrom_lp_sol = np.array([1,0,.9,.9,.96,.97,0,0,0,.95])
+    budget = 0.5
+    int_tol = 1e-6
+    eps_mult = 1.01
+    result = get_floor_eps_sol(chrom_lp_sol, budget, int_tol, eps_mult)
+    assert np.all(result >= 0) and np.all(result <= 1), f"feasible region for each dvar should be [0,1]: {result}"
+    assert np.sum(result) <= np.floor(len(chrom_lp_sol) * budget), f"Solution should respect the budget: {result}, {np.sum(result)}"
+    assert all([np.isclose(abs(int(x) - x),0) for x in result]), f"All solutions should be binary (0 or 1), {result}"
+    assert np.allclose(np.array([1, 0, 0, 0, 1, 1, 0, 0, 0, 1,]), result), f"Expected solution: {result}"
+
+
+@pytest.mark.correctness
+def test_get_floor_eps_sol_allint():
+    chrom_lp_sol = np.array([1,1,1,1,1,0,0,0,0,0])
+    budget = 0.5
+    int_tol = 1e-6
+    eps_mult = 1.01
+    result = get_floor_eps_sol(chrom_lp_sol, budget, int_tol, eps_mult)
+    assert np.all(result >= 0) and np.all(result <= 1), f"feasible region for each dvar should be [0,1]: {result}"
+    assert np.sum(result) <= np.floor(len(chrom_lp_sol) * budget), f"Solution should respect the budget: {result}, {np.sum(result)}"
+    assert all([np.isclose(x,1) for x in result[0:5]]), f"First five dvars should be 1, {result}"
+
+
+@pytest.mark.correctness
+def test_get_floor_eps_sol_fullbudget():
+    chrom_lp_sol = np.ones(10)*.50
+    budget = 1.0
+    int_tol = 1e-6
+    eps_mult = 1.01
+    result = get_floor_eps_sol(chrom_lp_sol, budget, int_tol, eps_mult)
+    assert np.all(result >= 0) and np.all(result <= 1), f"feasible region for each dvar should be [0,1]: {result}"
+    assert np.sum(result) <= np.floor(len(chrom_lp_sol) * budget), f"Solution should respect the budget: {result}, {np.sum(result)}"
+    assert all([np.isclose(x,1) for x in result]), f"Solution should be ones vec, {result}"
