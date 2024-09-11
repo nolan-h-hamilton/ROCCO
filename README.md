@@ -5,7 +5,7 @@
 
 ## What
 
-ROCCO is an algorithm for efficient identification of "consensus peaks" in multiple HTS data samples (namely, ATAC-seq), where read densities are consistently enriched across samples or particularly strong enrichment is observed in a nontrivial subset of samples.
+ROCCO is an efficient algorithm for detection of "consensus peaks" in large datasets with multiple HTS data samples (namely, ATAC-seq), where an enrichment in read counts/densities is observed in a nontrivial subset of samples.
 
 ### Example Behavior
 
@@ -52,7 +52,11 @@ Note that using the module-level functions directly may allow for greater flexib
 #### PyPI (`pip`)
 
    ```shell
-   pip install rocco
+   pip install rocco # most recent version
+   ```
+
+   ```shell
+   pip install --pre rocco # most recent release candidate (if available)
    ```
 
 #### Build from Source
@@ -68,7 +72,7 @@ You can also build from source directly if preferred.
   pip install -e .
   ```
 
-ROCCO utilizes the popular bioinformatics software [Samtools](http://www.htslib.org) and [bedtools](https://bedtools.readthedocs.io/en/latest/). If not available already, these system dependencies can be installed with standard MacOS or Linux/Unix package managers, e.g., `brew install samtools` (Homebrew), `sudo apt-get install samtools` (APT).
+ROCCO utilizes the popular bioinformatics software [Samtools](http://www.htslib.org) and [bedtools](https://bedtools.readthedocs.io/en/latest/). If not available already, these system dependencies can be installed with standard MacOS or Linux/Unix package managers, e.g., `brew install samtools` (Homebrew), `sudo apt-get install samtools` (APT), Conda `conda install bioconda::samtools`, etc..
 
 ### Input/Output
 

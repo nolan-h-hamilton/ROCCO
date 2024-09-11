@@ -42,9 +42,9 @@ def _check_deeptools_installed():
     try:
         subprocess.run(['bamCoverage', '--version'], check=True,
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except FileNotFoundError:
-        raise RuntimeError(
-            "Ensure that deepTools is installed and available in your PATH: `pip install deeptools`")
+    except Exception as e:
+        logger.info("Ensure that deepTools is installed and available in your PATH: `pip install deeptools`. `deeptools==3.5.5` is current as of this release. Upgrading matplotlib for conformability with the latest version of deepTools may also resolve issues.")
+        raise
 
 
 def _run_cmd(cmd):

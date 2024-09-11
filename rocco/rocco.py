@@ -54,7 +54,7 @@ If using ROCCO in your research, please cite the `original paper <https://doi.or
    Bioinformatics, Volume 39, Issue 12, December 2023
 
 Documentation
--------------
+---------------
 
 ROCCO's documentation is available at `https://nolan-h-hamilton.github.io/ROCCO/ <https://nolan-h-hamilton.github.io/ROCCO/>`_
 
@@ -64,13 +64,16 @@ Installation:
 
 **PyPI (pip)**:
 
-To install ROCCO via PyPI, use the following command:
+To install ROCCO via PyPI/pip, you can run one of the following commands:
 
 .. code-block:: bash
+    pip install rocco --upgrade # most recent version
 
-    pip install rocco
+.. code-block:: bash
+    pip install --pre rocco # most recent release candidate (if available)
 
-**Build from Source**
+
+**Build ROCCO from Source**
 
 To build ROCCO from source:
 
@@ -81,13 +84,8 @@ To build ROCCO from source:
     git clone https://github.com/nolan-h-hamilton/ROCCO.git
     cd ROCCO
 
-2. Install required tools if you haven't already:
 
-.. code-block:: bash
-
-    pip install setuptools wheel
-
-3. Build and install the package:
+2. Build and install the package:
 
 .. code-block:: bash
 
@@ -97,8 +95,9 @@ To build ROCCO from source:
 System-Level Dependencies:
 ----------------------------
 
-ROCCO utilizes the popular bioinformatics software Samtools (http://www.htslib.org) and bedtools (https://bedtools.readthedocs.io/en/latest/). 
-If these are not already installed, you can either setup a conda environment for ROCCO or install system-wide, e.g., 
+ROCCO utilizes the popular bioinformatics software Samtools (http://www.htslib.org) and bedtools (https://bedtools.readthedocs.io/en/latest/).
+
+If these are not already available, you can install system-wide with a package manager e.g., 
 
 For Homebrew (MacOS):
 
@@ -115,7 +114,14 @@ For Ubuntu/Debian:
     sudo apt-get install samtools
     sudo apt-get install bedtools
 
-Most package managers will have these tools available. If not, try conda/bioconda or build from source.
+Conda:
+
+.. code-block:: bash
+    conda install bioconda::bedtools
+    conda install bioconda::samtools
+
+
+Both `bedtools` and `samtools` can easily be built from source, too (See  Samtools (http://www.htslib.org) and bedtools (https://bedtools.readthedocs.io/en/latest/).)
 
 
 Input/Output
