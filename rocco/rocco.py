@@ -10,7 +10,20 @@ ROCCO: (R)obust (O)pen (C)hromatin Detection via (C)onvex (O)ptimization
 What
 ----
 
-ROCCO is an algorithm for efficient identification of "consensus peaks" in multiple HTS data samples (namely, ATAC-seq), where read densities are consistently enriched.
+ROCCO is an algorithm for efficient identification of "consensus peaks" in multiple HTS data samples (namely, ATAC-seq), where read densities are consistently enriched across samples or particularly strong enrichment is observed in a nontrivial subset of samples.
+
+Example Behavior
+~~~~~~~~~~~~~~~~~~
+
+In the image below, ROCCO is run on a set of ten heterogeneous ATAC-seq samples (lymphoblast) from independent donors (ENCODE). 
+
+* ROCCO consensus peaks are shown in red, where all default parameters are used in the first track, and the parametric-sigmoid transform `--use_parsig` option is applied to generate the results in the second track. 
+* MACS2 (pooled library) consensus peak regions are shown in blue. 
+* ENCODE cCREs are included as a rough reference of potentially active regions, but note that these regions are not specific to the data samples used in this analysis, nor are they derived from the same cell type or assay.
+
+.. image:: example_behavior.png
+   :width: 600px
+   :align: center
 
 How
 ---
@@ -28,17 +41,11 @@ ROCCO offers several attractive features:
 4. **No rigid thresholds** on the minimum number/width of supporting samples/replicates
 5. **Mathematically tractable model** with worst-case bounds on runtime and performance
 
-Demo
-----
-
-A brief walkthrough with visualized peak results using publicly available ATAC-seq data:
-
-`Demo Notebook <https://github.com/nolan-h-hamilton/ROCCO/tree/main/docs/demo/demo.ipynb>`_
 
 Paper/Citation
 --------------
 
-If using ROCCO in your research, please cite the `original paper <https://doi.org/10.1093/bioinformatics/btad725>`_ in *Bioinformatics*:
+If using ROCCO in your research, please cite the `original paper <https://doi.org/10.1093/bioinformatics/btad725>`_ in *Bioinformatics* (DOI: `btad725`)
 
 .. code-block:: text
 
@@ -57,6 +64,9 @@ Installation:
 **PyPI (pip)**:
 
 To install ROCCO via PyPI, use the following command:
+
+.. code-block:: bash
+
     pip install rocco
 
 **Build from Source**
@@ -65,34 +75,77 @@ To install ROCCO via PyPI, use the following command:
 To build ROCCO from source:
 
 1. Clone or download the repository:
+
+.. code-block:: bash
+
     git clone https://github.com/nolan-h-hamilton/ROCCO.git
     cd ROCCO
 
 2. Install required tools if you haven't already:
+
+.. code-block:: bash
+
     pip install setuptools wheel
 
 3. Build and install the package:
+
+.. code-block:: bash
+
     python setup.py sdist bdist_wheel
     pip install -e .
 
-Dependencies:
--------------
+System-Level Dependencies:
+----------------------------
+
 ROCCO utilizes the popular bioinformatics software Samtools (http://www.htslib.org) and bedtools (https://bedtools.readthedocs.io/en/latest/). 
 If these are not already installed, you can either setup a conda environment for ROCCO or install system-wide, e.g., 
 
 For Homebrew (MacOS):
+
+.. code-block:: bash
+
     brew install samtools
     brew install bedtools
 
-For APT (Linux):
+
+For Ubuntu/Debian:
+
+.. code-block:: bash
+
     sudo apt-get install samtools
     sudo apt-get install bedtools
+
+Most package managers will have these tools available. If not, try conda/bioconda or build from source.
 
 
 Input/Output:
 -------------
+
 * Input: BAM alignments or BigWig tracks from multiple data samples
 * Output: BED file of consensus peak regions
+
+
+**Minimal Example**:
+
+.. code-block:: bash
+
+        rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g hg38
+
+**Run on a subset of chromosomes**:
+
+Useful for debugging
+
+.. code-block:: bash
+
+        rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g hg38 --chroms chr21 chr22
+
+**Run with parametric-sigmoid transformation of scores**:
+
+Useful to promote integrality in the LP relaxation
+
+.. code-block:: bash
+
+        rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g hg38 --use_parsig
 
 
 .. note::
@@ -999,7 +1052,7 @@ def main():
     parser.add_argument('--round_digits', type=int, default=5,
                         help='Number of digits to round values to where applicable')
     parser.add_argument('--use_savgol_filter', action='store_true',
-                        help='Use Savitzky-Golay filter (local least squares) on count tracks after normalization. Ignored for BigWig input unless using the API directly.')
+                        help='Use Savitzky-Golay filter (local least squares) on count tracks after normalization.')
     parser.add_argument('--savgol_window_bp', type=int, default=None, help='Window size for Savitzky-Golay filter in base pairs.')
     parser.add_argument('--savgol_order', type=int, default=None, help='Polynomial degree for the least-squares approximation at each step. If None, the degree is set to roughly window_size-3.')
     parser.add_argument('--use_median_filter', action='store_true',

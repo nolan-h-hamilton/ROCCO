@@ -5,7 +5,18 @@
 
 ## What
 
-ROCCO is an algorithm for efficient identification of "consensus peaks" in multiple HTS data samples (namely, ATAC-seq), where read densities are consistently enriched.
+ROCCO is an algorithm for efficient identification of "consensus peaks" in multiple HTS data samples (namely, ATAC-seq), where read densities are consistently enriched across samples or particularly strong enrichment is observed in a nontrivial subset of samples.
+
+### Example Behavior
+
+In the image below, ROCCO is run on a set of ten heterogeneous ATAC-seq samples (lymphoblast) from independent donors (ENCODE).
+
+* ROCCO consensus peaks are shown in red, where all default parameters are used in the first track, and the parametric-sigmoid transform `--use_parsig` option is applied to generate the results in the second track. 
+* MACS2 (pooled library) consensus peak regions are shown in blue.
+* ENCODE cCREs are included as a rough reference of potentially active regions, but note that these regions are not specific to the data samples used in this analysis, nor are they derived from the same cell type or assay.
+
+<p align="center">
+<img width="600" alt="logo" src="docs/example_behavior.png">
 
 ## How
 
@@ -21,15 +32,9 @@ ROCCO offers several attractive features:
 4. **No rigid thresholds** on the minimum number/width of supporting samples/replicates
 5. **Mathematically tractable model** with worst-case bounds on runtime and performance
 
-### Demo
-
-A brief walkthrough with visualized peak results using publicly available ATAC-seq data:
-
-<https://github.com/nolan-h-hamilton/ROCCO/tree/main/docs/demo/demo.ipynb>
-
 ### Paper/Citation
 
-If using ROCCO in your research, please cite the [original paper](https://doi.org/10.1093/bioinformatics/btad725) in *Bioinformatics*
+If using ROCCO in your research, please cite the [original paper](https://doi.org/10.1093/bioinformatics/btad725) in *Bioinformatics* (DOI: `btad725`)
 
    ```plaintext
     Nolan H Hamilton, Terrence S Furey, ROCCO: a robust method for detection of open chromatin via convex optimization,
@@ -38,7 +43,7 @@ If using ROCCO in your research, please cite the [original paper](https://doi.or
 
 ### Documentation
 
-ROCCO's documentation is available at <https://nolan-h-hamilton.github.io/ROCCO/>
+For additional details, usage, etc. please see ROCCO's documentation: <https://nolan-h-hamilton.github.io/ROCCO/>
 
 Note that using the module-level functions directly may allow for greater flexibility in applications than using the command-line interface, which is limited in scope.
 
@@ -59,7 +64,6 @@ You can also build from source directly if preferred.
   ```shell
   git clone https://github.com/nolan-h-hamilton/ROCCO.git
   cd ROCCO
-  # if you haven't already before, run `pip install setuptools wheel`
   python setup.py sdist bdist_wheel
   pip install -e .
   ```
