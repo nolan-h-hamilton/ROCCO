@@ -23,6 +23,7 @@ In the image below, ROCCO is run on a set of ten heterogeneous ATAC-seq samples 
 
 .. image:: example_behavior.png
    :width: 600px
+   :height: 400px
    :align: center
 
 How
@@ -71,7 +72,6 @@ To install ROCCO via PyPI, use the following command:
 
 **Build from Source**
 
-
 To build ROCCO from source:
 
 1. Clone or download the repository:
@@ -118,7 +118,7 @@ For Ubuntu/Debian:
 Most package managers will have these tools available. If not, try conda/bioconda or build from source.
 
 
-Input/Output:
+Input/Output
 -------------
 
 * Input: BAM alignments or BigWig tracks from multiple data samples
@@ -154,7 +154,6 @@ Useful to promote integrality in the LP relaxation
 
 """
 
-
 #!/usr/bin/env python
 import argparse
 import copy
@@ -182,6 +181,11 @@ from ortools.pdlp import solvers_pb2
 
 from .constants import GENOME_DICT
 from .readtracks import *
+
+if np.lib.NumpyVersion(np.__version__) >= '2.0.0b1':
+    from numpy.exceptions import AxisError
+else:
+    from numpy import AxisError
 
 # set up logging
 logger = logging.getLogger(__name__)

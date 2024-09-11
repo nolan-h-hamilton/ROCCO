@@ -41,7 +41,7 @@ latex_elements = {'classoptions': ',openany,oneside',     'babel' : '\\usepackag
 
 # -- Options for autodoc extension -------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/extensions/autodoc.html#module-sphinx.ext.autodoc
-autodoc_mock_imports = ["numpy","scipy", "pybedtools", "pandas", "pyBigWig", "deeptools", "ortools", "typing", "pysam"]
+autodoc_mock_imports = ["numpy","scipy", "pybedtools", "pandas", "pyBigWig", "deeptools", "ortools", "typing", "pysam", "myst_parser"]
 autodoc_typehints = 'both'
 autodoc_typehints_format = 'fully-qualified'
 autodoc_default_options = {

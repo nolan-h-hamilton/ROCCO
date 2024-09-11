@@ -32,4 +32,4 @@ jobs:
     - name: run test_rocco.py
       working-directory: ./tests
       run: |
-        pytest -v -rPA -l test_rocco.py
+        pytest -v -rA test_rocco.py

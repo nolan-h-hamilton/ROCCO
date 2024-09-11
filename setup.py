@@ -21,14 +21,14 @@ setup(
     python_requires='>=3.8,<3.11',
     install_requires=[
         'ortools>=9.10',
-        'numpy>=1.26,<1.28',
-        'scipy>=1.12',
+        'numpy>=1.23.5',
+        'scipy>=1.11',
         'pandas>=2.0',
         'pybedtools>=0.9',
-        'matplotlib',
         'pyBigWig>=0.3.22',
         'deeptools>=3.5',
         'pysam>=0.20.0',
+        'myst-parser>=0.15.0',
     ],
     extras_require={
         'pytest': ['pytest>=7.0.0']
