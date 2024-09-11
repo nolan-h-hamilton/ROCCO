@@ -22,8 +22,7 @@ In the image below, ROCCO is run on a set of ten heterogeneous ATAC-seq samples 
 * ENCODE cCREs are included as a rough reference of potentially active regions, but note that these regions are not specific to the data samples used in this analysis, nor are they derived from the same cell type or assay.
 
 .. image:: example_behavior.png
-   :width: 600px
-   :height: 400px
+   :width: 800px
    :align: center
 
 How
@@ -67,9 +66,11 @@ Installation:
 To install ROCCO via PyPI/pip, you can run one of the following commands:
 
 .. code-block:: bash
+
     pip install rocco --upgrade # most recent version
 
 .. code-block:: bash
+
     pip install --pre rocco # most recent release candidate (if available)
 
 
@@ -117,6 +118,7 @@ For Ubuntu/Debian:
 Conda:
 
 .. code-block:: bash
+
     conda install bioconda::bedtools
     conda install bioconda::samtools
 

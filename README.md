@@ -16,7 +16,7 @@ In the image below, ROCCO is run on a set of ten heterogeneous ATAC-seq samples 
 * ENCODE cCREs are included as a rough reference of potentially active regions, but note that these regions are not specific to the data samples used in this analysis, nor are they derived from the same cell type or assay.
 
 <p align="center">
-<img width="600" height="400" alt="logo" src="docs/example_behavior.png">
+<img width="800" alt="example" src="docs/example_behavior.png">
 
 ## How
 
