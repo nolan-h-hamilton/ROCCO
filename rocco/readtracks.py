@@ -21,10 +21,6 @@ import scipy.signal as signal
 
 from typing import Tuple
 
-if np.lib.NumpyVersion(np.__version__) >= '2.0.0b1':
-    from numpy.exceptions import AxisError
-else:
-    from numpy import AxisError
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO,

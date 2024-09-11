@@ -182,11 +182,6 @@ from ortools.pdlp import solvers_pb2
 from rocco.constants import GENOME_DICT
 from rocco.readtracks import *
 
-if np.lib.NumpyVersion(np.__version__) >= '2.0.0b1':
-    from numpy.exceptions import AxisError
-else:
-    from numpy import AxisError
-
 # set up logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO,
