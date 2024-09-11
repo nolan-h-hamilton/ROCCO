@@ -179,8 +179,8 @@ from ortools.linear_solver import pywraplp
 import ortools.glop.parameters_pb2 as parameters_pb2
 from ortools.pdlp import solvers_pb2
 
-from .constants import GENOME_DICT
-from .readtracks import *
+from rocco.constants import GENOME_DICT
+from rocco.readtracks import *
 
 if np.lib.NumpyVersion(np.__version__) >= '2.0.0b1':
     from numpy.exceptions import AxisError
