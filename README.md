@@ -9,14 +9,14 @@ ROCCO is an efficient algorithm for detection of "consensus peaks" in large data
 
 ### Example Behavior
 
-In the image below, ROCCO is run on a set of ten heterogeneous ATAC-seq samples (lymphoblast) from independent donors (ENCODE).
+In the image below, ROCCO is run on a set of ten heterogeneous ATAC-seq samples (lymphoblast) from independent donors (ENCODE). The samples' tracks are colored gray.
 
-* ROCCO consensus peaks are shown in red, where all default parameters are used in the first track, and the parametric-sigmoid transform `--use_parsig` option is applied to generate the results in the second track. 
-* MACS2 (pooled library) consensus peak regions are shown in blue.
+* ROCCO consensus peaks (default parameters) are shown in blue
+* MACS2 (pooled, `q=.01`) consensus peaks are shown in red.
 * ENCODE cCREs are included as a rough reference of potentially active regions, but note that these regions are not specific to the data samples used in this analysis, nor are they derived from the same cell type or assay.
 
 <p align="center">
-<img width="800" alt="example" src="docs/example_behavior.png">
+<img width="600" alt="example" src="docs/example_behavior.png">
 
 ## How
 
