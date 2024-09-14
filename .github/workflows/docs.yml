@@ -6,8 +6,9 @@ on:
     branches:
       - main
     paths:
-      - '**.py'
+      - '**/conf.py'
       - '**.yml'
+      - '**.rst'
 
 
 permissions:

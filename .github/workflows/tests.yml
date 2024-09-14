@@ -3,7 +3,7 @@ name: Tests
 on:
   push:
     paths:
-      - '**.py'
+      - rocco/**/*.py
     branches:
       - main
 jobs:
