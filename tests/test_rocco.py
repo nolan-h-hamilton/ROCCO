@@ -2,6 +2,7 @@ import os
 import numpy as np
 import pybedtools as pbt
 import pytest
+import subprocess
     
 from rocco import *
 
@@ -256,3 +257,41 @@ def test_get_floor_eps_sol_fullbudget():
     assert np.all(result >= 0) and np.all(result <= 1), f"feasible region for each dvar should be [0,1]: {result}"
     assert np.sum(result) <= np.floor(len(chrom_lp_sol) * budget), f"Solution should respect the budget: {result}, {np.sum(result)}"
     assert all([np.isclose(x,1) for x in result]), f"Solution should be ones vec, {result}"
+
+
+@pytest.mark.correctness
+def test_no_input_no_args():
+    result = subprocess.run(['rocco'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert result.returncode == 0, f'Expected return code 0, got {result.returncode}'
+    assert 'usage:' in result.stdout.decode(), f'Expected help message, got {result.stdout.decode()}'
+
+
+@pytest.mark.correctness
+def test_no_input_no_args():
+    result = subprocess.run(['rocco'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert result.returncode == 0, f'Expected return code 0, got {result.returncode}'
+    assert 'usage:' in result.stdout.decode(), f'Expected help message, got {result.stdout.decode()}'
+
+
+@pytest.mark.correctness
+def test_no_input_listed():
+    result = subprocess.run(['rocco', '--input_files'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert result.returncode != 0, f'Expected non-zero return code, got {result.returncode}'
+    assert 'usage:' in result.stderr.decode(), f'Expected help message, got {result.stderr.decode()}'
+
+
+@pytest.mark.correctness
+def test_unrecognized_arg():
+    result = subprocess.run(['rocco', '--unrecognized_arg'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert result.returncode != 0, f'Expected non-zero return code, got {result.returncode}'
+    assert 'unrecognized' in result.stderr.decode(), f'Expected unrecognized argument message, got {result.stderr.decode()}'
+
+
+@pytest.mark.correctness
+def test_bedgraph_input():
+    result = subprocess.run(['rocco', '--input_files', 'test.bedgraph'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Should raise a value error with message containing "Please convert"
+    assert result.returncode != 0, f'Expected non-zero return code, got {result.returncode}'
+    assert 'convert' in result.stderr.decode().lower(), f'Expected error message requesting conversion to bigwig or use of BAM input, got {result.stderr.decode()}'
+
+
