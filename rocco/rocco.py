@@ -172,6 +172,7 @@ import random
 import uuid
 from pprint import pformat
 from typing import Tuple
+import sys
 
 import numpy as np
 import pandas as pd
@@ -219,15 +220,18 @@ def _get_input_type(input_file:str) -> str:
 
     """
     file_type = None
-    file_ext = os.path.splitext(input_file.lower())[1][1:]
+    file_ext = str(os.path.splitext(input_file.lower())[1][1:]).lower()
 
     if file_ext in ['bam']:
         file_type = 'bam'
     elif file_ext in ['bw','bigwig']:
         file_type = 'bw'
-
+    elif file_ext in ['bed', 'bedgraph', 'bg', 'wig', 'wiggle']:
+        bedgraph_notice = (
+            """\nBedGraph (or other general, non-binary, wiggle-like) input is not supported: Input file must be a BAM alignment file or BigWig file. Please convert to BigWig or use the original BAM files as input. BedGraph/Wiggle files can be converted to BigWig files using UCSC's binary utilities `bedGraphToBigWig`, `wigToBigWig`, respectively, available at <http://hgdownload.soe.ucsc.edu/admin/exe/> or Conda/Mamba <https://anaconda.org/bioconda/ucsc-wigtobigwig>, <https://anaconda.org/bioconda/ucsc-bedgraphtobigwig>.\n""")
+        raise ValueError(bedgraph_notice)
     if file_type is None:
-        raise ValueError('Input file must be a BAM alignment file or bigwig file')
+        raise ValueError('Input file must be a BAM alignment file or BigWig file')
 
     return file_type
 
@@ -990,7 +994,12 @@ def combine_chrom_results(chrom_bed_files:list, output_file:str, name_features:b
 def main():
     ID = str(int(uuid.uuid4().hex[:5], base=16))
     logger.info(f'\nID: {ID}')
-    parser = argparse.ArgumentParser(description='ROCCO (Robust Open Chromatin Detection via Convex Optimization) Consensus Peak Caller')
+    epilog_cli_help = (
+        "\nGitHub (Homepage): <https://github.com/nolan-h-hamilton/ROCCO/>\n"
+        "Documentation: <https://nolan-h-hamilton.github.io/ROCCO/>\n"
+        "Paper: <https://doi.org/10.1093/bioinformatics/btad725>\n"
+    )
+    parser = argparse.ArgumentParser(description='ROCCO Consensus Peak Detection Algorithm for Multisample HTS Datasets', add_help=True, formatter_class=argparse.RawTextHelpFormatter, epilog=epilog_cli_help)
     parser.add_argument('--input_files', '-i', nargs='+', help='BAM alignment files or BigWig files corresponding to samples')
     parser.add_argument('--output', '--outfile', '-o', type=str, default=f"rocco_peaks_output_{ID}.bed")
     parser.add_argument('--genome', '-g', default=None, help='Genome assembly. Invoking this argument with a supported assembly (hg38, hg19, mm10, mm39, dm6) will use default resources (`--chrom_sizes_file`), parameters (`--params`) and EGS (`--effective_genome_size`) specific to that assembly that come with the ROCCO package by default. If this argument is not invoked, you can just supply the required arguments manually with the command-line arguments.')
@@ -1043,19 +1052,19 @@ def main():
 
     # count track/matrix generation and processing arguments
     parser.add_argument('--step', '-w', type=int, default=50,
-                        help='Size of contiguous, fixed-width genomic intervals over which reads are counted (referred to as "loci" in the paper). Larger `--step` values will capture less substructure within peak regions, but this may be desired for some analyses and reduces runtime/memory use, as well. Default is 50 bp. If using BigWig files as input, this value is ignored.')
+                        help='Size of contiguous, fixed-width genomic intervals over which reads are counted (referred to as "loci" in the paper). Larger `--step` values will capture less substructure within peak regions, but this may be desired for some analyses and reduces runtime/memory use, as well. Default is 50 bp. If using BigWig files as input, this value is inferred from data and ignored. For BigWig input, the step must be consistent across all input files.')
     parser.add_argument('--norm_method', default='RPGC',
-                        choices=['RPGC', 'CPM', 'RPKM', 'BPM', 'rpgc', 'cpm', 'rpkm', 'bpm'], help='Normalization method. Default is RPGC (Reads Per Genomic Content), for which the `--effective_genome_size` argument is required (default EGS values supplied automatically for supported genomes). Ignored if input files are BigWig files.')
-    parser.add_argument('--min_mapping_score', type=int, default=-1, help='Equivalent to samtools view -q. Ignored if input files are BigWig files.')
-    parser.add_argument('--flag_include', type=int, default=66, help='Equivalent to samtools view -f. Ignored if input files are BigWig files.')
-    parser.add_argument('--flag_exclude', type=int, default=1284, help='Equivalent to samtools view -F. Ignored if input files are BigWig files.')
-    parser.add_argument('--extend_reads', type=int, default=-1, help='See `deeptools bamCoverage --extendReads`. Ignored if input files are BigWig files.')
-    parser.add_argument('--center_reads', action='store_true', help='See `deeptools bamCoverage --centerReads`. Ignored if input files are BigWig files.')
-    parser.add_argument('--ignore_for_norm', nargs='+', default=[], help='Chromosomes to ignore for normalization. Ignored if input files are BigWig files.')
+                        choices=['RPGC', 'CPM', 'RPKM', 'BPM', 'rpgc', 'cpm', 'rpkm', 'bpm'], help='Normalization method. Default is RPGC (Reads Per Genomic Content), for which the `--effective_genome_size` argument is required (default EGS values supplied automatically for supported genomes). If using BigWig files as input, this value has no effect.')
+    parser.add_argument('--min_mapping_score', type=int, default=-1, help='Equivalent to samtools view -q. If using BigWig files as input, this value has no effect.')
+    parser.add_argument('--flag_include', type=int, default=66, help='Equivalent to samtools view -f.  If using BigWig files as input, this value has no effect.')
+    parser.add_argument('--flag_exclude', type=int, default=1284, help='Equivalent to samtools view -F.  If using BigWig files as input, this value has no effect.')
+    parser.add_argument('--extend_reads', type=int, default=-1, help='See `deeptools bamCoverage --extendReads`. If using BigWig files as input, this value has no effect.')
+    parser.add_argument('--center_reads', action='store_true', help='See `deeptools bamCoverage --centerReads`.  If using BigWig files as input, this value has no effect.')
+    parser.add_argument('--ignore_for_norm', nargs='+', default=[], help='Chromosomes to ignore for normalization.  If using BigWig files as input, this value has no effect.')
     parser.add_argument('--scale_factor', type=float, default=1.0,
-                        help='bamCoverage scale factor argument. See `deeptools bamCoverage --scaleFactor`. Ignored if input files are BigWig files.')
+                        help='bamCoverage scale factor argument. See `deeptools bamCoverage --scaleFactor`.  If using BigWig files as input, this value has no effect.')
     parser.add_argument('--use_existing_bigwigs', action='store_true',
-                        help='If True, use existing BigWig files instead of generating new ones (name must match the input BAM files and parameters used.)')
+                        help='If True, use existing BigWig files that were generated previously for the same BAM files instead of generating new ones.')
     parser.add_argument('--round_digits', type=int, default=5,
                         help='Number of digits to round values to where applicable')
     parser.add_argument('--use_savgol_filter', action='store_true',
@@ -1066,7 +1075,7 @@ def main():
                         help='Apply median filter to count tracks after normalization.')
     parser.add_argument('--median_filter_kernel', type=int, default=None, help='Kernel (window) size for median filter in units of base pairs. If None, the window size is set in `readtracks.py`')
     parser.add_argument('--log_plus_const', action='store_true',
-                        help='If invoked, count matrices will have their elements scaled as log(x + c) where c is a constant (see `--log_const`). Ignored for BigWig input unless using the API directly.')
+                        help='If invoked, count matrices will have their elements scaled as log(x + c) where c is a constant (see `--log_const`)')
     parser.add_argument('--log_const', type=float, default=0.50,
                         help='Constant to add before log transformation.')
 
@@ -1075,11 +1084,21 @@ def main():
                         help='Minimum length of regions to output in the final BED file')
     args = vars(parser.parse_args())
     
-    if len(args['input_files']) == 0:
-        raise ValueError('No input files provided')
+    if len(sys.argv)==1 or args['input_files'] is None or len(args['input_files']) == 0:
+        parser.print_help(sys.stdout)
+        sys.exit(0)
     
     if any([_get_input_type(args['input_files'][i]) == 'bw' for i in range(len(args['input_files']))]):
-        logger.info("Note, BigWig input files are processed 'as is' and the normalization/scaling options not applied. Ensure that the data in the BigWig files is sufficient beforehand. Alternatively, supply samples' BAM files as input.")
+        bigwig_notice = (
+        """\nNote, some read counting/filtering/etc. options cannot be applied to
+        BigWig files, even if corresponding CLI arguments have been invoked. Ensure
+        that the read counts in the BigWig files are sufficient to represent the
+        experiments' data/sample alignments. Alternatively, you can directly supply
+        BAM files as input to ROCCO and use the appropriate command-line arguments
+        (e.g., `--step`, `--norm_method`, `--flag_include`, etc.) to ensure that the
+        read counts are computed according to your preferences.\n"""
+        )
+        logger.info(bigwig_notice)
 
     args['solver'] = clean_string(args['solver'])
     args['norm_method'] = clean_string(args['norm_method']).upper()
@@ -1091,11 +1110,11 @@ def main():
             if args['params'] is None:
                 args['params'] = GENOME_DICT[args['genome']]['params']
         else:
-            raise ValueError(f'Genome not found: {args["genome"]}.\nAvailable genomes: {list(GENOME_DICT.keys())}.\nYou can also provide genome resources manually.')
+            raise ValueError(f'Genome not found: {args["genome"]}.\nAvailable genomes: {list(GENOME_DICT.keys())}.\nYou can also provide genome resources manually (e.g., chromosome sizes file `-s/--chrom_sizes_file)`, effective genome size `--effective_genome_size`.')
     if args['chrom_sizes_file'] is None:
-        raise ValueError('Genome is not specified: Chromosome sizes file is required')
+        raise ValueError('A genome with default resources available was not specified with `-g/--genome`, and so a chromosome sizes file must be supplied with `-s/--chrom_sizes_file`')
     if args['effective_genome_size'] is None and args['norm_method'] == 'RPGC':
-        raise ValueError('Genome is not specified: RPGC normalization requires an effective genome size')
+        raise ValueError('A genome with default resources available was not specified with `-g/--genome`, and so `--norm_method RPGC` normalization, which requires an effective genome size, must be accompanied by the `--effective_genome_size` argument.')
     bam_files = []
     bigwig_files = []
     for file_ in args['input_files']:
