@@ -1153,12 +1153,18 @@ def main():
 
         # computing chromosome-specific matrix of read counts/densities/enrichments...
         logger.info(f'Generating chromosome matrix: {chrom_}')
+        chrom_intervals = None
+        chrom_matrix = None
         if args['use_savgol_filter']:
             chrom_intervals, chrom_matrix = generate_chrom_matrix(chrom_, bigwig_files, args['chrom_sizes_file'], args['step'], round_digits=args['round_digits'], filter_type='savgol',savgol_window_bp=args['savgol_window_bp'], savgol_order=args['savgol_order'], log_plus_const=args['log_plus_const'], log_const=args['log_const'])
         elif args['use_median_filter']:
             chrom_intervals, chrom_matrix = generate_chrom_matrix(chrom_, bigwig_files, args['chrom_sizes_file'], args['step'], round_digits=args['round_digits'], filter_type='median', medfilt_kernel_bp=args['median_filter_kernel'], log_plus_const=args['log_plus_const'], log_const=args['log_const'])
         else:
             chrom_intervals, chrom_matrix = generate_chrom_matrix(chrom_, bigwig_files, args['chrom_sizes_file'], args['step'], round_digits=args['round_digits'], log_plus_const=args['log_plus_const'], log_const=args['log_const'])
+        if chrom_intervals is None or chrom_matrix is None:
+            logger.warning(f'Skipping chromosome {chrom_}... no data found.')
+            continue
+
         logger.info(f'Chromosome {chrom_} Matrix: {chrom_matrix.shape}')
 
         try:

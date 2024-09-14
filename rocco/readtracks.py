@@ -260,13 +260,15 @@ def decompress_features_vals(intervals: np.ndarray, vals: np.ndarray, step: int)
 
     # combine the original intervals and values with the filled gaps
     combined_intervals = np.concatenate([intervals, new_intervals])
+    # ensure intervals are of type int
+    combined_intervals = combined_intervals.astype(int)
     combined_vals = np.concatenate([vals, new_vals])
 
     sort_index = np.argsort(combined_intervals)
     intervals_ = combined_intervals[sort_index]
     vals_ = combined_vals[sort_index]
     unique_indices = np.unique(intervals_, return_index=True)[1]
-    return intervals_[unique_indices], vals_[unique_indices]
+    return intervals_[unique_indices].astype(int), vals_[unique_indices]
 
 
 def get_chrom_reads(bigwig_file: str, chromosome: str, chrom_sizes_file: str,
@@ -308,11 +310,16 @@ def get_chrom_reads(bigwig_file: str, chromosome: str, chrom_sizes_file: str,
             f"Chromosome sizes file not found: {chrom_sizes_file}")
 
     chrom_sizes_dict = get_chroms_and_sizes(chrom_sizes_file)
+
+    if chromosome not in chrom_sizes_dict:
+        raise ValueError(
+            f"Chromosome {chromosome} not found in chromosome sizes file: {chrom_sizes_file}")
     try:
         with pbw.open(bigwig_file) as input_bw:
             if chromosome not in input_bw.chroms():
                 logger.warning(
-                    f"Chromosome {chromosome} not found in BigWig file: {bigwig_file}")
+                    f"Chromosome {chromosome} not found in BigWig file: {bigwig_file}. Returning (None,None).")
+                return None, None
             intervals = []
             vals = []
             idx = 0
@@ -329,8 +336,8 @@ def get_chrom_reads(bigwig_file: str, chromosome: str, chrom_sizes_file: str,
         raise
 
     if first_nonzero < 0:
-        raise ValueError(
-            f"No non-zero values found in BigWig file: {bigwig_file}")
+        logger.warning(f"No non-zero values found in BigWig file: {bigwig_file} for chromosome: {chromosome}. Returning (None,None).")
+        return None, None
 
     intervals = np.array(intervals[first_nonzero:])
     vals = np.array(vals[first_nonzero:])
@@ -351,9 +358,7 @@ def get_chrom_reads(bigwig_file: str, chromosome: str, chrom_sizes_file: str,
         if const_scale == 0:
             logger.warning("You are scaling the values by 0.")
         vals = vals * const_scale
-
     vals = np.round(vals, round_digits)
-
     return intervals, vals
 
 
@@ -474,13 +479,19 @@ def generate_chrom_matrix(chromosome: str, bigwig_files: list, chrom_sizes_file:
                                             const_scale,
                                             round_digits,
                                             scale_by_step)
+        if intervals_ is None or vals_ is None:
+            logger.warning(f"No data found for {bigwig_file} in chromosome {chromosome}. Excluding this track for {chromosome}.")
+            continue
         interval_matrix.append(intervals_)
         vals_matrix.append(vals_)
+    if len(interval_matrix) == 0:
+        logger.warning(f"No data found in the files {str(bigwig_files)} for chromosome {chromosome}. Returning (None,None).")
+        return None, None
     common_intervals = np.sort(
         np.unique(np.concatenate(interval_matrix, axis=0)))
     # initialize with zeroes
     step_size = int(np.min(np.abs(np.diff(common_intervals))))
-    count_matrix = np.zeros((len(bigwig_files), len(common_intervals)))
+    count_matrix = np.zeros((len(interval_matrix), len(common_intervals)))
     for i, (intervals_, vals_) in enumerate(zip(interval_matrix, vals_matrix)):
         # all rows must have same length
         idx = np.searchsorted(common_intervals, intervals_)
@@ -514,4 +525,4 @@ def generate_chrom_matrix(chromosome: str, bigwig_files: list, chrom_sizes_file:
     if get_shape(count_matrix)[0] == 1:
         count_matrix = count_matrix.reshape(1, -1)
 
-    return common_intervals, count_matrix
+    return np.array(common_intervals).astype(int), count_matrix
