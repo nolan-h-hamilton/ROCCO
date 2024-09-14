@@ -183,7 +183,8 @@ def generate_bigwig(bam_file: str, step: int = 50,
         num_processors = max(multiprocessing.cpu_count() - 1, 1)
 
     bw_outfile = ouput_file if ouput_file else _get_count_track_name(bam_file, effective_genome_size,
-                                                                     norm_method=norm_method, min_mapping_score=min_mapping_score,
+                                                                     step=step, norm_method=norm_method,
+                                                                     min_mapping_score=min_mapping_score,
                                                                      flag_include=flag_include, flag_exclude=flag_exclude, extend_reads=extend_reads,
                                                                      center_reads=center_reads, scale_factor=scale_factor)
 
