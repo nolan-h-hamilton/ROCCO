@@ -242,8 +242,8 @@ def decompress_features_vals(intervals: np.ndarray, vals: np.ndarray, step: int)
         the second is the signal values over the new intervals
     :rtype: tuple
 
-    :seealso: `get_chrom_reads`
-    :seealso: `generate_chrom_matrix`
+    :seealso: :func:`get_chrom_reads()`
+    :seealso: :func:`generate_chrom_matrix()`
 
     """
 
@@ -299,8 +299,8 @@ def get_chrom_reads(bigwig_file: str, chromosome: str, chrom_sizes_file: str,
     :raises FileNotFoundError: If the BigWig file or chromosome sizes file is not found.
     :raises ValueError: If no non-zero values are found in the BigWig file.
     
-    :seealso: `decompress_features_vals`
-    :seealso: `generate_chrom_matrix`
+    :seealso: :func:`decompress_features_vals()`
+    :seealso: :func:`generate_chrom_matrix()`
 
     """
 
@@ -374,7 +374,7 @@ def generate_bigwigs(bam_files: list, step: int = 50,
                      ignore_for_norm: list = ['chrX', 'chrY', 'chrM'],
                      scale_factor: float = 1.0, num_processors: int = -1,
                      overwrite: bool = True) -> list:
-    """Generate BigWig files from a list of BAM files. This function is a wrapper for `generate_bigwig` 
+    r"""Generate BigWig files from a list of BAM files. This function is just a wrapper for :func:`generate_bigwig()` 
     
     :param bam_files: List of paths to the BAM files.
     :type bam_files: list
@@ -409,7 +409,7 @@ def generate_bigwigs(bam_files: list, step: int = 50,
     :raises ValueError: If the normalization method is not one of: RPGC, RPKM, CPM, BPM.
     :raises ValueError: If effective genome size is not specified and the normalization method is RPGC.
     
-    :seealso: `generate_bigwig`
+    :seealso: :func:`generate_bigwig()`
         
     """
     bigwig_files = []
@@ -429,11 +429,18 @@ def generate_bigwigs(bam_files: list, step: int = 50,
     return bigwig_files
 
 
-def generate_chrom_matrix(chromosome: str, bigwig_files: list, chrom_sizes_file: str, step: int, const_scale: float = 1.0, round_digits: int = 5, scale_by_step: bool = False, filter_type:str=None, savgol_window_bp:int=None, savgol_window_steps:int=5,savgol_order:int=None, medfilt_kernel_bp:int=None, medfilt_kernel_steps:int=5, log_plus_const:bool=False, log_const:float=0.5, loc_smean_sdisp_ratio:bool=False, loc_smean_sdisp_ratio_window_bp:int=None, loc_smean_sdisp_ratio_window_steps:int=11) -> Tuple[np.ndarray, np.ndarray]:
-    r"""Create a matrix of read counts for a given chromosome from a list of BigWig files with potentially
-    varying start and end positions.
+def generate_chrom_matrix(chromosome: str, bigwig_files: list, chrom_sizes_file: str, step: int,
+                          const_scale: float=1.0, round_digits: int = 5, scale_by_step: bool = False, 
+                          filter_type: str=None, savgol_window_bp: int=None, savgol_window_steps: int=5, 
+                          savgol_order: int=None, medfilt_kernel_bp: int=None, medfilt_kernel_steps: int=5, 
+                          transform_log_pc: bool=False, log_const: float=None, transform_local_ratio: bool=False, 
+                          local_ratio_window_bp: int=None, local_ratio_window_steps: int=None, 
+                          local_ratio_pc: float=None):
+    r"""
+    Create a matrix of read counts for a given chromosome from a list of BigWig files with potentially 
+    varying start and end positions. Provides options for transforming and filtering the tracks comprising the matrix.
 
-    :param chromosome: Chromosome name to extract data for.
+    :param chromosome: The chromosome to generate the matrix for.
     :type chromosome: str
     :param bigwig_files: List of paths to the BigWig files.
     :type bigwig_files: list
@@ -441,37 +448,46 @@ def generate_chrom_matrix(chromosome: str, bigwig_files: list, chrom_sizes_file:
     :type chrom_sizes_file: str
     :param step: Step size for the intervals.
     :type step: int
-    :param const_scale: Factor to scale the signal values by after bigwig generation. Note, this is not the same
-        parameter as the scale factor used in `generate_bigwig`.
+    :param const_scale: Factor to scale the signal values by after bigwig generation.
     :type const_scale: float
     :param round_digits: Number of decimal places to round the wig values to (not intervals).
     :type round_digits: int
     :param scale_by_step: If True, scale the values by the step size.
     :type scale_by_step: bool
-    :param filter_type: Type of filter (if any) to apply to the signal values. Must be one of: 'savitzky-golay', 'median'.
+    :param filter_type: Type of filter to apply. Options are 'savitzky-golay' or 'median'.
     :type filter_type: str
     :param savgol_window_bp: Window size for the Savitzky-Golay filter in base pairs.
     :type savgol_window_bp: int
-    :param savgol_order: Polynomial degree of the Savitzky-Golay filter.
+    :param savgol_window_steps: Window size for the Savitzky-Golay filter in steps.
+    :type savgol_window_steps: int
+    :param savgol_order: Polynomial order for the Savitzky-Golay filter.
     :type savgol_order: int
     :param medfilt_kernel_bp: Kernel size for the median filter in base pairs.
     :type medfilt_kernel_bp: int
-    :param log_plus_const: If True, apply log2 transformation to the values.
-    :type log_plus_const: bool
-    :param log_const: Constant to add to the values before log2 transformation.
+    :param medfilt_kernel_steps: Kernel size for the median filter in steps.
+    :type medfilt_kernel_steps: int
+    :param transform_log_pc: If True, apply a log2(x + c) transformation to data.
+    :type transform_log_pc: bool
+    :param log_const: Constant to add before taking the log.
     :type log_const: float
-    :param loc_smean_sdisp_ratio: If True, apply transformation: :math:`\frac{x_i - \mathsf{savgol}_k(\mu_i)}{\mathsf{savgol}_0{\sigma_i}}`. If corresponding parameters are not provided, defaults will be used.
-    :type loc_smean_sdisp_ratio: bool
-    :param loc_smean_sdisp_ratio_window_bp: Window size for the Savitzky-Golay filter in base pairs. Doubled (+1) for the local dispersion estimate (order 0). If not None, this transformation will be applied even if `loc_smean_sdisp_ratio` is False.
-    :type loc_smean_sdisp_ratio_window_bp: int
-    :param loc_smean_sdisp_ratio_window_steps: Number of steps to calculate the window size in base pairs. Doubled (+1) for the local dispersion estimate (order 0).
+    :param transform_local_ratio: If True, apply local ratio transformation to the values. See :func:`apply_transformation()`.
+    :type transform_local_ratio: bool
+    :param local_ratio_window_bp: Window size for the local ratio transformation in base pairs.
+    :type local_ratio_window_bp: int
+    :param local_ratio_window_steps: Window size for the local ratio transformation in steps.
+    :type local_ratio_window_steps: int
+    :param local_ratio_pc: Constant to add to the local reference before taking the ratio.
+    :type local_ratio_pc: float
     
-    :return: A tuple containing two np arrays. One for the genomic intervals, one for the values.
-    :rtype: tuple
+    :return: A tuple containing two numpy arrays. The first array contains genomic intervals, and the second contains the corresponding values.
+    :rtype: tuple(numpy.ndarray, numpy.ndarray)
 
     :raises FileNotFoundError: If a BigWig file or chromosome sizes file is not found.
 
-    :seealso: `get_chrom_reads`
+    :seealso: :func:`get_chrom_reads()`
+    :seealso: :func:`apply_transformation`
+    :seealso: :func:`apply_filter`
+
     """
 
     # get sync'd intervals for all bigwigs
@@ -506,7 +522,9 @@ def generate_chrom_matrix(chromosome: str, bigwig_files: list, chrom_sizes_file:
         count_matrix = count_matrix.reshape(1, -1)
 
     # apply transformations first
-    _, count_matrix = apply_transformation(common_intervals, count_matrix, log_plus_const=log_plus_const, log_const=log_const, loc_smean_sdisp_ratio=loc_smean_sdisp_ratio, loc_smean_sdisp_ratio_window_bp=loc_smean_sdisp_ratio_window_bp, loc_smean_sdisp_ratio_window_steps=loc_smean_sdisp_ratio_window_steps)
+    _, count_matrix = apply_transformation(common_intervals, count_matrix, transform_log_pc=transform_log_pc, log_const=log_const,
+                                            transform_local_ratio=transform_local_ratio, local_ratio_window_bp=local_ratio_window_bp,
+                                            local_ratio_window_steps=local_ratio_window_steps, local_ratio_pc=local_ratio_pc)
     
     # apply filters
     _, count_matrix = apply_filter(common_intervals, count_matrix, filter_type=filter_type, savgol_window_bp=savgol_window_bp, savgol_window_steps=savgol_window_steps, savgol_order=savgol_order, medfilt_kernel_bp=medfilt_kernel_bp, medfilt_kernel_steps=medfilt_kernel_steps)
@@ -516,6 +534,24 @@ def generate_chrom_matrix(chromosome: str, bigwig_files: list, chrom_sizes_file:
 
 def apply_filter(intervals: np.ndarray, count_matrix: np.ndarray, filter_type: str = None, savgol_window_bp: int = None, savgol_window_steps: int = 5, savgol_order: int = None, medfilt_kernel_bp: int = None, medfilt_kernel_steps: int = 5) -> Tuple[np.ndarray, np.ndarray]:
     r"""Apply filtering to the count matrix.
+    
+    :param intervals: The genomic intervals.
+    :type intervals: np.ndarray
+    :param count_matrix: The count matrix.
+    :type count_matrix: np.ndarray
+    :param filter_type: The type of filter to apply. Options are 'savitzky-golay' or 'median'.
+    :type filter_type: str
+    :param savgol_window_bp: Window size for the Savitzky-Golay filter in base pairs.
+    :type savgol_window_bp: int
+    :param savgol_window_steps: Window size for the Savitzky-Golay filter in steps.
+    :type savgol_window_steps: int
+    :param savgol_order: Polynomial order for the Savitzky-Golay filter.
+    :type savgol_order: int
+    :param medfilt_kernel_bp: Kernel size for the median filter in base pairs.
+    :type medfilt_kernel_bp: int
+    :param medfilt_kernel_steps: Kernel size for the median filter in steps.
+    :type medfilt_kernel_steps: int
+    
     """
 
     if filter_type is None:
@@ -555,47 +591,53 @@ def apply_filter(intervals: np.ndarray, count_matrix: np.ndarray, filter_type: s
 
 
 def apply_transformation(intervals: np.ndarray, count_matrix: np.ndarray,
-                        log_plus_const: bool = False, log_const: float = 0.5,
-                        loc_smean_sdisp_ratio: bool = False, loc_smean_sdisp_ratio_window_bp: int = None,
-                        loc_smean_sdisp_ratio_window_steps: int = 11) -> Tuple[np.ndarray, np.ndarray]:
-    r"""Apply transformations to the count matrix.
-    
-    :param intervals: The genomic intervals corresponding to the count matrix.
-    :type intervals: np.ndarray
-    :param count_matrix: The count matrix to transform.
-    :type count_matrix: np.ndarray
-    :param log_plus_const: If True, apply :math:`\log_2(x + c)` to each value in `count_matrix` where :math:`c` is `log_const`.
-    :type log_plus_const: bool
-    :param log_const: Constant :math:`c` to add to the values before
-    :type log_const: float
-    :param loc_smean_sdisp_ratio: If True, apply transformation: :math:`\frac{x_i - \mathsf{savgol}_k(\mu_i)}{\mathsf{savgol}_0{\sigma_i}}`. If corresponding parameters are not provided, defaults will be used.
-    :type loc_smean_sdisp_ratio: bool
-    :param loc_smean_sdisp_ratio_window_bp: Window size for the Savitzky-Golay filter in base pairs. Doubled (+1) for the local dispersion estimate (order 0). If not None, this transformation will be applied even if `loc_smean_sdisp_ratio` is False.
-    :type loc_smean_sdisp_ratio_window_bp: int
-    :param loc_smean_sdisp_ratio_window_steps: Number of steps to calculate the window size in base pairs. Doubled (+1) for the local dispersion estimate (order 0).
-    :type loc_smean_sdisp_ratio_window_steps: int
-    :return: The transformed count matrix.
-    :rtype: np.ndarray
+                        transform_log_pc: bool = False, log_const: float = None,
+                        transform_local_ratio: bool = False, local_ratio_window_bp: int = None,
+                        local_ratio_window_steps: int = None, local_ratio_pc: float = None) -> Tuple[np.ndarray, np.ndarray]:
+    r"""Transform the count matrix after computing read densities.
 
+    :param intervals: The genomic intervals.
+    :type intervals: np.ndarray
+    :param count_matrix: The count matrix.
+    :type count_matrix: np.ndarray
+    :param transform_log_pc: If True, apply a `log2(x + c)` transformation to data.
+    :type transform_log_pc: bool
+    :param log_const: Constant to add before taking the log.
+    :type log_const: float
+    :param transform_local_ratio: If True, apply local ratio transformation to the values: `x - median_filter(x, row, kernel) / (median_filter(x, row, kernel) + ε)`.
+    :type transform_local_ratio: bool
+    :param local_ratio_window_bp: Window size for the local ratio transformation in base pairs.
+    :type local_ratio_window_bp: int
+    :param local_ratio_window_steps: Window size for the local ratio transformation in steps.
+    :type local_ratio_window_steps: int
+    :param local_ratio_pc: Constant to add to the local reference before taking the ratio.
+    :type local_ratio_pc: float
+
+    :return: A tuple containing two numpy arrays. The first array contains genomic intervals, and the second is a matrix (2d array) containing the corresponding values.
+    :rtype: tuple(numpy.ndarray, numpy.ndarray)
+    
     """
-    if log_plus_const:
-        logger.info(f"Applying log2 transformation with constant: {log_const}")
+    if transform_log_pc or log_const is not None:
+        if log_const is None:
+            log_const = 0.25
+        logger.info(f"Transforming data as log2(x + {log_const})")
         count_matrix = np.log2(count_matrix + log_const)
     
-    if loc_smean_sdisp_ratio or loc_smean_sdisp_ratio_window_bp is not None:
-        if log_plus_const:
-            logger.info("Applying local mean:local dispersion ratio transform on log2-transformed values.")
+    if transform_local_ratio or local_ratio_window_bp is not None:
+        if local_ratio_window_bp is None or local_ratio_window_bp < 0:
+            local_ratio_window_bp = 5000
         step_sizes = np.unique(np.abs(np.diff(intervals)))
         if len(step_sizes) > 1:
             logger.warning(f"Warning: non-uniform step sizes detected: {step_sizes}. This may lead to unexpected results.")
         step_size = step_sizes[0]
-        if loc_smean_sdisp_ratio_window_bp is None or loc_smean_sdisp_ratio_window_bp < 0: 
-            loc_smean_sdisp_ratio_window_bp = step_size * loc_smean_sdisp_ratio_window_steps
-        filter_window = max(3,_next_odd_number(loc_smean_sdisp_ratio_window_bp//step_size))
-        filter_order = filter_window // 2
+        local_ratio_window_steps = _next_odd_number(local_ratio_window_bp // step_size)
+        logger.info(f"Transforming data as ratio (x-median_filter(x,row,kernel={local_ratio_window_bp}bp):(median_filter(x,row,kernel={local_ratio_window_bp}bp) + ε)")
         for i in range(count_matrix.shape[0]):
-            mean_estimates_pos = signal.savgol_filter(count_matrix[i], filter_window, filter_order)
-            squared_residuals_pos = (count_matrix[i] - mean_estimates_pos)**2
-            dispersion_estimates_pos = np.maximum(np.sqrt(signal.savgol_filter(squared_residuals_pos, (2*filter_window)+1, 0)),1)
-            count_matrix[i] = (count_matrix[i] - mean_estimates_pos) / (dispersion_estimates_pos)
+
+            local_ref = signal.medfilt(count_matrix[i], local_ratio_window_steps)
+            if local_ratio_pc is None:
+                local_ratio_pc = 1.0
+            local_ref = local_ref + local_ratio_pc
+            count_matrix[i] = (count_matrix[i]) / (local_ref)
+
     return intervals, count_matrix
