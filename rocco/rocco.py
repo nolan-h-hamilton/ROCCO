@@ -469,7 +469,7 @@ def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scal
 
 
 def get_warm_idx(scores, budget, gamma, warm_thresh=None) -> Tuple[np.ndarray, np.ndarray, float]:
-    r"""Prior to solving, identify 'warm' indices--those with scores greater than the worst-case fragmentation penalty that could be incurred by their selection assuming integrality (`2*gamma`).
+    r"""Prior to solving, identify 'warm' indices--those with scores greater than the worst-case fragmentation penalty that could be incurred by their selection assuming integrality (`2*gamma`). Note that this loses meaning if gamma is scaled. 
 
     :param scores: Scores for each genomic position within a given chromosome
     :type scores: np.ndarray
@@ -505,11 +505,14 @@ def get_warm_idx(scores, budget, gamma, warm_thresh=None) -> Tuple[np.ndarray, n
 def solve_relaxation_chrom_pdlp(scores,
                     budget:float=0.035,
                     gamma:float=1.0,
+                    beta:float=None,
+                    denom_const:float=None,
                     pdlp_proto=None,
                     pdlp_presolve_options_use_glop:bool=True,
                     pdlp_termination_criteria_eps_optimal_absolute:float=1.0e-8,
                     pdlp_termination_criteria_eps_optimal_relative:float=1.0e-8,
                     pdlp_use_low_precision:bool=False,
+                    scale_gamma:bool=False,
                     hint=None,
                     threads:int=0,
                     verbose:bool=False,
@@ -526,6 +529,10 @@ def solve_relaxation_chrom_pdlp(scores,
     :type budget: float
     :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere. The ideal value of `gamma` is for a given dataset is dependent on the user's preference. Increase to encourage solutions that are 'block-like'.
     :type  gamma: float
+    :param beta: Exponent for the denominator in the fragmentation penalty. If None, defaults to 1/2 when `scale_gamma` is True.
+    :type beta: float
+    :param denom_const: Constant to add to the denominator in the fragmentation penalty. If None, defaults to 1.0 when `scale_gamma` is True.
+    :type denom_const: float
     :param pdlp_proto: pdlp-specific protocol buffer. If this is not None, the explicit solver arguments in this function definition are ignored. See `<https://protobuf.dev>`_ for more information on protocol buffers and `solvers.proto <https://github.com/google/or-tools/blob/2c333f58a37d7c75d29a58fd772c9b3f94e2ca1c/ortools/pdlp/solvers.proto>`_ for Google's pdlp-specific protocol buffer.
     :type pdlp_proto: solvers_pb2.PrimalDualHybridGradientParams
     :param pdlp_presolve_options_use_glop: Use glop's presolve routines but solve with pdlp. Recommended for most cases unless the user is confident in the problem's structure and the solver's behavior and computational resources are limited.
@@ -590,11 +597,23 @@ def solve_relaxation_chrom_pdlp(scores,
         if i % (n//10) == 0:
             logger.info(f'Coefficient ({i}/{n})')
         objective.SetCoefficient(ell[i], -1.0*scores[i])
+    denom = None
+    if scale_gamma:
+        if denom_const is None:
+            denom_const = 1.0
+        if beta is None:
+            beta = 1.0/2.0
+        logger.info(f'Scaling γ positionally: `γ/(|Score_i - Score_i+1| + ε)^β`, with β={beta} and ε={denom_const}')
+        denom = (np.abs(np.diff(scores,1)) + denom_const)**beta
+    
     for j in range(n-1):
         # log every 10% of the way
         if j % (n//10) == 0:
             logger.info(f'Coefficient (aux.) ({j}/{n})')
-        objective.SetCoefficient(ell_aux[j], 1.0*gamma)
+        if scale_gamma:
+            objective.SetCoefficient(ell_aux[j], (1.0*gamma)/denom[j])
+        elif denom is None:
+            objective.SetCoefficient(ell_aux[j], (1.0*gamma))
     objective.SetMinimization()
     
     if hint is not None:
@@ -637,6 +656,8 @@ def solve_relaxation_chrom_pdlp(scores,
 def solve_relaxation_chrom_glop(scores,
                      budget:float=0.035,
                      gamma:float=1.0, 
+                     beta:float=None,
+                     denom_const:float=None,
                      glop_parameters=None,
                      glop_dual_feasibility_tolerance:float=1.0e-8,
                      glop_primal_feasibility_tolerance:float=1.0e-8,
@@ -645,6 +666,7 @@ def solve_relaxation_chrom_glop(scores,
                      glop_push_to_vertex: bool=True,
                      glop_use_dual_simplex=None,
                      glop_allow_simplex_algorithm_change:bool=False,
+                     scale_gamma:bool=False,
                      hint=None,
                      threads:int=0,
                      verbose:bool=False,
@@ -662,6 +684,10 @@ def solve_relaxation_chrom_glop(scores,
     :type budget: float
     :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere. The ideal value of `gamma` is for a given dataset is dependent on the user's preference. Increase to encourage solutions that are 'block-like'.
     :type  gamma: float
+    :param beta: Exponent for the denominator in the fragmentation penalty. If None, defaults to 1/2 when `scale_gamma` is True.
+    :type beta: float
+    :param denom_const: Constant to add to the denominator in the fragmentation penalty. If None, defaults to 0.5 when `scale_gamma` is True.
+    :type denom_const: float
     :param glop_parameters: glop-specific protocol buffer. If this is not None, the explicit solver arguments in this function definition are ignored. See `<https://protobuf.dev>`_ for more information on protocol buffers and `parameters.proto <https://github.com/google/or-tools/blob/stable/ortools/glop/parameters.proto>`_ for Google's glop-specific protocol buffer.
     :type glop_parameters: parameters_pb2.GlopParameters
     :param glop_dual_feasibility_tolerance: Dual feasibility tolerance for glop.
@@ -715,7 +741,7 @@ def solve_relaxation_chrom_glop(scores,
     ell = [solver.NumVar(0, 1, f'ell_{i}') for i in range(n)]
     ell_aux = [solver.NumVar(0, 1, f'ell_aux_{j}') for j in range(n-1)]
     logger.info(f'Setting constraints')
-    solver.Add(sum(ell) <= np.floor(budget * n)*1.0)
+    solver.Add(sum(ell) <= np.floor(budget * n)*1.0, name='budget')
     for i in range(n - 1):
         # log every 10% of the way
         if i % (n//10) == 0:
@@ -729,11 +755,23 @@ def solve_relaxation_chrom_glop(scores,
         if i % (n//10) == 0:
             logger.info(f'Coefficient ({i}/{n})')
         objective.SetCoefficient(ell[i], -1.0*scores[i])
+    denom = None
+    if scale_gamma:
+        if denom_const is None:
+            denom_const = 1.0
+        if beta is None:
+            beta = 1.0/2.0
+        logger.info(f'Scaling γ positionally: `γ/(|Score_i - Score_i+1| + ε)^β`, with β={beta} and ε={denom_const}')
+        denom = (np.abs(np.diff(scores,1)) + denom_const)**beta
+
     for j in range(n-1):
         # log every 10% of the way
         if j % (n//10) == 0:
             logger.info(f'Coefficient (aux.) ({j}/{n})')
-        objective.SetCoefficient(ell_aux[j], 1.0*gamma)
+        if scale_gamma:
+            objective.SetCoefficient(ell_aux[j], (1.0*gamma)/denom[j])
+        elif denom is None:
+            objective.SetCoefficient(ell_aux[j], (1.0*gamma))
     objective.SetMinimization()
 
     if hint is not None:
@@ -1027,32 +1065,35 @@ def main():
     parser.add_argument('--dual_feasibility_tolerance', type=float, default=1.0e-8, help="glop solver only.")
     parser.add_argument('--pdlp_presolve_use_glop', action='store_true', help="pdlp solver only. Use glop's presolve routines but solve with pdlp. Recommended for most cases.")
     parser.add_argument('--loose_solve', action='store_true', help="This will run pdlp (not glop) with weakened termination criteria. Consider using if computational resources are limited.")
+    parser.add_argument('--save_model', type=str, default=None, help='Save the optimization model as an MPS file. If specified, the model will be saved to the provided path.')
+    parser.add_argument('--scale_gamma', action='store_true', help='If True, the fragmentation penalty (TV) is scaled by the difference in scores at the same position so that the penalty is inversely related to the score difference. Avoids penalizing fragmentation over intervals where the score change is large, and a shift in state is expected. Default is False.')
+    parser.add_argument('--scale_gamma_eps','--denom_const', type=float, default=None, help='If `scale_gamma` is True, this value is added to the denominator in the fragmentation penalty to avoid division by zero. Only relevant if `--scale_gamma` is invoked.')
+    parser.add_argument('--scale_gamma_beta', '--beta', type=float, default=None, help='If `scale_gamma` is True, this value is used as the exponent in denominator of the fragmentation penalty. Only relevant if `--scale_gamma` is also invoked.')
 
 
-    # scoring-related arguments
-    ## central tendency-related arguments
+    # Scoring-related arguments
+    ## central tendency
     parser.add_argument('--c_1', type=float, default=1.0, help='Score parameter: coefficient for central tendency measure. Assumed positive in the default implementation')
     parser.add_argument('--method_central_tendency', default='quantile', choices=['quantile', 'tmean', 'mean'], help='Central tendency measure. Default is `quantile` with `quantile_value` set to 0.50 (median)')
     parser.add_argument('--quantile_value', type=float, default=0.50, help='Quantile value for central tendency measure--Only applies if `method_central_tendency` is set to `quantile`')
     parser.add_argument('--tprop', type=float, default=0.05, help='Trim proportion for  (`tmean`)--Only applies for trimmed mean central tendency measure.')
 
-    ## dispersion-related arguments
+    ## dispersion
     parser.add_argument('--c_2', type=float, default=-1.0, help='Score parameter: coefficient for dispersion measure. Assumed negative in the default implementation')
     parser.add_argument('--method_dispersion', default='mad', choices=['mad', 'std', 'iqr', 'tstd'], help='Dispersion measure')
-    # tprop is shared with central tendency
 
-    ## boundary-related arguments
+    ## boundary
     parser.add_argument('--c_3', type=float, default=1.0, help='Score parameter: coefficient for boundary measure. Assumed positive in the default implementation')
 
-
-    ## parsig-related arguments
+    ## parametric-sigmoid
     parser.add_argument('--use_parsig', action='store_true', help='Apply `parsig` function to scores. Consider using to promote already-integral solutions in the LP relaxed version of the problem, thereby reducing over-dependence on the ROCCO-RR procedure, which is stochastic. Default parameters work well for most cases but see documentation for more information.')    
     parser.add_argument('--parsig_B', type=float, default=None, help='parsig function `B` parameter')
     parser.add_argument('--parsig_M', type=float, default=None, help='parsig function `M` parameter')
     parser.add_argument('--parsig_R', type=float, default=None, help='parsig function `R` parameter')
     parser.add_argument('--eps_neg', type=float, default=-1.0e-3)
 
-    # count track/matrix generation and processing arguments
+
+    # Count track/matrix generation and processing arguments
     parser.add_argument('--step', '-w', type=int, default=50,
                         help='Size of contiguous, fixed-width genomic intervals over which reads are counted (referred to as "loci" in the paper). Larger `--step` values will capture less substructure within peak regions, but this may be desired for some analyses and reduces runtime/memory use, as well. Default is 50 bp. If using BigWig files as input, this value is inferred from data and ignored. For BigWig input, the step must be consistent across all input files.')
     parser.add_argument('--norm_method', default='RPGC',
@@ -1084,6 +1125,8 @@ def main():
     parser.add_argument('--local_ratio_window_bp', type=int, default=None, help='Window size for local ratio transformation in base pairs.')
     parser.add_argument('--local_ratio_window_steps', type=int, default=None, help='Window size for local ratio transformation in steps.')
     parser.add_argument('--local_ratio_pc', type=float, default=None, help='Add to local_ref when computing local ratio.')
+
+
     # post-processing-related arguments
     parser.add_argument('--min_length_bp', type=int, default=None,
                         help='Minimum length of regions to output in the final BED file')
@@ -1119,7 +1162,7 @@ def main():
     if args['chrom_sizes_file'] is None:
         raise ValueError('A genome with default resources available was not specified with `-g/--genome`, and so a chromosome sizes file must be supplied with `-s/--chrom_sizes_file`')
     if args['effective_genome_size'] is None and args['norm_method'] == 'RPGC':
-        raise ValueError('A genome with default resources available was not specified with `-g/--genome`, and so `--norm_method RPGC` normalization, which requires an effective genome size, must be accompanied by the `--effective_genome_size` argument.')
+        raise ValueError('A genome with default resources available was not specified with `-g/--genome`, and so `--norm_method RPGC` normalization, which requires an effective genome size, must be specified along with use of the `--effective_genome_size` argument.')
     bam_files = []
     bigwig_files = []
     for file_ in args['input_files']:
@@ -1175,7 +1218,7 @@ def main():
         if chrom_gamma is None or args['gamma'] is not None:
             chrom_gamma = args['gamma']
 
-        # computing chromosome-specific matrix of read counts/densities/enrichments...
+        # Computing chromosome-specific matrix of read counts/densities/enrichments...
         logger.info(f'Generating chromosome matrix: {chrom_}')
         chrom_intervals = None
         chrom_matrix = None
@@ -1192,13 +1235,13 @@ def main():
         logger.info(f'Chromosome {chrom_} Matrix: {chrom_matrix.shape}')
 
         try:
-            # scale gamma so that it has the same interpretation across different step sizes
             step = float(chrom_intervals[1] - chrom_intervals[0])
             chrom_gamma = (chrom_gamma / step)*50.0
         except Exception as e:
             logger.info(f'Could not scale gamma based on step size: {e}')
+
         
-        # scoring phase
+        # Scoring phase
         logger.info(f'Scoring regions: {chrom_}')
         if clean_string(args['method_central_tendency']) == 'quantile':
             ct_scores = score_central_tendency_chrom(chrom_matrix, quantile=args['quantile_value'])
@@ -1235,20 +1278,16 @@ def main():
             'Quantile=0.99': round(np.quantile(chrom_scores, q=0.99, method='higher'), 5)})
 
         logger.info(f"\nChromosome {chrom_} scores:\n{score_output}\n")
-        
-        warm_idx_, warm_scores_, warm_ratio_ = get_warm_idx(chrom_scores, chrom_budget, chrom_gamma)
-        if len(warm_idx_) > 1:
-            logger.info(f'{chrom_}, {chrom_gamma}: warm idx: {len(warm_idx_)}, warm scores: {(warm_scores_[0], warm_scores_[-1])}, warm ratio: {warm_ratio_}')
-        # optimization phase
+        # Optimization phase
         logger.info(f'Solving LP relaxation using {args["solver"]}')
         logger.info(f'{chrom_}: budget: {chrom_budget}\tgamma: {chrom_gamma}')
         if args['solver'] == 'glop':
-            chrom_lp_sol, chrom_lp_score = solve_relaxation_chrom_glop(chrom_scores, budget=chrom_budget, gamma=chrom_gamma, threads=args['threads'], verbose=args['verbose'], glop_dual_feasibility_tolerance=args['dual_feasibility_tolerance'], glop_primal_feasibility_tolerance=args['primal_feasibility_tolerance'])
+            chrom_lp_sol, chrom_lp_score = solve_relaxation_chrom_glop(chrom_scores, budget=chrom_budget, gamma=chrom_gamma, threads=args['threads'], verbose=args['verbose'], glop_dual_feasibility_tolerance=args['dual_feasibility_tolerance'], glop_primal_feasibility_tolerance=args['primal_feasibility_tolerance'], save_model=args['save_model'], scale_gamma=args['scale_gamma'], denom_const=args['scale_gamma_eps'], beta=args['scale_gamma_beta'])
         elif args['solver'] == 'pdlp':
             chrom_lp_sol, chrom_lp_score = solve_relaxation_chrom_pdlp(chrom_scores, budget=chrom_budget, gamma=chrom_gamma, threads=args['threads'], verbose=args['verbose'], pdlp_presolve_options_use_glop=args['pdlp_presolve_use_glop'],
             pdlp_termination_criteria_eps_optimal_absolute=args['eps_optimal_absolute'],
             pdlp_termination_criteria_eps_optimal_relative=args['eps_optimal_relative'],
-            pdlp_use_low_precision=args['loose_solve'])
+            pdlp_use_low_precision=args['loose_solve'], save_model=args['save_model'], scale_gamma=args['scale_gamma'], denom_const=args['scale_gamma_eps'], beta=args['scale_gamma_beta'])
 
         logger.info(f'Refining relaxed solution for integrality')
         chrom_rround_sol, chrom_rround_score = get_rround_sol(chrom_lp_sol, chrom_scores, chrom_budget, chrom_gamma, rand_iter=args['rand_iter'], int_tol=args['int_tol'], eps_mult=args['eps_mult'])
