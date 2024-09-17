@@ -9,14 +9,20 @@ ROCCO is an efficient algorithm for detection of "consensus peaks" in large data
 
 ### Example Behavior
 
-In the image below, ROCCO is run on a set of ten heterogeneous ATAC-seq samples (lymphoblast) from independent donors (ENCODE). The samples' tracks are colored gray.
+In the image below, ROCCO is run on a set of heterogeneous ATAC-seq samples (lymphoblast) from independent donors (ENCODE). The samples' read density tracks are colored gray.
 
 * ROCCO consensus peaks (default parameters) are shown in blue
 * MACS2 (pooled, `q=.01`) consensus peaks are shown in red.
 * ENCODE cCREs are included as a rough reference of potentially active regions, but note that these regions are not specific to the data samples used in this analysis, nor are they derived from the same cell type or assay.
 
 <p align="center">
-<img width="600" alt="example" src="docs/example_behavior.png">
+<img width="600" height="450" alt="example" src="docs/example_behavior.png">
+
+#### Additional Examples
+
+* ROCCO offers several alternative features for preprocessing, scoring, and optimization
+* [A visual characterization of different settings and their effects](docs/rocco_options.png) is available
+* See documentation at <https://nolan-h-hamilton.github.io/ROCCO/> for additional details
 
 ## How
 
@@ -30,7 +36,7 @@ ROCCO offers several attractive features:
 2. **Scaling to large sample sizes** with an asymptotic time complexity independent of sample size
 3. **No required training data** or a heuristically determined set of initial candidate peak regions
 4. **No rigid thresholds** on the minimum number/width of supporting samples/replicates
-5. **Mathematically tractable model** with worst-case bounds on runtime and performance
+5. **Mathematically tractable model** permitting worst-case analysis of runtime and performance
 
 ### Paper/Citation
 
@@ -43,9 +49,7 @@ If using ROCCO in your research, please cite the [original paper](https://doi.or
 
 ### Documentation
 
-For additional details, usage, etc. please see ROCCO's documentation: <https://nolan-h-hamilton.github.io/ROCCO/>
-
-Note that using the module-level functions directly may allow for greater flexibility in applications than using the command-line interface, which is limited in scope.
+For additional details, usage examples, etc. please see ROCCO's documentation: <https://nolan-h-hamilton.github.io/ROCCO/>
 
 ### Installation
 
@@ -55,13 +59,9 @@ Note that using the module-level functions directly may allow for greater flexib
    pip install rocco # most recent version
    ```
 
-   ```shell
-   pip install --pre rocco # most recent release candidate (if available)
-   ```
-
 #### Build from Source
 
-You can also build from source directly if preferred.
+If preferred, ROCCO can easily be built from source:
 
 * Clone or download this repository
 
@@ -72,9 +72,8 @@ You can also build from source directly if preferred.
   pip install -e .
   ```
 
-ROCCO utilizes the popular bioinformatics software [Samtools](http://www.htslib.org) and [bedtools](https://bedtools.readthedocs.io/en/latest/). If not available already, these system dependencies can be installed with standard MacOS or Linux/Unix package managers, e.g., `brew install samtools` (Homebrew), `sudo apt-get install samtools` (APT), Conda `conda install bioconda::samtools`, etc..
-
 ### Input/Output
 
 * *Input*: Samples' BAM alignments or BigWig tracks
+  * Note, if BigWig input is used, no preprocessing options can be applied at the alignment level.
 * *Output*: BED file of consensus peak regions
