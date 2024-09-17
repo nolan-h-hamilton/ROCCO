@@ -38,9 +38,6 @@ latex_elements = {'classoptions': ',openany,oneside',     'babel' : '\\usepackag
         \usepackage{inconsolata}
     ''',}
 
-
-
-# -- Options for autodoc extension -------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/extensions/autodoc.html#module-sphinx.ext.autodoc
 autodoc_mock_imports = ["numpy","scipy", "pybedtools", "pandas", "pyBigWig", "deeptools", "ortools", "typing", "pysam", "myst_parser"]
 autodoc_typehints = 'both'
@@ -48,7 +45,7 @@ autodoc_typehints_format = 'fully-qualified'
 autodoc_default_options = {
     'members': True,
 }
-
+add_module_names = False
 # -- Options for napoleon extension ------------------------------------------
 napoleon_sphinx_docstring = True
 html_theme_options = {

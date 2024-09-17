@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as readme_file:
 
 setup(
     name='rocco',
-    version='1.0.3',
+    version='1.1.0',
     author='Nolan Holt Hamilton',
     author_email='nolan.hamilton@unc.edu',
     description='Robust ATAC-seq Peak Calling for Many Samples via Convex Optimization',
@@ -18,7 +18,7 @@ setup(
         "Programming Language :: Python :: 3",
         "Development Status :: 4 - Beta",
     ],
-    python_requires='>=3.8,<3.11',
+    python_requires='>=3.8,<3.12',
     install_requires=[
         'ortools>=9.10',
         'numpy>=1.23.5',
