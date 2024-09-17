@@ -43,9 +43,7 @@ If using ROCCO in your research, please cite the [original paper](https://doi.or
 
 ### Documentation
 
-For additional details, usage, etc. please see ROCCO's documentation: <https://nolan-h-hamilton.github.io/ROCCO/>
-
-Note that using the module-level functions directly may allow for greater flexibility in applications than using the command-line interface, which is limited in scope.
+For additional details, usage examples, etc. please see ROCCO's documentation: <https://nolan-h-hamilton.github.io/ROCCO/>
 
 ### Installation
 
@@ -55,13 +53,9 @@ Note that using the module-level functions directly may allow for greater flexib
    pip install rocco # most recent version
    ```
 
-   ```shell
-   pip install --pre rocco # most recent release candidate (if available)
-   ```
-
 #### Build from Source
 
-You can also build from source directly if preferred.
+If preferred, ROCCO can easily be built from source:
 
 * Clone or download this repository
 
@@ -72,9 +66,8 @@ You can also build from source directly if preferred.
   pip install -e .
   ```
 
-ROCCO utilizes the popular bioinformatics software [Samtools](http://www.htslib.org) and [bedtools](https://bedtools.readthedocs.io/en/latest/). If not available already, these system dependencies can be installed with standard MacOS or Linux/Unix package managers, e.g., `brew install samtools` (Homebrew), `sudo apt-get install samtools` (APT), Conda `conda install bioconda::samtools`, etc..
-
 ### Input/Output
 
 * *Input*: Samples' BAM alignments or BigWig tracks
+  * Note, if BigWig input is used, no preprocessing options can be applied at the alignment level.
 * *Output*: BED file of consensus peak regions
