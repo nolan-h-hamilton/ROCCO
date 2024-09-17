@@ -604,7 +604,7 @@ def apply_transformation(intervals: np.ndarray, count_matrix: np.ndarray,
     :type transform_log_pc: bool
     :param log_const: Constant to add before taking the log.
     :type log_const: float
-    :param transform_local_ratio: If True, apply local ratio transformation to the values: `x - median_filter(x, row, kernel) / (median_filter(x, row, kernel) + ε)`.
+    :param transform_local_ratio: If True, apply local ratio transformation to the values: `x/(median_filter(x,row,kernel=local_ratio_window_bp) + ε)`.
     :type transform_local_ratio: bool
     :param local_ratio_window_bp: Window size for the local ratio transformation in base pairs.
     :type local_ratio_window_bp: int
@@ -631,7 +631,7 @@ def apply_transformation(intervals: np.ndarray, count_matrix: np.ndarray,
             logger.warning(f"Warning: non-uniform step sizes detected: {step_sizes}. This may lead to unexpected results.")
         step_size = step_sizes[0]
         local_ratio_window_steps = _next_odd_number(local_ratio_window_bp // step_size)
-        logger.info(f"Transforming data as ratio (x-median_filter(x,row,kernel={local_ratio_window_bp}bp):(median_filter(x,row,kernel={local_ratio_window_bp}bp) + ε)")
+        logger.info(f"Transforming data as ratio x/(median_filter(x,row,kernel={local_ratio_window_bp}bp) + ε)")
         for i in range(count_matrix.shape[0]):
 
             local_ref = signal.medfilt(count_matrix[i], local_ratio_window_steps)

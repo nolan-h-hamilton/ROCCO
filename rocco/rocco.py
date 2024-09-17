@@ -39,7 +39,7 @@ ROCCO offers several attractive features:
 2. **Scaling to large sample sizes** with an asymptotic time complexity independent of sample size
 3. **No required training data** or a heuristically determined set of initial candidate peak regions
 4. **No rigid thresholds** on the minimum number/width of supporting samples/replicates
-5. **Mathematically tractable model** with worst-case bounds on runtime and performance
+5. **Mathematically tractable model** permitting worst-case analysis of runtime and performance
 
 
 Paper/Citation
@@ -130,35 +130,70 @@ Input/Output
 -------------
 
 * Input: BAM alignments or BigWig tracks from multiple data samples
+   * If BigWig tracks are used as input, no preprocessing can be performed at the alignment level.
+
 * Output: BED file of consensus peak regions
 
 
-**Minimal Example**:
+Usage
+------
+
+**Run with defaults using BAM input files**:
 
 .. code-block:: bash
 
         rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g hg38
 
 **Run on a subset of chromosomes**:
-
-Useful for debugging
-
+ 
+* Can be used for quicker debugging
+ 
 .. code-block:: bash
 
         rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g hg38 --chroms chr21 chr22
 
-**Run with parametric-sigmoid transformation of scores**:
+**Run with parametric-sigmoid  transformation of scores**:
 
-Useful to promote integrality in the LP relaxation
+* Useful to promote integrality in the LP relaxation and create separation between lower/higher scores.
+
+* See :func:`parsig`
 
 .. code-block:: bash
 
         rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g hg38 --use_parsig
 
+**Run ROCCO on 'local-ratio' transformed data**:
+
+* See :func:`rocco.readtracks.apply_transformation`
+
+.. code-block:: bash
+
+        rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g hg38 --transform_local_ratio
+
+**Run ROCCO with dynamic fragmentation penalties, γ**:
+
+* See :func:`solve_relaxation_chrom_pdlp` or :func:`solve_relaxation_chrom_glop`.
+
+.. code-block:: bash
+
+        rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g hg38 --scale_gamma
+
+In the above examples, BigWig files can be used too, but as mentioned, no preprocessing can be performed on this data at the *alignment* level.
+
+Usage: Visualization
+=====================
+
+See below for a visualization of the effects of several of ROCCO's fundamental options for preprocessing, scoring, optimization, etc.
+
+.. image:: rocco_options.png
+   :width: 600px
+   :align: center
 
 .. note::
 
     Using the module(s) themselves programmatically instead of the command-line interface will allow greater flexibility in terms of input/output, data preprocessing/postprocessing, and parallelization but will require more coding on the user's end.
+
+Documentation is provided for the primary :mod:`rocco.rocco` module directly below.
 
 """
 
@@ -533,6 +568,8 @@ def solve_relaxation_chrom_pdlp(scores,
     :type beta: float
     :param denom_const: Constant to add to the denominator in the fragmentation penalty. If None, defaults to 1.0 when `scale_gamma` is True.
     :type denom_const: float
+    :param scale_gamma: If `True`, Scale the fragmentation penalty (γ) positionally based on the difference between adjacent scores. This will yield a more nuanced fragmentation penalty that does not discourage differences in adjacent decision variables if their corresponding scores are dissimilar and thus reflect a true change in state that should be reflected in the solution. See `beta` and `denom_const` for more details.
+    :type scale_gamma: bool
     :param pdlp_proto: pdlp-specific protocol buffer. If this is not None, the explicit solver arguments in this function definition are ignored. See `<https://protobuf.dev>`_ for more information on protocol buffers and `solvers.proto <https://github.com/google/or-tools/blob/2c333f58a37d7c75d29a58fd772c9b3f94e2ca1c/ortools/pdlp/solvers.proto>`_ for Google's pdlp-specific protocol buffer.
     :type pdlp_proto: solvers_pb2.PrimalDualHybridGradientParams
     :param pdlp_presolve_options_use_glop: Use glop's presolve routines but solve with pdlp. Recommended for most cases unless the user is confident in the problem's structure and the solver's behavior and computational resources are limited.
@@ -688,6 +725,8 @@ def solve_relaxation_chrom_glop(scores,
     :type beta: float
     :param denom_const: Constant to add to the denominator in the fragmentation penalty. If None, defaults to 0.5 when `scale_gamma` is True.
     :type denom_const: float
+    :param scale_gamma: If `True`, Scale the fragmentation penalty (γ) positionally based on the difference between adjacent scores. This will yield a more nuanced fragmentation penalty that does not discourage differences in adjacent decision variables if their corresponding scores are dissimilar and thus reflect a true change in state that should be reflected in the solution. See `beta` and `denom_const` for more details.
+    :type scale_gamma: bool
     :param glop_parameters: glop-specific protocol buffer. If this is not None, the explicit solver arguments in this function definition are ignored. See `<https://protobuf.dev>`_ for more information on protocol buffers and `parameters.proto <https://github.com/google/or-tools/blob/stable/ortools/glop/parameters.proto>`_ for Google's glop-specific protocol buffer.
     :type glop_parameters: parameters_pb2.GlopParameters
     :param glop_dual_feasibility_tolerance: Dual feasibility tolerance for glop.
@@ -1068,7 +1107,7 @@ def main():
     parser.add_argument('--save_model', type=str, default=None, help='Save the optimization model as an MPS file. If specified, the model will be saved to the provided path.')
     parser.add_argument('--scale_gamma', action='store_true', help='If True, the fragmentation penalty (TV) is scaled by the difference in scores at the same position so that the penalty is inversely related to the score difference. Avoids penalizing fragmentation over intervals where the score change is large, and a shift in state is expected. Default is False.')
     parser.add_argument('--scale_gamma_eps','--denom_const', type=float, default=None, help='If `scale_gamma` is True, this value is added to the denominator in the fragmentation penalty to avoid division by zero. Only relevant if `--scale_gamma` is invoked.')
-    parser.add_argument('--scale_gamma_beta', '--beta', type=float, default=None, help='If `scale_gamma` is True, this value is used as the exponent in denominator of the fragmentation penalty. Only relevant if `--scale_gamma` is also invoked.')
+    parser.add_argument('--scale_gamma_beta', '--beta', type=float, default=None, help='If `scale_gamma` is True, this value is used to exponentiate the denominator of the (dynamically-scaled) fragmentation penalty. Only relevant if `--scale_gamma` is also invoked.')
 
 
     # Scoring-related arguments
@@ -1086,11 +1125,11 @@ def main():
     parser.add_argument('--c_3', type=float, default=1.0, help='Score parameter: coefficient for boundary measure. Assumed positive in the default implementation')
 
     ## parametric-sigmoid
-    parser.add_argument('--use_parsig', action='store_true', help='Apply `parsig` function to scores. Consider using to promote already-integral solutions in the LP relaxed version of the problem, thereby reducing over-dependence on the ROCCO-RR procedure, which is stochastic. Default parameters work well for most cases but see documentation for more information.')    
+    parser.add_argument('--use_parsig', action='store_true', help='Apply `parsig` function to scores. Consider invoking this argument to promote already-integral solutions in the LP relaxed version of the problem, thereby reducing unnecessary dependence on the stochastic ROCCO-RR procedure.')    
     parser.add_argument('--parsig_B', type=float, default=None, help='parsig function `B` parameter')
     parser.add_argument('--parsig_M', type=float, default=None, help='parsig function `M` parameter')
     parser.add_argument('--parsig_R', type=float, default=None, help='parsig function `R` parameter')
-    parser.add_argument('--eps_neg', type=float, default=-1.0e-3)
+    parser.add_argument('--eps_neg', type=float, default=-1.0e-3, help='Negative constant added to scores prior to optimization avoid selection of low-scoring regions only to exhaust the budget. Default is -1.0e-3. Not relevant if scores are already distributed over positive and negative values.')
 
 
     # Count track/matrix generation and processing arguments

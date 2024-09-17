@@ -30,7 +30,7 @@ ROCCO offers several attractive features:
 2. **Scaling to large sample sizes** with an asymptotic time complexity independent of sample size
 3. **No required training data** or a heuristically determined set of initial candidate peak regions
 4. **No rigid thresholds** on the minimum number/width of supporting samples/replicates
-5. **Mathematically tractable model** with worst-case bounds on runtime and performance
+5. **Mathematically tractable model** permitting worst-case analysis of runtime and performance
 
 ### Paper/Citation
 
