@@ -2,6 +2,7 @@
 
 <p align="center">
 <img width="400" alt="logo" src="docs/logo.png">
+</p>
 
 ## What
 
@@ -17,6 +18,7 @@ In the image below, ROCCO is run on a set of heterogeneous ATAC-seq samples (lym
 
 <p align="center">
 <img width="600" height="450" alt="example" src="docs/example_behavior.png">
+</p>
 
 #### Additional Examples
 
@@ -26,7 +28,7 @@ In the image below, ROCCO is run on a set of heterogeneous ATAC-seq samples (lym
 
 ## How
 
-ROCCO models consensus peak calling as a constrained optimization problem with an upper-bound on the total proportion of the genome selected as open/accessible and a fragmentation penalty to promote spatially consistency in active regions and sparsity elsewhere.
+ROCCO models consensus peak calling as a constrained optimization problem with an upper-bound on the total proportion of the genome selected as open/accessible and a fragmentation penalty to promote spatial consistency in active regions and sparsity elsewhere.
 
 ## Why
 
