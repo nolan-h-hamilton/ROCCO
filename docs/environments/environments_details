@@ -1,0 +1,7 @@
+# Environment Details
+
+* Creation of a distinct Conda environment to run ROCCO should not be necessary in general, and users with a reasonably up-to-date Python environment configured for scientific computing will likely be able to simply `pip install rocco` (assuming that is their preference).
+  * Nontheless, if users encounter issues with dependencies during installation or runtime (particularly for older versions of Python, e.g., `<3.9`), these YAML files may be useful as a reference to identify conformable versions of `numpy`, `scipy`, etc.  
+
+* In each environment in this directory, as specified in the YAML files, `rocco>=1.1.0` ran successfully with consistent results
+  * Note: users of Python3.8 may need to provide BigWig input or adjust certain dependencies of `deeptools` in order to use BAM files as input
