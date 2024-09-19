@@ -13,6 +13,8 @@ What
 
 ROCCO is an algorithm for efficient identification of "consensus peaks" in multiple HTS data samples (namely, ATAC-seq), where read densities are consistently enriched across samples or particularly strong enrichment is observed in a nontrivial subset of samples.
 
+ROCCO's repository is hosted on `GitHub <https://github.com/nolan-h-hamilton/ROCCO>`_
+
 Example Behavior
 ~~~~~~~~~~~~~~~~~~
 
@@ -179,9 +181,6 @@ Usage
         rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g hg38 --scale_gamma
 
 In the above examples, BigWig files can be used too, but as mentioned, no preprocessing can be performed on this data at the *alignment* level.
-
-Usage: Visualization
-=====================
 
 See below for a visualization of the effects of several of ROCCO's fundamental options for preprocessing, scoring, optimization, etc.
 
