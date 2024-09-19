@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 r"""
 ROCCO: (R)obust (O)pen (C)hromatin Detection via (C)onvex (O)ptimization
@@ -11,6 +12,8 @@ What
 ----
 
 ROCCO is an algorithm for efficient identification of "consensus peaks" in multiple HTS data samples (namely, ATAC-seq), where read densities are consistently enriched across samples or particularly strong enrichment is observed in a nontrivial subset of samples.
+
+ROCCO's repository is hosted on `GitHub <https://github.com/nolan-h-hamilton/ROCCO>`_
 
 Example Behavior
 ~~~~~~~~~~~~~~~~~~
@@ -61,17 +64,14 @@ ROCCO's documentation is available at `https://nolan-h-hamilton.github.io/ROCCO/
 Installation:
 -------------
 
+
 **PyPI (pip)**:
 
 To install ROCCO via PyPI/pip, you can run one of the following commands:
 
 .. code-block:: bash
 
-    pip install rocco --upgrade # most recent version
-
-.. code-block:: bash
-
-    pip install --pre rocco # most recent release candidate (if available)
+    pip install rocco --upgrade
 
 
 **Build ROCCO from Source**
@@ -98,7 +98,7 @@ System-Level Dependencies:
 
 ROCCO utilizes the popular bioinformatics software Samtools (http://www.htslib.org) and bedtools (https://bedtools.readthedocs.io/en/latest/).
 
-If these are not already available, you can install system-wide with a package manager e.g., 
+If these are not already available, you can install system-wide dependencies with a package manager e.g., 
 
 For Homebrew (MacOS):
 
@@ -123,7 +123,9 @@ Conda:
     conda install bioconda::samtools
 
 
-Both `bedtools` and `samtools` can easily be built from source, too (See  Samtools (http://www.htslib.org) and bedtools (https://bedtools.readthedocs.io/en/latest/).)
+or built from source (See  Samtools (http://www.htslib.org) and bedtools (https://bedtools.readthedocs.io/en/latest/)).
+
+Though it should not be necessary, if creating a distinct Conda/Mamba environment to run ROCCO, see `docs/environments` in the GitHub repository, which contains YAML files for Python versions 3.8-3.12 specifying Conda environments with detailed package version information. 
 
 
 Input/Output
@@ -180,9 +182,6 @@ Usage
 
 In the above examples, BigWig files can be used too, but as mentioned, no preprocessing can be performed on this data at the *alignment* level.
 
-Usage: Visualization
-=====================
-
 See below for a visualization of the effects of several of ROCCO's fundamental options for preprocessing, scoring, optimization, etc.
 
 .. image:: rocco_options.png
@@ -197,26 +196,25 @@ Documentation is provided for the primary :mod:`rocco.rocco` module directly bel
 
 """
 
-#!/usr/bin/env python
 import argparse
 import copy
 import logging
 import multiprocessing
 import os
 import random
+import sys
 import uuid
 from pprint import pformat
 from typing import Tuple
-import sys
 
 import numpy as np
 import pandas as pd
-import pysam
 import pybedtools
+import pysam
 import pyBigWig as pbw
 
-import scipy.stats as stats
 import scipy.signal as signal
+import scipy.stats as stats
 
 from google.protobuf import text_format
 from ortools.linear_solver import pywraplp
@@ -226,13 +224,12 @@ from ortools.pdlp import solvers_pb2
 from rocco.constants import GENOME_DICT
 from rocco.readtracks import *
 
-# set up logging
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO,
-                    format='%(filename)s: %(asctime)s - %(levelname)s - %(message)s')
-logging.basicConfig(level=logging.WARNING,
-                    format='%(filename)s: %(asctime)s - %(levelname)s - %(message)s')
 
+logging.basicConfig(level=logging.INFO,
+                     format='%(asctime)s - %(module)s.%(funcName)s -  %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.WARNING,
+                    format='%(asctime)s - %(module)s.%(funcName)s -  %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def _objective_function(sol:np.ndarray, scores:np.ndarray, gamma:float) -> float:
     return (-scores@sol
@@ -665,9 +662,10 @@ def solve_relaxation_chrom_pdlp(scores,
     elif threads < 0:
         solver.SetNumThreads(max(multiprocessing.cpu_count()-1,1))
 
-    logger.info('Solving...')
-    solver.Solve()
+    if not verbose:
+        logger.info('Solving...Rerun with `--verbose` to see solver progress output.')
 
+    solver.Solve()
     ell_arr = np.zeros(n)
     for i in range(n):
         ell_arr[i] = ell[i].solution_value()
@@ -696,13 +694,13 @@ def solve_relaxation_chrom_glop(scores,
                      beta:float=None,
                      denom_const:float=None,
                      glop_parameters=None,
-                     glop_dual_feasibility_tolerance:float=1.0e-8,
-                     glop_primal_feasibility_tolerance:float=1.0e-8,
+                     glop_dual_feasibility_tolerance:float=1.0e-6,
+                     glop_primal_feasibility_tolerance:float=1.0e-6,
                      glop_use_scaling:bool=True,
                      glop_initial_basis:str='TRIANGULAR',
                      glop_push_to_vertex: bool=True,
                      glop_use_dual_simplex=None,
-                     glop_allow_simplex_algorithm_change:bool=False,
+                     glop_allow_simplex_algorithm_change:bool=True,
                      scale_gamma:bool=False,
                      hint=None,
                      threads:int=0,
@@ -774,6 +772,7 @@ def solve_relaxation_chrom_glop(scores,
 
     if verbose:
         logger.info(f'Solver parameters:\n{pformat(glop_parameters)}\n')
+        solver.EnableOutput()
 
     n = len(scores)
     logger.info(f'Building problem with {n} variables')
@@ -825,9 +824,9 @@ def solve_relaxation_chrom_glop(scores,
     elif threads < 0:
         solver.SetNumThreads(max(multiprocessing.cpu_count()-1,1))
 
-    if verbose:
-        solver.EnableOutput()
-    logger.info('Solving...')
+    if not verbose:
+        logger.info('Solving...Rerun with `--verbose` to see solver progress output.')
+
     solver.Solve()
     ell_arr = np.zeros(n)
     for i in range(n):
@@ -1100,8 +1099,8 @@ def main():
     parser.add_argument('--threads', type=int, default=-1, help='Number of threads to use for optimization. Default is -1 (use all available threads)')
     parser.add_argument('--eps_optimal_absolute', '--atol', type=float, default=1.0e-8, help="pdlp solver only. One component of the bound on the duality gap used to check for convergence. If computational resources are limited, consider using `1.0e-4` per the `ortools` documentation")
     parser.add_argument('--eps_optimal_relative', '--rtol', type=float, default=1.0e-8, help="pdlp solver only. One component of the bound on the duality gap used to check for convergence. If computational resources are limited, consider using `1.0e-4` per the `ortools` documentation")
-    parser.add_argument('--primal_feasibility_tolerance', type=float, default=1.0e-8, help="glop solver only.")
-    parser.add_argument('--dual_feasibility_tolerance', type=float, default=1.0e-8, help="glop solver only.")
+    parser.add_argument('--primal_feasibility_tolerance', type=float, default=1.0e-6, help="glop solver only.")
+    parser.add_argument('--dual_feasibility_tolerance', type=float, default=1.0e-6, help="glop solver only.")
     parser.add_argument('--pdlp_presolve_use_glop', action='store_true', help="pdlp solver only. Use glop's presolve routines but solve with pdlp. Recommended for most cases.")
     parser.add_argument('--loose_solve', action='store_true', help="This will run pdlp (not glop) with weakened termination criteria. Consider using if computational resources are limited.")
     parser.add_argument('--save_model', type=str, default=None, help='Save the optimization model as an MPS file. If specified, the model will be saved to the provided path.')

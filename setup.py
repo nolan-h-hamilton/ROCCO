@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as readme_file:
 
 setup(
     name='rocco',
-    version='1.1.0',
+    version='1.1.1',
     author='Nolan Holt Hamilton',
     author_email='nolan.hamilton@unc.edu',
     description='Robust ATAC-seq Peak Calling for Many Samples via Convex Optimization',
@@ -18,20 +18,20 @@ setup(
         "Programming Language :: Python :: 3",
         "Development Status :: 4 - Beta",
     ],
-    python_requires='>=3.8,<3.12',
+    python_requires='>=3.8, <4',
     install_requires=[
         'ortools>=9.10',
-        'numpy>=1.23.5',
-        'scipy>=1.11',
-        'pandas>=2.0',
-        'pybedtools>=0.9',
-        'pyBigWig>=0.3.22',
-        'deeptools>=3.5',
-        'pysam>=0.20.0',
-        'myst-parser>=0.15.0',
+        'numpy',
+        'scipy',
+        'pandas',
+        'pybedtools',
+        'pyBigWig',
+        'deeptools',
+        'pysam',
+        'myst-parser',
     ],
     extras_require={
-        'pytest': ['pytest>=7.0.0']
+        'pytest': ['pytest>=6.0.1']
     },
     entry_points={
         'console_scripts': [
