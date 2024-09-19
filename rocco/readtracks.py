@@ -7,25 +7,26 @@ density tracks from BAM files and collating data
 for downstream analysis.
 
 """
+
 import logging
 import multiprocessing
 import os
 import subprocess
 import sys
 import time
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
 import pyBigWig as pbw
 import scipy.signal as signal
 
-from typing import Tuple
 
-
-logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO,
-                     format='%(filename)s: %(asctime)s - %(levelname)s - %(message)s')
-
+                     format='%(asctime)s - %(module)s.%(funcName)s -  %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.WARNING,
+                    format='%(asctime)s - %(module)s.%(funcName)s -  %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def get_shape(matrix: np.ndarray) -> Tuple:
     r"""Helper function to get the shape of a 1D/2D numpy array"""
