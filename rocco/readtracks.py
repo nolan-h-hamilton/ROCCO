@@ -621,15 +621,14 @@ def apply_transformation(intervals: np.ndarray, count_matrix: np.ndarray,
 
     if transform_local_ratio or local_ratio_window_bp is not None:
         if local_ratio_window_bp is None or local_ratio_window_bp < 0:
-            local_ratio_window_bp = 10000
+            local_ratio_window_bp = 5000
         step_sizes = np.unique(np.abs(np.diff(intervals)))
         if len(step_sizes) > 1:
             logger.warning(f"Warning: non-uniform step sizes detected: {step_sizes}. This may lead to unexpected results.")
         step_size = step_sizes[0]
-        local_ratio_window_steps = max(_next_odd_number(local_ratio_window_bp // step_size),3)
+        local_ratio_window_steps = max(_next_odd_number(local_ratio_window_bp // step_size),5)
         logger.info(f"Transforming data as ratio x/(median_filter(x,row,kernel={(step_size*max(1,local_ratio_window_steps-1))}bp) + ε)")
         for i in range(count_matrix.shape[0]):
-
             local_ref = signal.medfilt(count_matrix[i], local_ratio_window_steps)
             if local_ratio_pc is None:
                 local_ratio_pc = 1.0

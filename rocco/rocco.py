@@ -681,8 +681,12 @@ def solve_relaxation_chrom_pdlp(scores,
 
     if save_model is not None:
         try:
+            save_model = save_model.replace('.mps', '')
+            save_model = f"{save_model}_numloci_{n}_budget_{budget}_gamma_{gamma}.pdlp.mps"
+            logger.info(f"Saving model to {save_model}")
             with open(save_model, 'w') as f:
                 f.write(solver.ExportModelAsMpsFormat(fixed_format=True, obfuscated=False))
+            logger.info(f'Model saved to {save_model}: {os.path.getsize(save_model)/1e6:.2f} MB')
         except Exception as e:
             logger.info(f'Could not save model:\n{e}')
     return ell_arr, optimal_value
@@ -710,7 +714,7 @@ def solve_relaxation_chrom_glop(scores,
 
     `OR-tools linear programming resources and documentation <https://developers.google.com/optimization/lp>`_
     
-    A simplex-based metho that yields *corner-point feasible* (vertex) solutions that are attractive for a variety of technical reasons, especially in ROCCO's setting. In practice, however, for sufficiently strict termination criteria, PDLP (:func:`solve_relaxation_chrom_pdlp`) yields nearly identical solutions to glop and scales better to large problems.
+    A simplex-based metho that yields *corner-point feasible* (CPF, vertex) solutions that are attractive for a variety of technical reasons, especially in ROCCO's setting. In practice, however, for sufficiently strict termination criteria, PDLP (:func:`solve_relaxation_chrom_pdlp`) yields nearly identical solutions to glop and scales better to large problems.
     Particularly after the randomized rounding step, the difference in solutions is negligible. 
     
     :param scores: Scores for each genomic pisition within a given chromosome
@@ -845,8 +849,11 @@ def solve_relaxation_chrom_glop(scores,
 
     if save_model is not None:
         try:
+            save_model = save_model.replace('.mps', '')
+            save_model = f"{save_model}_numloci_{n}_budget_{budget}_gamma_{gamma}.glop.mps"
             with open(save_model, 'w') as f:
                 f.write(solver.ExportModelAsMpsFormat(fixed_format= True, obfuscated=False))
+            logger.info(f'Model saved to {save_model}: {os.path.getsize(save_model)/1e6:.2f} MB')
         except Exception as e:
             logger.info(f'Could not save model:\n{e}')
 
@@ -1019,7 +1026,7 @@ def chrom_solution_to_bed(chromosome, intervals, solution, ID=None,
     chrom_pbt = pybedtools.BedTool(output_file).sort().merge()
     # filter out regions less than min_length_bp if specified
     if min_length_bp is not None:
-        chrom_pbt = chrom_pbt.filter(lambda x: int(x[2]) - int(x[1]) + int(step_) >= min_length_bp)
+        chrom_pbt = chrom_pbt.filter(lambda x: int(x[2]) - int(x[1]) >= min_length_bp)
     chrom_pbt.saveas(output_file)
     if os.path.exists(output_file):
         return output_file
