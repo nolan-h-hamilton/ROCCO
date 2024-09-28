@@ -404,7 +404,7 @@ def score_boundary_chrom(signal_vector: np.ndarray, denom:float=1.0, power:float
     return boundary_stats**power
 
 
-def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, eps_neg=-1.0e-3, parsig_B=None, parsig_M=None, parsig_R=None) -> np.ndarray:
+def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, eps_neg=-1.0e-3, transform_parsig=False, parsig_B=None, parsig_M=None, parsig_R=None) -> np.ndarray:
     r"""Return scores :math:`(\mathbf{G}\mathbf{c})^{\top}` where :math:`\mathbf{G}` is the :math:`n \times 3` matrix of central tendency scores, dispersion scores, and boundary scores for a given chromosome and :math:`\mathbf{c}` is the 3D vector of coefficients.
     
     This is the default scoring function for ROCCO, but various alternatives (e.g., log2fc) have successfully been
@@ -447,7 +447,7 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
                     + c_2*dispersion_vec
                     + c_3*boundary_vec)
 
-    if parsig_B is not None or parsig_R is not None or parsig_M is not None:
+    if transform_parsig or parsig_B is not None or parsig_R is not None or parsig_M is not None:
         chrom_scores = parsig(chrom_scores, gamma, parsig_B=parsig_B, parsig_M=parsig_M, parsig_R=parsig_R)
     chrom_scores += eps_neg
     return chrom_scores
@@ -488,7 +488,7 @@ def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scal
 
     scores_ = np.array(scores)
     scores_unique = np.array(sorted(list(set(list(scores)))))
-    scale_ = abs(np.quantile(scores_unique, q=scale_quantile, method='nearest'))
+    scale_ = max(0,np.quantile(scores_unique, q=scale_quantile, method='nearest'))
     M_ = (2*gamma +1) + scale_ if parsig_M is None else parsig_M
     if M_ < 0:
         raise ValueError('`parsig_M` must be greater than zero')
@@ -723,7 +723,8 @@ def solve_relaxation_chrom_glop(scores,
     :type beta: float
     :param denom_const: Constant to add to the denominator in the fragmentation penalty. If None, defaults to 0.5 when `scale_gamma` is True.
     :type denom_const: float
-    :param scale_gamma: If `True`, Scale the fragmentation penalty (γ) positionally based on the difference between adjacent scores. This will yield a more nuanced fragmentation penalty that does not discourage differences in adjacent decision variables if their corresponding scores are dissimilar and thus reflect a true change in state that should be reflected in the solution. See `beta` and `denom_const` for more details.
+    :param scale_gamma: If `True`, Scale the fragmentation penalty (γ) positionally based on the difference between adjacent scores. This will yield a more nuanced fragmentation penalty that does not discourage differences in adjacent decision variables if their corresponding scores are dissimilar and thus reflect a true change in state that should be reflected in the solution, `γ/(|Score_i - Score_i+1| + ε)^β` See `beta` and `denom_const` for more details.
+    
     :type scale_gamma: bool
     :param glop_parameters: glop-specific protocol buffer. If this is not None, the explicit solver arguments in this function definition are ignored. See `<https://protobuf.dev>`_ for more information on protocol buffers and `parameters.proto <https://github.com/google/or-tools/blob/stable/ortools/glop/parameters.proto>`_ for Google's glop-specific protocol buffer.
     :type glop_parameters: parameters_pb2.GlopParameters
@@ -1002,7 +1003,7 @@ def chrom_solution_to_bed(chromosome, intervals, solution, ID=None,
     if check_gaps_intervals:
         if len(set(np.diff(intervals))) > 1:
             raise ValueError(f'Intervals must be contiguous: {set(np.diff(intervals))}')
-        
+    step_ = intervals[1] - intervals[0]
     if ID is None:
         output_file = f'rocco_{chromosome}.bed'
     else:
@@ -1011,14 +1012,14 @@ def chrom_solution_to_bed(chromosome, intervals, solution, ID=None,
     with open(output_file, 'w') as f:
         for i in range(len(intervals)-1):
             # At this point, solutions in the default implementation
-            # should be binary, but for potential future use in other
+            # should be binary, but for potential future applications
             # just use a threshold of 0.50
             if solution[i] > 0.50:
                 f.write(f'{chromosome}\t{intervals[i]}\t{intervals[i+1]}\n')
     chrom_pbt = pybedtools.BedTool(output_file).sort().merge()
     # filter out regions less than min_length_bp if specified
     if min_length_bp is not None:
-        chrom_pbt = chrom_pbt.filter(lambda x: int(x[2]) - int(x[1]) >= min_length_bp)
+        chrom_pbt = chrom_pbt.filter(lambda x: int(x[2]) - int(x[1]) + int(step_) >= min_length_bp)
     chrom_pbt.saveas(output_file)
     if os.path.exists(output_file):
         return output_file
@@ -1068,6 +1069,38 @@ def combine_chrom_results(chrom_bed_files:list, output_file:str, name_features:b
                     f.write(f'{feature_.chrom}\t{feature_.start}\t{feature_.stop}\n')
     return output_file
 
+def resolve_transformations(args: dict):
+    """Check if both savgol and medfilt transformations are invoked by CLI, resolve to medfilt if so.
+    
+    :param args: Command-line arguments
+    :type args: dict
+    :return: Resolved command-line arguments
+    :rtype: dict
+
+    """
+
+    savgol_params = {
+        'transform_savgol': args['transform_savgol'],
+        'transform_savgol_window_bp': args['transform_savgol_window_bp'],
+        'transform_savgol_order': args['transform_savgol_order'],
+    }
+    
+    medfilt_params = {
+        'transform_medfilt': args['transform_medfilt'],
+        'transform_medfilt_kernel': args['transform_medfilt_kernel'],
+    }
+    
+    savgol_on = savgol_params['transform_savgol'] or args['transform_savgol_window_bp'] is not None or args['transform_savgol_order'] is not None
+    medfilt_on = medfilt_params['transform_medfilt'] or args['transform_medfilt_kernel'] is not None
+
+    if savgol_on and medfilt_on:
+        logger.warning(f'savgol and medfilt transformations (`--transform_savgol` and `--transform_medfilt`) are mutually exclusive but are both indicated:\nsavgol:\n{savgol_params}\n\nmedfilt:\n{medfilt_params}.\n\nOnly one transformation can be applied at a time.\nUsing medfilt transformation...')
+        savgol_on = False
+        args['transform_savgol'] = False
+        args['transform_savgol_window_bp'] = None
+        args['transform_savgol_order'] = None
+    return args
+
 
 def main():
     ID = str(int(uuid.uuid4().hex[:5], base=16))
@@ -1101,7 +1134,7 @@ def main():
     parser.add_argument('--eps_optimal_relative', '--rtol', type=float, default=1.0e-8, help="pdlp solver only. One component of the bound on the duality gap used to check for convergence. If computational resources are limited, consider using `1.0e-4` per the `ortools` documentation")
     parser.add_argument('--primal_feasibility_tolerance', type=float, default=1.0e-6, help="glop solver only.")
     parser.add_argument('--dual_feasibility_tolerance', type=float, default=1.0e-6, help="glop solver only.")
-    parser.add_argument('--pdlp_presolve_use_glop', action='store_true', help="pdlp solver only. Use glop's presolve routines but solve with pdlp. Recommended for most cases.")
+    parser.add_argument('--pdlp_presolve_use_glop', default=True, help="pdlp solver only. Use glop's presolve routines but solve with pdlp. Recommended for most cases.")
     parser.add_argument('--loose_solve', action='store_true', help="This will run pdlp (not glop) with weakened termination criteria. Consider using if computational resources are limited.")
     parser.add_argument('--save_model', type=str, default=None, help='Save the optimization model as an MPS file. If specified, the model will be saved to the provided path.')
     parser.add_argument('--scale_gamma', action='store_true', help='If True, the fragmentation penalty (TV) is scaled by the difference in scores at the same position so that the penalty is inversely related to the score difference. Avoids penalizing fragmentation over intervals where the score change is large, and a shift in state is expected. Default is False.')
@@ -1112,22 +1145,23 @@ def main():
     # Scoring-related arguments
     ## central tendency
     parser.add_argument('--c_1', type=float, default=1.0, help='Score parameter: coefficient for central tendency measure. Assumed positive in the default implementation')
-    parser.add_argument('--method_central_tendency', default='quantile', choices=['quantile', 'tmean', 'mean'], help='Central tendency measure. Default is `quantile` with `quantile_value` set to 0.50 (median)')
+    parser.add_argument('--method_central_tendency', '--score_central_tendency', '--central_tendency', default='quantile', choices=['quantile', 'tmean', 'mean'], help='Central tendency measure. Default is `quantile` with `quantile_value` set to 0.50 (median)')
     parser.add_argument('--quantile_value', type=float, default=0.50, help='Quantile value for central tendency measure--Only applies if `method_central_tendency` is set to `quantile`')
-    parser.add_argument('--tprop', type=float, default=0.05, help='Trim proportion for  (`tmean`)--Only applies for trimmed mean central tendency measure.')
+    parser.add_argument('--tprop', type=float, default=0.05, help='Trim proportion for  (`tmean`)--Only applies for trimmed mean central tendency measure or dispersion measure `tstd`')
 
     ## dispersion
     parser.add_argument('--c_2', type=float, default=-1.0, help='Score parameter: coefficient for dispersion measure. Assumed negative in the default implementation')
-    parser.add_argument('--method_dispersion', default='mad', choices=['mad', 'std', 'iqr', 'tstd'], help='Dispersion measure')
+    parser.add_argument('--method_dispersion','--score_dispersion', '--dispersion', default='mad', choices=['mad', 'std', 'iqr', 'tstd'], help='Dispersion measure.')
 
     ## boundary
     parser.add_argument('--c_3', type=float, default=1.0, help='Score parameter: coefficient for boundary measure. Assumed positive in the default implementation')
 
-    ## parametric-sigmoid
-    parser.add_argument('--use_parsig', action='store_true', help='Apply `parsig` function to scores. Consider invoking this argument to promote already-integral solutions in the LP relaxed version of the problem, thereby reducing unnecessary dependence on the stochastic ROCCO-RR procedure.')    
-    parser.add_argument('--parsig_B', type=float, default=None, help='parsig function `B` parameter')
-    parser.add_argument('--parsig_M', type=float, default=None, help='parsig function `M` parameter')
-    parser.add_argument('--parsig_R', type=float, default=None, help='parsig function `R` parameter')
+    ## Rescale scores
+    parser.add_argument('--rescale_parsig', '--use_parsig', action='store_true', dest='rescale_parsig', help='Apply `rocco.parsig()` function to scores. Equivalent to the `--use_parsig` argument.')   
+    parser.add_argument('--rescale_parsig_B', '--parsig_B', dest='rescale_parsig_B', type=float, default=None, help='parsig function `B` parameter. Equivalent to the `--parsig_B` argument (location of inflection pt. in `rocco.parsig()` func.) Equivalent to the `--parsig_B` argument.')
+    parser.add_argument('--rescale_parsig_M', '--parsig_M', type=float, dest='rescale_parsig_M', default=None, help='parsig function `M` parameter (supremum of `rocco.parsig()` func.) Equivalent to the `--parsig_M` argument.')
+    parser.add_argument('--rescale_parsig_R', '--parsig_R', dest='rescale_parsig_R', type=float, default=None, help='parsig function `R` parameter (steepness of `rocco.parsig()` func).')
+    ## Neg. const added to final scores prior to optimization
     parser.add_argument('--eps_neg', type=float, default=-1.0e-3, help='Negative constant added to scores prior to optimization avoid selection of low-scoring regions only to exhaust the budget. Default is -1.0e-3. Not relevant if scores are already distributed over positive and negative values.')
 
 
@@ -1148,26 +1182,37 @@ def main():
                         help='If True, use existing BigWig files that were generated previously for the same BAM files instead of generating new ones.')
     parser.add_argument('--round_digits', type=int, default=5,
                         help='Number of digits to round values to where applicable')
-    parser.add_argument('--use_savgol_filter', action='store_true',
-                        help='Use Savitzky-Golay filter (local least squares) on count tracks after normalization.')
-    parser.add_argument('--savgol_window_bp', type=int, default=None, help='Window size for Savitzky-Golay filter in base pairs.')
-    parser.add_argument('--savgol_order', type=int, default=None, help='Polynomial degree for the least-squares approximation at each step. If None, the degree is set to roughly window_size-3.')
-    parser.add_argument('--use_median_filter', action='store_true',
-                        help='Apply median filter to count tracks after normalization.')
-    parser.add_argument('--median_filter_kernel', type=int, default=None, help='Kernel (window) size for median filter in units of base pairs. If None, the window size is set in `readtracks.py`')
-    parser.add_argument('--transform_log_pc', action='store_true',
-                        help='If invoked, count matrices will have their elements transformed as `log2(x + c)` where `c` is a constant (see `--log_const`)')
-    parser.add_argument('--log_const', type=float, default=None,
-                        help='Constant to add before log transformation.')
-    parser.add_argument('--transform_local_ratio', action='store_true')
-    parser.add_argument('--local_ratio_window_bp', type=int, default=None, help='Window size for local ratio transformation in base pairs.')
-    parser.add_argument('--local_ratio_window_steps', type=int, default=None, help='Window size for local ratio transformation in steps.')
-    parser.add_argument('--local_ratio_pc', type=float, default=None, help='Add to local_ref when computing local ratio.')
 
+    # Count-matrix-transformation-related args
+
+    ## Savitzky-Golay filter
+    parser.add_argument('--transform_savgol','--use_savgol', action='store_true', dest='transform_savgol',
+                        help='Use Savitzky-Golay filter (local least squares on k-degree polynomial coeffecients) on count tracks after normalization')
+    parser.add_argument('--transform_savgol_window_bp', '--savgol_window_bp', dest='transform_savgol_window_bp', type=int, default=None, help='Window size for Savitzky-Golay filter in base pairs.')
+    parser.add_argument('--transform_savgol_order', '--savgol_order', dest='transform_savgol_order', type=int, default=None, help='Polynomial degree for the least-squares approximation at each step. If None, the degree is set to roughly window_size//step - 3.')
+    ## Median filter
+    parser.add_argument('--transform_medfilt', '--use_median_filter', dest='transform_medfilt', action='store_true',
+                        help='Apply median filter to count tracks after normalization.')
+    parser.add_argument('--transform_medfilt_kernel', '--median_filter_kernel', dest='transform_medfilt_kernel',
+                        type=int, default=None,
+                        help='Kernel (window) size for median filter in units of base pairs.')
+    ## Log (plus const) transformation
+    parser.add_argument('--transform_logpc', '--transform_log_pc', action='store_true', dest='transform_logpc',
+                        help='If invoked, count matrices will have their elements transformed as `log2(x + c)` where `c` is a constant (see `--transform_log_const`)')
+    parser.add_argument('--transform_logpc_const', '--log_const', dest='transform_logpc_const', 
+                        type=float, default=None,
+                        help='Constant to add to count tracks before log transformation.')
+    ## Local ratio transformation
+    parser.add_argument('--transform_locratio', '--transform_local_ratio', dest='transform_locratio', action='store_true',
+                        help='Apply local ratio transformation to count tracks after normalization.')
+    parser.add_argument('--transform_locratio_window_bp','--local_ratio_window_bp', dest='transform_locratio_window_bp', type=int, default=None, help='Window size for local ratio transformation in base pairs.')
+    parser.add_argument('--transform_locratio_window_steps', '--local_ratio_window_steps', dest='transform_locratio_window_steps', type=int, default=None, help='Window size for local ratio transformation in steps.')
+    parser.add_argument('--transform_locratio_eps', '--local_ratio_pc', dest='transform_locratio_eps', type=float, default=None, help='Add to local_ref when computing local ratio "background" with median/savgol filter.')
 
     # post-processing-related arguments
     parser.add_argument('--min_length_bp', type=int, default=None,
                         help='Minimum length of regions to output in the final BED file')
+    parser.add_argument('--name_features', action='store_true', help='Name the features in the output BED file')
     args = vars(parser.parse_args())
     
     if len(sys.argv)==1 or args['input_files'] is None or len(args['input_files']) == 0:
@@ -1191,16 +1236,22 @@ def main():
     if args['genome'] is not None:
         args['genome'] = clean_string(args['genome'])
         if args['genome'] in GENOME_DICT:
-            args['effective_genome_size'] = GENOME_DICT[args['genome']]['effective_genome_size']
-            args['chrom_sizes_file'] = GENOME_DICT[args['genome']]['sizes_file']
+            if args['effective_genome_size'] is None:
+                args['effective_genome_size'] = GENOME_DICT[args['genome']]['effective_genome_size']
+            if args['chrom_sizes_file'] is None:
+                args['chrom_sizes_file'] = GENOME_DICT[args['genome']]['sizes_file']
             if args['params'] is None:
                 args['params'] = GENOME_DICT[args['genome']]['params']
         else:
-            raise ValueError(f'Genome not found: {args["genome"]}.\nAvailable genomes: {list(GENOME_DICT.keys())}.\nYou can also provide genome resources manually (e.g., chromosome sizes file `-s/--chrom_sizes_file)`, effective genome size `--effective_genome_size`.')
+            raise ValueError(f'Genome not found: {args["genome"]}.\nAvailable genomes: {list(GENOME_DICT.keys())}.\nYou can also provide genome resources manually (e.g.,`-s/--chrom_sizes_file`, `--effective genome size`')
+
     if args['chrom_sizes_file'] is None:
         raise ValueError('A genome with default resources available was not specified with `-g/--genome`, and so a chromosome sizes file must be supplied with `-s/--chrom_sizes_file`')
+
     if args['effective_genome_size'] is None and args['norm_method'] == 'RPGC':
         raise ValueError('A genome with default resources available was not specified with `-g/--genome`, and so `--norm_method RPGC` normalization, which requires an effective genome size, must be specified along with use of the `--effective_genome_size` argument.')
+
+
     bam_files = []
     bigwig_files = []
     for file_ in args['input_files']:
@@ -1260,12 +1311,26 @@ def main():
         logger.info(f'Generating chromosome matrix: {chrom_}')
         chrom_intervals = None
         chrom_matrix = None
-        if args['use_savgol_filter']:
-            chrom_intervals, chrom_matrix = generate_chrom_matrix(chrom_, bigwig_files, args['chrom_sizes_file'], args['step'], round_digits=args['round_digits'], filter_type='savgol',savgol_window_bp=args['savgol_window_bp'], savgol_order=args['savgol_order'], transform_log_pc=args['transform_log_pc'], log_const=args['log_const'], transform_local_ratio=args['transform_local_ratio'], local_ratio_window_bp=args['local_ratio_window_bp'], local_ratio_window_steps=args['local_ratio_window_steps'], local_ratio_pc=args['local_ratio_pc'])
-        elif args['use_median_filter']:
-            chrom_intervals, chrom_matrix = generate_chrom_matrix(chrom_, bigwig_files, args['chrom_sizes_file'], args['step'], round_digits=args['round_digits'], filter_type='median', medfilt_kernel_bp=args['median_filter_kernel'], transform_log_pc=args['transform_log_pc'], log_const=args['log_const'], transform_local_ratio=args['transform_local_ratio'], local_ratio_window_bp=args['local_ratio_window_bp'], local_ratio_window_steps=args['local_ratio_window_steps'], local_ratio_pc=args['local_ratio_pc'])
+        args = resolve_transformations(args)
+        # logpc kwargs for rocco.readtracks.generate_chrom_matrix
+        logpc_kwargs = {
+            'transform_log_pc': args['transform_logpc'],
+            'log_const': args['transform_logpc_const']
+        }
+         # logpc kwargs for rocco.readtracks.generate_chrom_matrix
+        locratio_kwargs = {
+            'transform_local_ratio': args['transform_locratio'],
+            'local_ratio_window_bp': args['transform_locratio_window_bp'],
+            'local_ratio_window_steps': args['transform_locratio_window_steps'],
+            'local_ratio_pc': args['transform_locratio_eps']
+        }
+        
+        if args['transform_savgol']:
+            chrom_intervals, chrom_matrix = generate_chrom_matrix(chrom_, bigwig_files, args['chrom_sizes_file'], args['step'], round_digits=args['round_digits'], filter_type='savgol',savgol_window_bp=args['transform_savgol_window_bp'], savgol_order=args['transform_savgol_order'], **logpc_kwargs, **locratio_kwargs)
+        elif args['transform_medfilt']:
+            chrom_intervals, chrom_matrix = generate_chrom_matrix(chrom_, bigwig_files, args['chrom_sizes_file'], args['step'], round_digits=args['round_digits'], filter_type='median', medfilt_kernel_bp=args['transform_medfilt_kernel'], **logpc_kwargs, **locratio_kwargs)
         else:
-            chrom_intervals, chrom_matrix = generate_chrom_matrix(chrom_, bigwig_files, args['chrom_sizes_file'], args['step'], round_digits=args['round_digits'], transform_log_pc=args['transform_log_pc'], log_const=args['log_const'], transform_local_ratio=args['transform_local_ratio'], local_ratio_window_bp=args['local_ratio_window_bp'], local_ratio_window_steps=args['local_ratio_window_steps'], local_ratio_pc=args['local_ratio_pc'])
+            chrom_intervals, chrom_matrix = generate_chrom_matrix(chrom_, bigwig_files, args['chrom_sizes_file'], args['step'], round_digits=args['round_digits'], **logpc_kwargs, **locratio_kwargs)
         if chrom_intervals is None or chrom_matrix is None:
             logger.warning(f'Skipping chromosome {chrom_}... no data found.')
             continue
@@ -1281,30 +1346,24 @@ def main():
         
         # Scoring phase
         logger.info(f'Scoring regions: {chrom_}')
-        if clean_string(args['method_central_tendency']) == 'quantile':
-            ct_scores = score_central_tendency_chrom(chrom_matrix, quantile=args['quantile_value'])
-        elif clean_string(args['method_central_tendency']) == 'tmean':
-            ct_scores = score_central_tendency_chrom(chrom_matrix, tprop=args['tprop'], method='tmean')
-        elif clean_string(args['method_central_tendency']) == 'mean':
-            ct_scores = score_central_tendency_chrom(chrom_matrix, method='mean')
-        if clean_string(args['method_dispersion']) == 'mad':
-            disp_scores = score_dispersion_chrom(chrom_matrix, method='mad')
-        elif clean_string(args['method_dispersion']) == 'iqr':
-            disp_scores = score_dispersion_chrom(chrom_matrix, method='iqr')
-        elif clean_string(args['method_dispersion']) == 'std':
-            disp_scores = score_dispersion_chrom(chrom_matrix, method='std')
-        elif clean_string(args['method_dispersion']) == 'tstd':
-            disp_scores = score_dispersion_chrom(chrom_matrix, tprop=args['tprop'], method='tstd')
+
+        ct_scores = score_central_tendency_chrom(chrom_matrix,method=args['method_central_tendency'],
+                                                 quantile=args['quantile_value'],tprop=args['tprop'])
+        disp_scores = score_dispersion_chrom(chrom_matrix, method=args['method_dispersion'], tprop=args['tprop'])
         boundary_scores = score_boundary_chrom(ct_scores)
         
-        if (args['parsig_B'] is not None or args['parsig_R'] is not None or args['parsig_M'] is not None) and args['use_parsig'] is False:
-            args['use_parsig'] = True
-        if args['use_parsig'] and args['parsig_B'] is None:
-            args['parsig_B'] = (1 - chrom_budget) + 1e-3
-        if args['use_parsig'] and args['parsig_R'] is None:
-            args['parsig_R'] = 2
+        if any([x is not None for x in [args['rescale_parsig_B'], args['rescale_parsig_R'], args['rescale_parsig_M']]]):
+            args['rescale_parsig'] = True
+        if args['rescale_parsig'] and args['rescale_parsig_B'] is None:
+            args['rescale_parsig_B'] = min((1 - chrom_budget) + 1.0e-03, 0.999)
+        if args['rescale_parsig'] and args['rescale_parsig_R'] is None:
+            args['rescale_parsig_R'] = 2.0
 
-        chrom_scores = score_chrom_linear(ct_scores, disp_scores, boundary_scores, gamma=chrom_gamma, c_1=args['c_1'], c_2=args['c_2'], c_3=args['c_3'], eps_neg=args['eps_neg'], parsig_B=args['parsig_B'], parsig_R=args['parsig_R'], parsig_M=args['parsig_M'])
+        chrom_scores = score_chrom_linear(ct_scores, disp_scores, boundary_scores,
+                                          gamma=chrom_gamma,
+                                          c_1=args['c_1'], c_2=args['c_2'], c_3=args['c_3'],
+                                          eps_neg=args['eps_neg'],
+                                          parsig_B=args['rescale_parsig_B'], parsig_R=args['rescale_parsig_R'], parsig_M=args['rescale_parsig_M'])
         
         score_output = pformat({
             'Quantile=0.01': round(np.quantile(chrom_scores, q=0.01, method='higher'), 5),
@@ -1335,11 +1394,11 @@ def main():
             \nROCCO-RR:LP-Ideal Ratio: {round(chrom_rround_score/chrom_lp_score,8)}\n\n')
 
         logger.info(f'Chromosome {chrom_}: Writing solution to BED')
-        chrom_outfile = chrom_solution_to_bed(chrom_, chrom_intervals, chrom_rround_sol, ID, check_gaps_intervals=True)
+        chrom_outfile = chrom_solution_to_bed(chrom_, chrom_intervals, chrom_rround_sol, ID, check_gaps_intervals=True, min_length_bp=args['min_length_bp'])
         tmp_chrom_bed_files.append(chrom_outfile)
 
     logger.info('Combining chromosome solutions')
-    final_output = combine_chrom_results(tmp_chrom_bed_files, args['output'])
+    final_output = combine_chrom_results(tmp_chrom_bed_files, args['output'], name_features=args['name_features'])
     if os.path.exists(final_output):
         logger.info(f'Final output: {final_output}')
 

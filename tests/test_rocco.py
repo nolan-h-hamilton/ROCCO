@@ -267,13 +267,6 @@ def test_no_input_no_args():
 
 
 @pytest.mark.correctness
-def test_no_input_no_args():
-    result = subprocess.run(['rocco'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    assert result.returncode == 0, f'Expected return code 0, got {result.returncode}'
-    assert 'usage:' in result.stdout.decode(), f'Expected help message, got {result.stdout.decode()}'
-
-
-@pytest.mark.correctness
 def test_no_input_listed():
     result = subprocess.run(['rocco', '--input_files'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     assert result.returncode != 0, f'Expected non-zero return code, got {result.returncode}'
