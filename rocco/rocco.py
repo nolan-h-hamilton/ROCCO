@@ -439,9 +439,9 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
 
     """
     if c_1 < 0: 
-        logger.info('Central tendency score coefficient is negative. In the default implementation, this may reward weak signals.')
+        logger.warning('Central tendency score coefficient is negative. In the default implementation, this may reward weak signals.')
     if c_2 > 0:
-        logger.info('Dispersion score coefficient is positive. In the default implementation, this may reward regions with inconsistent signals among samples.')
+        logger.warning('Dispersion score coefficient is positive. In the default implementation, this may reward regions with inconsistent signals among samples.')
         
     chrom_scores = (c_1*central_tendency_vec
                     + c_2*dispersion_vec
@@ -449,6 +449,9 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
 
     if transform_parsig or parsig_B is not None or parsig_R is not None or parsig_M is not None:
         chrom_scores = parsig(chrom_scores, gamma, parsig_B=parsig_B, parsig_M=parsig_M, parsig_R=parsig_R)
+    if eps_neg > 0:
+        logger.warning(f'`eps_neg`: {eps_neg} > 0, should be negative...negating')
+        eps_neg = -1.0*eps_neg
     chrom_scores += eps_neg
     return chrom_scores
 
@@ -1076,6 +1079,7 @@ def combine_chrom_results(chrom_bed_files:list, output_file:str, name_features:b
                     f.write(f'{feature_.chrom}\t{feature_.start}\t{feature_.stop}\n')
     return output_file
 
+
 def resolve_transformations(args: dict):
     """Check if both savgol and medfilt transformations are invoked by CLI, resolve to medfilt if so.
     
@@ -1106,6 +1110,7 @@ def resolve_transformations(args: dict):
         args['transform_savgol'] = False
         args['transform_savgol_window_bp'] = None
         args['transform_savgol_order'] = None
+        args['transform_medfilt'] = True
     return args
 
 
