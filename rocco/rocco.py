@@ -453,26 +453,59 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
     return chrom_scores
 
 
-def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scale_quantile:float=0.50) -> np.ndarray:
-    r"""Applies a parametric sigmoid function (smooth step function mapping to :math:`[0,M)`) function that can be used to transform scores such that the gradients for the most appealing loci are amplified, pushing their decision variables in the optimal relaxed solution toward their integral bounds.
+def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scale_quantile:float=0.50, remove_min=True) -> np.ndarray:
+    r"""Applies a smooth step (parameterized sigmoid function) function mapping to :math:`[0,M)` to `scores`
+    
+    This transformation of scores can be used to promote integral solutions for the relaxed optimization: The gradients for roughly the top `1-parsig_B` proportion of scores are amplified, ideally pushing these decision variables near their integral bounds in the optimal solution to the relaxation. The remaining scores below this inflection point are pushed towards zero such that their gradients are fairly small making the optimization more decisive without imposing excessive *a priori* influence on the solution.
 
-    For each score :math:`x` in the input array, the transformation is given by:
+    For each value :math:`x` in the input array `scores`, the transformation is given by:
 
     .. math::
         \mathsf{Parsig}(x) = \frac{M}{1 + \exp(-R(x - \frac{B_q}{2}))}
 
-    Note, in this implementation:
+    where
     
     .. math::
-        B_q = \mathsf{Quantile}(scores, parsig\_B)
+        B_q = \mathsf{Quantile}(scores, q = parsig\_B)
 
-    The primary inflection is determined by :math:`\frac{B_q}{2}` and the rate of change around this point is affected by `parsig_R`. 
-    Higher values of `parsig_R` will result in a steeper sigmoid curve, approaching a step function in the limit with two distinct values.
+    Such that the inflection point occurs at `quantile(scores, parsig_B)/2`.
+
+    **Implementation Notes**:
+
+      * If `parsig_B` is None, it defaults to 0.95. 
+      * `parsig_R` determines the 'steepness' of the function, approaching a discontinuous step function in the limit (only two distinct values). If `parsig_R` is None, it defaults to 2.0. Setting very large `parsig_R` and `parsig_M` may result in trivial solutions.
+      * `parsig_M` determines the upper bound of the transformed scores. If `parsig_M` is None, it is determined using the observed distribution of scores and :math:`\gamma`.
+
+    **Example**:
+
+    .. code-block:: python
+    
+        >>> import rocco
+        >>> import numpy as np
+        >>> np.set_printoptions(formatter={'float_kind': lambda x: '{0:.3f}'.format(x)})
+        >>> a = np.zeros(50)
+        >>> a[:25] = sorted(np.random.poisson(1,size=25)) # First 25: Poisson(λ=1), Sorted WLOG
+        >>> a[25:] = sorted(np.random.poisson(10,size=25)) # Second 25: Poisson(λ=10), Sorted WLOG
+        >>> a
+        array([0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000,
+            0.000, 0.000, 0.000, 1.000, 1.000, 1.000, 1.000, 1.000, 2.000,
+            2.000, 2.000, 2.000, 2.000, 3.000, 3.000, 4.000, 4.000, 6.000,
+            6.000, 7.000, 7.000, 7.000, 8.000, 8.000, 8.000, 10.000, 10.000,
+            10.000, 10.000, 10.000, 10.000, 10.000, 11.000, 11.000, 12.000,
+            13.000, 13.000, 14.000, 16.000, 17.000, 18.000])
+        >>> rocco.parsig(a)
+        2024-09-30 12:30:57,532 - rocco.parsig -  INFO - Parsig transformation applied with M=13.0, B=16.0, R=2.0
+        array([0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000,
+            0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000,
+            0.000, 0.000, 0.000, 0.000, 0.001, 0.001, 0.004, 0.004, 0.234,
+            0.234, 1.550, 1.550, 1.550, 6.500, 6.500, 6.500, 12.766, 12.766,
+            12.766, 12.766, 12.766, 12.766, 12.766, 12.968, 12.968, 12.996,
+            12.999, 12.999, 13.000, 13.000, 13.000, 13.000])
 
 
     :param scores: Scores for each genomic position within a given chromosome. Assumed to be scores generated with :func:`score_chrom_linear`, but can work for others as well.
     :type scores: np.ndarray
-    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere. The ideal value of `gamma` is for a given dataset is dependent on the user's preference. Increase to encourage solutions that are 'block-like'.
+    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty (See :func:`solve_relaxation_chrom_pdlp` or :func:`solve_relaxation_chrom_glop`)
     :type gamma: float
     :param parsig_M: Upper bound (sup.) of scores under the transformation. Determined with `scale_quantile` and `gamma` if `parsig_M` is None.
     :type parsig_M: float
@@ -480,8 +513,9 @@ def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scal
     :type parsig_B: float
     :param parsig_R: Scales the rate of change around the inflection point at `quantile(scores, parsig_B)/2`. Higher values of `parsig_R` will result in a steeper sigmoid curve, approaching a step function in the limit with two distinct values. Defaults to 2.0 if None.
     :type parsig_R: float
-    :param scale_quantile: Quantile of unique values in initial scores used to extend the new range of scores under the transformation
+    :param scale_quantile: Quantile of *unique set of values in initial scores* used to determine the new range (maximum value) of scores under the transformation. Only used if `parsig_M` is None. 
     :type scale_quantile: float
+    :param remove_min: If True, subtract the minimum value of the transformed scores to ensure values are non-negative
     :return: transformed scores
     :rtype: np.ndarray
 
@@ -502,14 +536,22 @@ def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scal
 
     scores_ = np.array(scores)
     scores_unique = np.array(sorted(list(set(list(scores)))))
+
+    # If not specified, the new maximum is determined by the quantile of *unique
+    # values* in the initial scores and the fragmentation penalty, gamma (because sparsity)
     scale_ = max(0,np.quantile(scores_unique, q=scale_quantile, method='nearest'))
     M_ = (2*gamma +1) + scale_ if parsig_M is None else parsig_M
+
     if M_ < 0:
         raise ValueError('`parsig_M` must be greater than zero')
 
+    # The point at which the smooth step begins depends on parsig_B via B_, defined below
     B_ = np.quantile(scores_, parsig_B, method='nearest')
     parsig_values = M_ / (1 + np.exp(-(parsig_R * ((scores - (B_ / 2))))))
-    parsig_values = parsig_values - np.min(parsig_values) # in case first inflection occurs below zero
+
+    if remove_min:
+        parsig_values = parsig_values - np.min(parsig_values) # in case first inflection occurs below zero
+
     logger.info(f'Parsig transformation applied with M={M_}, B={B_}, R={parsig_R}')
     return parsig_values
 
