@@ -3,7 +3,6 @@ import numpy as np
 import pybedtools as pbt
 import pytest
 import subprocess
-    
 from rocco import *
 
 @pytest.fixture
@@ -316,4 +315,28 @@ def test_resolve_transformations():
     assert resolved_args2['transform_savgol_order'] is None, f'Expected None, got {resolved_args2["transform_savgol_order"]}'
     assert resolved_args2['transform_medfilt'] == True, f'Expected True, got {resolved_args2["transform_medfilt"]}'
     assert resolved_args2['transform_medfilt_kernel'] == 5, f'Expected 5, got {resolved_args2["transform_medfilt_kernel"]}'
+
+@pytest.mark.correctness
+def test_parsig():
+    # Reference data
+    ref_a = np.array([ 0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,
+        1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  2.,  2.,  3.,  3.,  3.,
+        5.,  6.,  6.,  6.,  7.,  7.,  7.,  8.,  8.,  8.,  8.,  8.,  9.,
+        9., 10., 10., 11., 11., 11., 11., 12., 12., 13., 14.])
+    parsig_ref_a = np.array([0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+       0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0004, 0.0004, 0.0004,
+       0.0004, 0.0004, 0.0004, 0.0004, 0.0004, 0.0033, 0.0033, 0.0247,
+       0.0247, 0.0247, 1.1920, 4.9999, 4.9999, 4.9999, 8.8079, 8.8079,
+       8.8079, 9.8201, 9.8201, 9.8201, 9.8201, 9.8201, 9.9752, 9.9752,
+       9.9966, 9.9966, 9.9995, 9.9995, 9.9995, 9.9995, 9.9999, 9.9999,
+       9.9999, 9.9999])
+
+    
+    a = np.zeros(50, dtype=np.float64)
+    np.random.seed(42)
+    a[:25] = sorted(np.round(np.random.poisson(1,size=25), 4)) # sorted without loss of generality
+    np.random.seed(42)
+    a[25:] = sorted(np.round(np.random.poisson(10,size=25), 4)) # again, sorted without loss of generality
+
+    assert np.allclose(np.round(parsig(a),4), parsig_ref_a), f'parsig test failed: {parsig(a), parsig_ref_a}'
     

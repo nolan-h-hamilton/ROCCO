@@ -454,9 +454,9 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
 
 
 def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scale_quantile:float=0.50, remove_min=True) -> np.ndarray:
-    r"""Applies a smooth step (parameterized sigmoid function) function mapping to :math:`[0,M)` to `scores`
+    r"""Applies a smooth step function mapping input `scores` to `[0,parsig_M)`
     
-    This transformation of scores can be used to promote integral solutions for the relaxed optimization: The gradients for roughly the top `1-parsig_B` proportion of scores are amplified, ideally pushing these decision variables near their integral bounds in the optimal solution to the relaxation. The remaining scores below this inflection point are pushed towards zero such that their gradients are fairly small making the optimization more decisive without imposing excessive *a priori* influence on the solution.
+    This transformation of scores can be used to promote integral solutions for the relaxed optimization: The gradients for roughly the top `1-parsig_B` quantile of scores are amplified, which pushes these decision variables closer to their integral bounds in the optimal LP solution. The remaining scores below this inflection point are pushed towards zero such that their respective decision variables' gradients are relatively small. Ideally, this yields a more efficient optimization procedure that is also less likely to yield an excess of fractional decision variables.
 
     For each value :math:`x` in the input array `scores`, the transformation is given by:
 
@@ -484,17 +484,19 @@ def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scal
         >>> import numpy as np
         >>> np.set_printoptions(formatter={'float_kind': lambda x: '{0:.3f}'.format(x)})
         >>> a = np.zeros(50)
-        >>> a[:25] = sorted(np.random.poisson(1,size=25)) # First 25: Poisson(λ=1), Sorted WLOG
-        >>> a[25:] = sorted(np.random.poisson(10,size=25)) # Second 25: Poisson(λ=10), Sorted WLOG
-        >>> a
+        >>> # First 25: Poisson(λ=1), Sorted WLOG
+        >>> a[:25] = sorted(np.random.poisson(1,size=25))
+        >>> # Second 25: Poisson(λ=10), Sorted WLOG
+        >>> a[25:] = sorted(np.random.poisson(10,size=25))
+        >>> a # before parsig
         array([0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000,
             0.000, 0.000, 0.000, 1.000, 1.000, 1.000, 1.000, 1.000, 2.000,
             2.000, 2.000, 2.000, 2.000, 3.000, 3.000, 4.000, 4.000, 6.000,
             6.000, 7.000, 7.000, 7.000, 8.000, 8.000, 8.000, 10.000, 10.000,
             10.000, 10.000, 10.000, 10.000, 10.000, 11.000, 11.000, 12.000,
             13.000, 13.000, 14.000, 16.000, 17.000, 18.000])
-        >>> rocco.parsig(a)
-        2024-09-30 12:30:57,532 - rocco.parsig -  INFO - Parsig transformation applied with M=13.0, B=16.0, R=2.0
+        >>> rocco.parsig(a) # after parsig
+        rocco.parsig -  INFO - Parsig transformation applied with M=13.0, B=16.0, R=2.0
         array([0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000,
             0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000,
             0.000, 0.000, 0.000, 0.000, 0.001, 0.001, 0.004, 0.004, 0.234,
