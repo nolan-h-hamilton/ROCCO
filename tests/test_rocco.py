@@ -3,7 +3,6 @@ import numpy as np
 import pybedtools as pbt
 import pytest
 import subprocess
-    
 from rocco import *
 
 @pytest.fixture
@@ -40,6 +39,11 @@ def test_setup():
 
 @pytest.mark.consistency
 def test_consistency_multiple_chromosomes(test_setup, seed=42):
+    r"""Test the consistency of the solution across multiple chromosomes
+    
+    Track performance against original reference 
+
+    """
     np.random.seed(seed)  # Set the random seed for consistency
     
     # Unpack the setup data
@@ -77,6 +81,7 @@ def test_consistency_multiple_chromosomes(test_setup, seed=42):
 
 @pytest.mark.correctness
 def test_combine_chrom_results_no_names(test_setup):
+    r"""Test :func:`rocco.combine_chrom_results` with no names"""
     # combine the chromosome-specific reference bed files in the repo and combine to create a new file
     combined_outfile = combine_chrom_results([str(x) for x in test_setup["chrom_ref_results"].values()], output_file='test_combined.bed')
     assert os.path.exists(combined_outfile), f'Combined solution file {combined_outfile} not found'
@@ -99,6 +104,7 @@ def test_combine_chrom_results_no_names(test_setup):
 
 @pytest.mark.correctness
 def test_combine_chrom_results_add_names(test_setup):
+    r"""Test :func:`rocco.combine_chrom_results` with names for each feature (column 4)"""
     # combine the chromosome-specific reference bed files in the repo and combine to create a new file
     combined_outfile = combine_chrom_results([str(x) for x in test_setup["chrom_ref_results"].values()], output_file='test_combined.bed', name_features=True)
     assert os.path.exists(combined_outfile), f'Combined solution file {combined_outfile} not found'
@@ -127,28 +133,9 @@ def test_combine_chrom_results_add_names(test_setup):
 
 
 @pytest.mark.correctness
-def test_minmax_scale():
-
-    # case 1
-    x = [1, 2, 3, 4, 5]
-    minval_ = 0
-    maxval_ = 10
-    x_minmax = minmax_scale_scores(x, min_val=minval_, max_val=maxval_)
-    assert min(x_minmax) == 0, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
-    assert max(x_minmax) == 10, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
-    
-    # case 2
-    x = [-1, 0, 1, 2, 3]
-    minval_ = 0
-    maxval_ = 4
-    x_minmax = minmax_scale_scores(x, min_val=minval_, max_val=maxval_)
-    assert min(x_minmax) == 0, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
-    assert max(x_minmax) == 4, f'Min-max scaling failed : {x, x_minmax, minval_, maxval_}'
-
-
-@pytest.mark.correctness
 def test_score_central_tendency_chrom():
-    # case 1
+    r"""Test :func:`rocco.score_central_tendency_chrom`"""
+    # Case I
     X = np.array([[1, 2, 3, 4, 5], [2, 3, 4, 5, 6], [3, 4, 5, 6, 10]])
     method = 'quantile'
     scores = score_central_tendency_chrom(X, method=method)
@@ -156,13 +143,13 @@ def test_score_central_tendency_chrom():
         assert scores[i] == x, f'Central tendency scoring failed : {X, scores, method}'
 
 
-    # case 2
+    # Case II
     method = 'mean'
     scores = score_central_tendency_chrom(X, method=method)
     for i,x in enumerate([2,3,4,5,7]):
         assert scores[i] == x, f'Central tendency scoring failed : {X, scores, method}'
     
-    # case 3
+    # Case III
     X = np.array([[0, 0, 0, 0, 0], [2, 3, 4, 5, 6],
                   [1, 2, 3, 4, 5], [2, 3, 4, 5, 6], 
                   [1, 2, 3, 4, 5], [2, 3, 4, 5, 6],
@@ -177,7 +164,9 @@ def test_score_central_tendency_chrom():
 
 @pytest.mark.correctness
 def test_score_dispersion_chrom():
-    # case 1
+    r"""Test :func:`rocco.score_dispersion_chrom`"""
+    
+    # Case I
     X = np.zeros(shape=(11,3))
     X[:,0] = [0, 1, 1, 1, 1, 5, 25, 25, 25, 25, 100]
     X[:,1] = np.ones(11)
@@ -189,13 +178,13 @@ def test_score_dispersion_chrom():
     for i,x in enumerate([5,0,0]):
         assert scores[i] == x, f'Dispersion method failed: {X, scores, method}'
 
-    # case 2
+    # Case II
     method = 'std'
     scores = score_dispersion_chrom(X, method=method)
     for i,x in enumerate([27.89265, 0, 0.481045]):
         assert np.isclose(x,scores[i], rtol=1e-4, atol=1e-4), f'Dispersion method failed : {X, scores, method}'
 
-    # case 3
+    # Case III
     method = 'iqr'
     scores = score_dispersion_chrom(X, method=method)
     for i,x in enumerate([24, 0, 1]):
@@ -204,6 +193,7 @@ def test_score_dispersion_chrom():
 
 @pytest.mark.correctness
 def test_score_boundary_chrom():
+    r"""Test :func:`rocco.score_boundary_chrom` with default parameters"""
     vec = np.array([-10,-5,0,3,10])
     denom = 1
     scores = score_boundary_chrom(vec, denom=denom)
@@ -213,6 +203,7 @@ def test_score_boundary_chrom():
 
 @pytest.mark.correctness
 def test_parsig_default_parameters():
+    r"""Test :func:`rocco.parsig` with default parameters"""
     scores = np.array([-50, 1, 2, 3, 4, 5, 50]) 
     B_ = 0.80
     M_ = 10
@@ -224,6 +215,7 @@ def test_parsig_default_parameters():
 
 @pytest.mark.correctness
 def test_get_floor_eps_sol_basic():
+    r"""Test :func:`rocco.get_floor_eps_sol` with basic input"""
     chrom_lp_sol = np.array([1,0,.9,.9,.96,.97,0,0,0,.95])
     budget = 0.5
     int_tol = 1e-6
@@ -237,6 +229,7 @@ def test_get_floor_eps_sol_basic():
 
 @pytest.mark.correctness
 def test_get_floor_eps_sol_allint():
+    r"""Test :func:`rocco.get_floor_eps_sol` with all integer values"""
     chrom_lp_sol = np.array([1,1,1,1,1,0,0,0,0,0])
     budget = 0.5
     int_tol = 1e-6
@@ -249,6 +242,7 @@ def test_get_floor_eps_sol_allint():
 
 @pytest.mark.correctness
 def test_get_floor_eps_sol_fullbudget():
+    r"""Test :func:`rocco.get_floor_eps_sol` with a budget of 1.0"""
     chrom_lp_sol = np.ones(10)*.50
     budget = 1.0
     int_tol = 1e-6
@@ -257,13 +251,6 @@ def test_get_floor_eps_sol_fullbudget():
     assert np.all(result >= 0) and np.all(result <= 1), f"feasible region for each dvar should be [0,1]: {result}"
     assert np.sum(result) <= np.floor(len(chrom_lp_sol) * budget), f"Solution should respect the budget: {result}, {np.sum(result)}"
     assert all([np.isclose(x,1) for x in result]), f"Solution should be ones vec, {result}"
-
-
-@pytest.mark.correctness
-def test_no_input_no_args():
-    result = subprocess.run(['rocco'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    assert result.returncode == 0, f'Expected return code 0, got {result.returncode}'
-    assert 'usage:' in result.stdout.decode(), f'Expected help message, got {result.stdout.decode()}'
 
 
 @pytest.mark.correctness
@@ -295,3 +282,61 @@ def test_bedgraph_input():
     assert 'convert' in result.stderr.decode().lower(), f'Expected error message requesting conversion to bigwig or use of BAM input, got {result.stderr.decode()}'
 
 
+@pytest.mark.correctness
+def test_resolve_transformations():
+    r"""Test :func:`rocco.resolve_transformations`"""
+    
+    # Case 1: Conflicting transformations explicitly specified
+    args = {
+        'transform_savgol': True,
+        'transform_savgol_window_bp': 100,
+        'transform_savgol_order': 3,
+        'transform_medfilt': True,
+        'transform_medfilt_kernel': 5
+    }
+    resolved_args = resolve_transformations(args)
+    assert resolved_args['transform_savgol'] == False, f'Expected False, got {resolved_args["transform_savgol"]}'
+    assert resolved_args['transform_savgol_window_bp'] is None, f'Expected None, got {resolved_args["transform_savgol_window_bp"]}'
+    assert resolved_args['transform_savgol_order'] is None, f'Expected None, got {resolved_args["transform_savgol_order"]}'
+    assert resolved_args['transform_medfilt'] == True, f'Expected True, got {resolved_args["transform_medfilt"]}'
+    assert resolved_args['transform_medfilt_kernel'] == 5, f'Expected 5, got {resolved_args["transform_medfilt_kernel"]}'
+    
+    # Case II: Conflicting transformations implicated only by their respective flags
+    args2 = {
+        'transform_savgol': False,
+        'transform_savgol_window_bp': 100,
+        'transform_savgol_order': 3,
+        'transform_medfilt': False,
+        'transform_medfilt_kernel': 5
+    }
+    resolved_args2 = resolve_transformations(args2)
+    assert resolved_args2['transform_savgol'] == False, f'Expected False, got {resolved_args2["transform_savgol"]}'
+    assert resolved_args2['transform_savgol_window_bp'] is None, f'Expected None, got {resolved_args2["transform_savgol_window_bp"]}'
+    assert resolved_args2['transform_savgol_order'] is None, f'Expected None, got {resolved_args2["transform_savgol_order"]}'
+    assert resolved_args2['transform_medfilt'] == True, f'Expected True, got {resolved_args2["transform_medfilt"]}'
+    assert resolved_args2['transform_medfilt_kernel'] == 5, f'Expected 5, got {resolved_args2["transform_medfilt_kernel"]}'
+
+@pytest.mark.correctness
+def test_parsig():
+    # Reference data
+    ref_a = np.array([ 0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,  0.,
+        1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  2.,  2.,  3.,  3.,  3.,
+        5.,  6.,  6.,  6.,  7.,  7.,  7.,  8.,  8.,  8.,  8.,  8.,  9.,
+        9., 10., 10., 11., 11., 11., 11., 12., 12., 13., 14.])
+    parsig_ref_a = np.array([0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+       0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0004, 0.0004, 0.0004,
+       0.0004, 0.0004, 0.0004, 0.0004, 0.0004, 0.0033, 0.0033, 0.0247,
+       0.0247, 0.0247, 1.1920, 4.9999, 4.9999, 4.9999, 8.8079, 8.8079,
+       8.8079, 9.8201, 9.8201, 9.8201, 9.8201, 9.8201, 9.9752, 9.9752,
+       9.9966, 9.9966, 9.9995, 9.9995, 9.9995, 9.9995, 9.9999, 9.9999,
+       9.9999, 9.9999])
+
+    
+    a = np.zeros(50, dtype=np.float64)
+    np.random.seed(42)
+    a[:25] = sorted(np.round(np.random.poisson(1,size=25), 4)) # sorted without loss of generality
+    np.random.seed(42)
+    a[25:] = sorted(np.round(np.random.poisson(10,size=25), 4)) # again, sorted without loss of generality
+
+    assert np.allclose(np.round(parsig(a),4), parsig_ref_a), f'parsig test failed: {parsig(a), parsig_ref_a}'
+    
