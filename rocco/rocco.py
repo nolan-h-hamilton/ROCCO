@@ -405,11 +405,8 @@ def score_boundary_chrom(signal_vector: np.ndarray, denom:float=1.0, power:float
 
 
 def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, eps_neg=-1.0e-3, transform_parsig=False, parsig_B=None, parsig_M=None, parsig_R=None) -> np.ndarray:
-    r"""Return scores :math:`(\mathbf{G}\mathbf{c})^{\top}` where :math:`\mathbf{G}` is the :math:`n \times 3` matrix of central tendency scores, dispersion scores, and boundary scores for a given chromosome and :math:`\mathbf{c}` is the 3D vector of coefficients.
-    
-    This is the default scoring function for ROCCO, but various alternatives (e.g., log2fc) have successfully been
-    applied as well.
-    
+    r"""Compute array of default scores :math:`(\mathbf{G}\boldsymbol{\alpha})^{\top}` where :math:`\mathbf{G}` is the :math:`n \times 3` matrix of central tendency scores, dispersion scores, and boundary scores for a given chromosome and :math:`\boldsymbol{\alpha}` is the 3D vector of coefficients for each.
+        
     :param central_tendency_vec: Central tendency scores for a given chromosome
     :type central_tendency_vec: np.ndarray
     :param dispersion_vec: Dispersion scores for a given chromosome
@@ -424,7 +421,7 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
     :type c_2: float
     :param c_3: Coefficient for boundary scores (:math:`c_3 g_3(i),~i=1,\ldots,n` in the paper)
     :type c_3: float
-    :param use_parsig: If True, apply the custom sigmoid transformation to the scores
+    :param use_parsig: If True, apply the parametric sigmoid transformation to the scores: :func:`parsig()`
     :type use_parsig: False
     :param parsig_M: Upper bound (sup.) of scores under the transformation
     :type parsig_M: float
@@ -457,17 +454,31 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
 
 
 def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scale_quantile:float=0.50) -> np.ndarray:
-    r"""'Parametric sigmoid function' that can be used to transform scores, amplifying the reduced costs/(negative dual price in the primal formulation) values of the most appealing loci/dvars. This can be used to further promote integrality.
+    r"""Applies a parametric sigmoid function (smooth step function mapping to :math:`[0,M)`) function that can be used to transform scores such that the gradients for the most appealing loci are amplified, pushing their decision variables in the optimal relaxed solution toward their integral bounds.
+
+    For each score :math:`x` in the input array, the transformation is given by:
+
+    .. math::
+        \mathsf{Parsig}(x) = \frac{M}{1 + \exp(-R(x - \frac{B_q}{2}))}
+
+    Note, in this implementation:
     
+    .. math::
+        B_q = \mathsf{Quantile}(scores, parsig\_B)
+
+    The primary inflection is determined by :math:`\frac{B_q}{2}` and the rate of change around this point is affected by `parsig_R`. 
+    Higher values of `parsig_R` will result in a steeper sigmoid curve, approaching a step function in the limit with two distinct values.
+
+
     :param scores: Scores for each genomic position within a given chromosome. Assumed to be scores generated with :func:`score_chrom_linear`, but can work for others as well.
     :type scores: np.ndarray
     :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere. The ideal value of `gamma` is for a given dataset is dependent on the user's preference. Increase to encourage solutions that are 'block-like'.
     :type gamma: float
-    :param parsig_M: Upper bound (sup.) of scores under the transformation
+    :param parsig_M: Upper bound (sup.) of scores under the transformation. Determined with `scale_quantile` and `gamma` if `parsig_M` is None.
     :type parsig_M: float
-    :param parsig_B: An inflection point occurs in the transformation at `quantile(scores, parsig_B)/2`. For a given `parsig_R`, larger `parsig_B` value will result in more scores being pushed toward the minimum value of the transformed scores.
+    :param parsig_B: Defined such that an inflection occurs at `quantile(scores, parsig_B)/2`. For a given `parsig_R`, larger `parsig_B` value will result in more scores being pushed toward the minimum value of the transformed scores. Defaults to 0.95 if None.
     :type parsig_B: float
-    :param parsig_R: Scales the rate of change around the inflection point at `quantile(scores, parsig_B)/2`. Higher values of `parsig_R` will result in a steeper sigmoid curve, approaching a step function in the limit with two distinct values.
+    :param parsig_R: Scales the rate of change around the inflection point at `quantile(scores, parsig_B)/2`. Higher values of `parsig_R` will result in a steeper sigmoid curve, approaching a step function in the limit with two distinct values. Defaults to 2.0 if None.
     :type parsig_R: float
     :param scale_quantile: Quantile of unique values in initial scores used to extend the new range of scores under the transformation
     :type scale_quantile: float
