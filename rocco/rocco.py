@@ -717,8 +717,7 @@ def solve_relaxation_chrom_glop(scores,
 
     `OR-tools linear programming resources and documentation <https://developers.google.com/optimization/lp>`_
     
-    A simplex-based metho that yields *corner-point feasible* (CPF, vertex) solutions that are attractive for a variety of technical reasons, especially in ROCCO's setting. In practice, however, for sufficiently strict termination criteria, PDLP (:func:`solve_relaxation_chrom_pdlp`) yields nearly identical solutions to glop and scales better to large problems.
-    Particularly after the randomized rounding step, the difference in solutions is negligible. 
+    A simplex-based method that yields *corner-point feasible* (CPF, vertex) solutions.
     
     :param scores: Scores for each genomic pisition within a given chromosome
     :type scores: np.ndarray
@@ -1114,6 +1113,26 @@ def resolve_transformations(args: dict):
     return args
 
 
+def cscores_quantiles(chrom_scores: np.ndarray, quantiles:np.ndarray=None, add_newlines=True) -> str:
+    """Returns a formatted string of quantiles for a given array of 'locus scores' (:func:`score_chrom_linear()`)
+
+    :param chrom_scores: locus scores (float) for a given chromosome
+    :type chrom_scores: np.ndarray
+    :param quantiles: array of quantiles in [0.0,1.0] to compute. 
+    :type quantiles: np.ndarray, optional
+    :return: pformatted string of quantiles
+    :rtype: str
+
+    :seealso: :func:`score_chrom_linear()`
+    """
+    if quantiles is None:
+        quantiles = np.array([0.0, 0.01, 0.05, 0.25,0.50, 0.75, 0.95, 0.99, 1.0])
+    formatted_string = pformat({f'Quantile={q}': round(np.quantile(chrom_scores, q=q, method='higher'), 4) for q in quantiles})
+    if add_newlines:
+        return f'\n{formatted_string}\n'
+    return f'{formatted_string}'
+
+
 def main():
     ID = str(int(uuid.uuid4().hex[:5], base=16))
     logger.info(f'\nID: {ID}')
@@ -1376,17 +1395,9 @@ def main():
                                           c_1=args['c_1'], c_2=args['c_2'], c_3=args['c_3'],
                                           eps_neg=args['eps_neg'],
                                           parsig_B=args['rescale_parsig_B'], parsig_R=args['rescale_parsig_R'], parsig_M=args['rescale_parsig_M'])
-        
-        score_output = pformat({
-            'Quantile=0.01': round(np.quantile(chrom_scores, q=0.01, method='higher'), 5),
-            'Quantile=0.10': round(np.quantile(chrom_scores, q=0.10, method='higher'), 5),
-            'Quantile=0.25': round(np.quantile(chrom_scores, q=0.25, method='higher'), 5),
-            'Quantile=0.50': round(np.median(chrom_scores), 5),
-            'Quantile=0.75': round(np.quantile(chrom_scores, q=0.75, method='higher'), 5),
-            'Quantile=0.90': round(np.quantile(chrom_scores, q=0.90, method='higher'), 5),
-            'Quantile=0.99': round(np.quantile(chrom_scores, q=0.99, method='higher'), 5)})
+        score_distr_str = cscores_quantiles(chrom_scores)
+        logger.info(f"\nChromosome {chrom_} scores:{score_distr_str}")
 
-        logger.info(f"\nChromosome {chrom_} scores:\n{score_output}\n")
         # Optimization phase
         logger.info(f'Solving LP relaxation using {args["solver"]}')
         logger.info(f'{chrom_}: budget: {chrom_budget}\tgamma: {chrom_gamma}')
