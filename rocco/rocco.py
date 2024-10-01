@@ -456,7 +456,7 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
 def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scale_quantile:float=0.50, remove_min=True) -> np.ndarray:
     r"""Applies a smooth step function mapping input `scores` to `[0,parsig_M)`
     
-    This transformation of scores can be used to promote integral solutions for the relaxed optimization: The gradients for roughly the top `1-parsig_B` quantile of scores are amplified, which pushes these decision variables closer to their integral bounds in the optimal LP solution. The remaining scores below this inflection point are pushed towards zero such that their respective decision variables' gradients are relatively small. Ideally, this yields a more efficient optimization procedure that is also less likely to yield an excess of fractional decision variables.
+    This transformation of scores can be used to promote integral solutions for the relaxed optimization: The relative gradients for roughly the top `(100)*(1-parsig_B)` percent of scores are amplified, which pushes these decision variables closer to their integral bounds in the optimal LP solution. The remaining scores below this inflection point are pushed towards zero such that their respective decision variables' gradients are relatively small. Ideally, this yields a more efficient optimization procedure that is also less likely to yield an excess of fractional decision variables.
 
     For each value :math:`x` in the input array `scores`, the transformation is given by:
 
