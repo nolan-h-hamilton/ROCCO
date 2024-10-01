@@ -618,12 +618,7 @@ def apply_transformation(intervals: np.ndarray, count_matrix: np.ndarray,
     :rtype: tuple(numpy.ndarray, numpy.ndarray)
     
     """
-    if transform_log_pc or log_const is not None:
-        if log_const is None:
-            log_const = 0.25
-        logger.info(f"Transforming data as log2(x + {log_const})")
-        count_matrix = np.log2(count_matrix + log_const)
-    
+
     if transform_local_ratio or local_ratio_window_bp is not None:
         if local_ratio_window_bp is None or local_ratio_window_bp < 0:
             local_ratio_window_bp = 5000
@@ -631,14 +626,18 @@ def apply_transformation(intervals: np.ndarray, count_matrix: np.ndarray,
         if len(step_sizes) > 1:
             logger.warning(f"Warning: non-uniform step sizes detected: {step_sizes}. This may lead to unexpected results.")
         step_size = step_sizes[0]
-        local_ratio_window_steps = _next_odd_number(local_ratio_window_bp // step_size)
-        logger.info(f"Transforming data as ratio x/(median_filter(x,row,kernel={local_ratio_window_bp}bp) + ε)")
+        local_ratio_window_steps = max(_next_odd_number(local_ratio_window_bp // step_size),5)
+        logger.info(f"Transforming data as ratio x/(median_filter(x,row,kernel={(step_size*max(1,local_ratio_window_steps-1))}bp) + ε)")
         for i in range(count_matrix.shape[0]):
-
             local_ref = signal.medfilt(count_matrix[i], local_ratio_window_steps)
             if local_ratio_pc is None:
                 local_ratio_pc = 1.0
             local_ref = local_ref + local_ratio_pc
             count_matrix[i] = (count_matrix[i]) / (local_ref)
 
+    if transform_log_pc or log_const is not None:
+        if log_const is None:
+            log_const = 0.25
+        logger.info(f"Transforming data as log2(x + {log_const})")
+        count_matrix = np.log2(count_matrix + log_const)
     return intervals, count_matrix
