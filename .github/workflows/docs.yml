@@ -1,6 +1,6 @@
 name: API
 
-# build the documentation whenever there are new commits in main
+# build the documentation whenever there are new commits affecting documentation
 on:
   push:
     branches:
