@@ -120,7 +120,7 @@ Conda:
 
 or built from source (See  Samtools (http://www.htslib.org) and bedtools (https://bedtools.readthedocs.io/en/latest/)).
 
-As a supplementary resource, see `docs/environments <https://github.com/nolan-h-hamilton/ROCCO/tree/main/docs/environments>_` in the GitHub repository for environment files with detailed package version information.
+As a supplementary resource, see `docs/environments <https://github.com/nolan-h-hamilton/ROCCO/tree/main/docs/environments>`_ in the GitHub repository for environment files with detailed package version information.
 
 
 Input/Output
