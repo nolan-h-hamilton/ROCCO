@@ -55,11 +55,6 @@ If using ROCCO in your research, please cite the `original paper <https://doi.or
    Nolan H Hamilton, Terrence S Furey, ROCCO: a robust method for detection of open chromatin via convex optimization,
    Bioinformatics, Volume 39, Issue 12, December 2023
 
-Documentation
----------------
-
-ROCCO's documentation is available at `https://nolan-h-hamilton.github.io/ROCCO/ <https://nolan-h-hamilton.github.io/ROCCO/>`_
-
 
 Installation:
 -------------
@@ -67,7 +62,7 @@ Installation:
 
 **PyPI (pip)**:
 
-To install ROCCO via PyPI/pip, you can run one of the following commands:
+To install ROCCO via `pip/PyPI <https://pypi.org/project/rocco/>`_  
 
 .. code-block:: bash
 
@@ -125,7 +120,7 @@ Conda:
 
 or built from source (See  Samtools (http://www.htslib.org) and bedtools (https://bedtools.readthedocs.io/en/latest/)).
 
-Though it should not be necessary, if creating a distinct Conda/Mamba environment to run ROCCO, see `docs/environments` in the GitHub repository, which contains YAML files for Python versions 3.8-3.12 specifying Conda environments with detailed package version information. 
+As a supplementary resource, see `docs/environments <https://github.com/nolan-h-hamilton/ROCCO/tree/main/docs/environments>_` in the GitHub repository for environment files with detailed package version information.
 
 
 Input/Output
@@ -139,48 +134,48 @@ Input/Output
 
 Usage
 ------
+.. note::
+
+    * In the examples below, BigWig files may also be supplied as input but alignment-level preprocessing options (e.g., `--min_mapping_score`) cannot be applied.
+    * The names of certain command-line options have been changed for improved consistency but the previous names are still supported via aliases, such that no necessary changes to existing scripts are required.
+    * For increased flexibility, consider writing scripts (e.g., `import rocco`) and using the library directly instead of interfacing through the command-line.
 
 **Run with defaults using BAM input files**:
 
 .. code-block:: bash
 
-        rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g hg38
+        rocco -i sample1.bam sample2.bam [...] sampleM.bam -g hg38
+
+* Wildcards are supported by the command-line interface, e.g., `rocco -i *.bam -g hg38`
 
 **Run on a subset of chromosomes**:
- 
-* Can be used for quicker debugging
- 
-.. code-block:: bash
 
-        rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g hg38 --chroms chr21 chr22
-
-**Run with parametric-sigmoid  transformation of scores**:
-
-* Useful to promote integrality in the LP relaxation and create separation between lower/higher scores.
-
-* See :func:`parsig`
+* Useful for debugging, testing, etc.
 
 .. code-block:: bash
 
-        rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g hg38 --use_parsig
+        rocco -i sample1.bam sample2.bam [...] sampleM.bam -g hg38 --chroms chr21 chr22
 
-**Run ROCCO on 'local-ratio' transformed data**:
+**Run ROCCO on `locratio`-transformed data**:
 
 * See :func:`rocco.readtracks.apply_transformation`
 
 .. code-block:: bash
 
-        rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g hg38 --transform_local_ratio
+        rocco -i sample1.bam sample2.bam [...] sampleM.bam-g hg38 --transform_locratio
 
-**Run ROCCO with dynamic fragmentation penalties, γ**:
 
-* See :func:`solve_relaxation_chrom_pdlp` or :func:`solve_relaxation_chrom_glop`.
+**Run with parametric-sigmoid transformation of scores**:
+
+* Useful to promote near-integral solutions to the LP relaxation and increase solver speed, creating separation between lower/higher scores.
+
+* See :func:`parsig`
 
 .. code-block:: bash
 
-        rocco -i sample1.bam sample2.bam sample3.bam sample4.bam sample5.bam -g hg38 --scale_gamma
+        rocco -i sample1.bam sample2.bam [...] sampleM.bam -g hg38 --rescale_parsig
 
-In the above examples, BigWig files can be used too, but as mentioned, no preprocessing can be performed on this data at the *alignment* level.
+* Other relevant options `--transform_logpc`, `--scale_gamma`, etc.
 
 See below for a visualization of the effects of several of ROCCO's fundamental options for preprocessing, scoring, optimization, etc.
 
@@ -188,16 +183,11 @@ See below for a visualization of the effects of several of ROCCO's fundamental o
    :width: 600px
    :align: center
 
-.. note::
-
-    Using the module(s) themselves programmatically instead of the command-line interface will allow greater flexibility in terms of input/output, data preprocessing/postprocessing, and parallelization but will require more coding on the user's end.
-
-Documentation is provided for the primary :mod:`rocco.rocco` module directly below.
-
 """
 
 import argparse
 import copy
+import json
 import logging
 import multiprocessing
 import os
@@ -316,7 +306,13 @@ def score_central_tendency_chrom(chrom_matrix, method='quantile', quantile=0.50,
     central_tendency_stats = None
 
     if method_ == 'quantile':
-        central_tendency_stats = np.quantile(chrom_matrix, quantile, axis=0, method='nearest')
+        if quantile < 0 or quantile > 1:
+            logger.warning('`quantile` must be in the range (0,1). Setting to 0.50 (median)')
+            quantile = 0.50
+        if quantile == 0.50:
+            central_tendency_stats = np.median(chrom_matrix, axis=0) # faster
+        else:
+            central_tendency_stats = np.quantile(chrom_matrix, quantile, axis=0, method='nearest')
 
     if method_ == "tmean":
         # Calculate lower and upper limits for trimming
@@ -623,7 +619,7 @@ def solve_relaxation_chrom_pdlp(scores,
     :type beta: float
     :param denom_const: Constant to add to the denominator in the fragmentation penalty. If None, defaults to 1.0 when `scale_gamma` is True.
     :type denom_const: float
-    :param scale_gamma: If `True`, Scale the fragmentation penalty (γ) positionally based on the difference between adjacent scores. This will yield a more nuanced fragmentation penalty that does not discourage differences in adjacent decision variables if their corresponding scores are dissimilar and thus reflect a true change in state that should be reflected in the solution. See `beta` and `denom_const` for more details.
+    :param scale_gamma: If `True`, Scale the fragmentation penalty (γ) positionally based on the difference between adjacent scores. This will yield a more nuanced fragmentation penalty that does not discourage differences in adjacent decision variables if their corresponding scores are dissimilar and thus reflect a true change in state that should affect the solution: `γ/(|Score_i - Score_i+1| + ε)^β` See `beta` and `denom_const` for more details.
     :type scale_gamma: bool
     :param pdlp_proto: pdlp-specific protocol buffer. If this is not None, the explicit solver arguments in this function definition are ignored. See `<https://protobuf.dev>`_ for more information on protocol buffers and `solvers.proto <https://github.com/google/or-tools/blob/2c333f58a37d7c75d29a58fd772c9b3f94e2ca1c/ortools/pdlp/solvers.proto>`_ for Google's pdlp-specific protocol buffer.
     :type pdlp_proto: solvers_pb2.PrimalDualHybridGradientParams
@@ -784,8 +780,7 @@ def solve_relaxation_chrom_glop(scores,
     :type beta: float
     :param denom_const: Constant to add to the denominator in the fragmentation penalty. If None, defaults to 0.5 when `scale_gamma` is True.
     :type denom_const: float
-    :param scale_gamma: If `True`, Scale the fragmentation penalty (γ) positionally based on the difference between adjacent scores. This will yield a more nuanced fragmentation penalty that does not discourage differences in adjacent decision variables if their corresponding scores are dissimilar and thus reflect a true change in state that should be reflected in the solution, `γ/(|Score_i - Score_i+1| + ε)^β` See `beta` and `denom_const` for more details.
-    
+    :param scale_gamma: If `True`, Scale the fragmentation penalty (γ) positionally based on the difference between adjacent scores. This will yield a more nuanced fragmentation penalty that does not discourage differences in adjacent decision variables if their corresponding scores are dissimilar and thus reflect a true change in state that should affect the solution: `γ/(|Score_i - Score_i+1| + ε)^β` See `beta` and `denom_const` for more details.
     :type scale_gamma: bool
     :param glop_parameters: glop-specific protocol buffer. If this is not None, the explicit solver arguments in this function definition are ignored. See `<https://protobuf.dev>`_ for more information on protocol buffers and `parameters.proto <https://github.com/google/or-tools/blob/stable/ortools/glop/parameters.proto>`_ for Google's glop-specific protocol buffer.
     :type glop_parameters: parameters_pb2.GlopParameters
@@ -1188,6 +1183,11 @@ def cscores_quantiles(chrom_scores: np.ndarray, quantiles:np.ndarray=None, add_n
     return f'{formatted_string}'
 
 
+def json_config(config_path):
+    with open(config_path, 'r') as json_file:
+        return json.load(json_file)
+
+
 def main():
     ID = str(int(uuid.uuid4().hex[:5], base=16))
     logger.info(f'\nID: {ID}')
@@ -1299,9 +1299,16 @@ def main():
     parser.add_argument('--min_length_bp', type=int, default=None,
                         help='Minimum length of regions to output in the final BED file')
     parser.add_argument('--name_features', action='store_true', help='Name the features in the output BED file')
+    parser.add_argument('--config', type=str, default=None, help='Supply arguments with a JSON file. Arguments specified in this JSON file override those specifified at the command line')
     args = vars(parser.parse_args())
-    
-    if len(sys.argv)==1 or args['input_files'] is None or len(args['input_files']) == 0:
+
+    if args['config']:
+        json_args = json_config(args['config'])
+        for key, value in json_args.items():
+            if args[key] is None:
+                args[key] = value
+
+    if (len(sys.argv)==1 or args['input_files'] is None or len(args['input_files']) == 0):
         parser.print_help(sys.stdout)
         sys.exit(0)
     

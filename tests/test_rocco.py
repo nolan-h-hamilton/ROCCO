@@ -339,4 +339,3 @@ def test_parsig():
     a[25:] = sorted(np.round(np.random.poisson(10,size=25), 4)) # again, sorted without loss of generality
 
     assert np.allclose(np.round(parsig(a),4), parsig_ref_a), f'parsig test failed: {parsig(a), parsig_ref_a}'
-    
