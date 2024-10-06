@@ -1137,7 +1137,6 @@ def resolve_transformations(args: dict):
     :type args: dict
     :return: Resolved command-line arguments
     :rtype: dict
-
     """
 
     savgol_params = {
@@ -1232,13 +1231,13 @@ def main():
     # Scoring-related arguments
     ## central tendency
     parser.add_argument('--c_1', type=float, default=1.0, help='Score parameter: coefficient for central tendency measure. Assumed positive in the default implementation')
-    parser.add_argument('--method_central_tendency', '--score_central_tendency', '--central_tendency', default='quantile', choices=['quantile', 'tmean', 'mean'], help='Central tendency measure. Default is `quantile` with `quantile_value` set to 0.50 (median)')
+    parser.add_argument('--method_central_tendency', '--score_central_tendency', '--central_tendency',dest='method_central_tendency', default='quantile', choices=['quantile', 'tmean', 'mean'], help='Central tendency measure. Default is `quantile` with `quantile_value` set to 0.50 (median)')
     parser.add_argument('--quantile_value', type=float, default=0.50, help='Quantile value for central tendency measure--Only applies if `method_central_tendency` is set to `quantile`')
     parser.add_argument('--tprop', type=float, default=0.05, help='Trim proportion for  (`tmean`)--Only applies for trimmed mean central tendency measure or dispersion measure `tstd`')
 
     ## dispersion
     parser.add_argument('--c_2', type=float, default=-1.0, help='Score parameter: coefficient for dispersion measure. Assumed negative in the default implementation')
-    parser.add_argument('--method_dispersion','--score_dispersion', '--dispersion', default='mad', choices=['mad', 'std', 'iqr', 'tstd'], help='Dispersion measure.')
+    parser.add_argument('--method_dispersion','--score_dispersion', '--dispersion', dest='method_dispersion', default='mad', choices=['mad', 'std', 'iqr', 'tstd'], help='Dispersion measure.')
 
     ## boundary
     parser.add_argument('--c_3', type=float, default=1.0, help='Score parameter: coefficient for boundary measure. Assumed positive in the default implementation')
