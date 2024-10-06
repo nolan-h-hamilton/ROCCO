@@ -1209,7 +1209,7 @@ def resolve_config(args):
             "output": "rocco_peaks_output.bed",
             "genome": "hg38",
             "chroms": ["chr21", "chr22"],
-            "int_tol": .01,
+            "int_tol": 0.01,
             "verbose": true,
             "solver": "pdlp"
         }
