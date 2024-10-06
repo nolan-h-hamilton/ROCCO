@@ -187,6 +187,7 @@ See below for a visualization of the effects of several of ROCCO's fundamental o
 
 import argparse
 import copy
+import json
 import logging
 import multiprocessing
 import os
@@ -1182,6 +1183,11 @@ def cscores_quantiles(chrom_scores: np.ndarray, quantiles:np.ndarray=None, add_n
     return f'{formatted_string}'
 
 
+def json_config(config_path):
+    with open(config_path, 'r') as json_file:
+        return json.load(json_file)
+
+
 def main():
     ID = str(int(uuid.uuid4().hex[:5], base=16))
     logger.info(f'\nID: {ID}')
@@ -1293,9 +1299,16 @@ def main():
     parser.add_argument('--min_length_bp', type=int, default=None,
                         help='Minimum length of regions to output in the final BED file')
     parser.add_argument('--name_features', action='store_true', help='Name the features in the output BED file')
+    parser.add_argument('--config', type=str, default=None, help='Supply arguments with a JSON file. Arguments specified in this JSON file override those specifified at the command line')
     args = vars(parser.parse_args())
-    
-    if len(sys.argv)==1 or args['input_files'] is None or len(args['input_files']) == 0:
+
+    if args['config']:
+        json_args = json_config(args['config'])
+        for key, value in json_args.items():
+            if args[key] is None:  # Only set the JSON value if not provided by CLI
+                args[key] = value
+
+    if (len(sys.argv)==1 or args['input_files'] is None or len(args['input_files']) == 0) and not args['config']:
         parser.print_help(sys.stdout)
         sys.exit(0)
     
