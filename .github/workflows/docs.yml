@@ -9,6 +9,7 @@ on:
       - '**/conf.py'
       - '**.yml'
       - '**.rst'
+      - '**/rocco.py'
 
 
 permissions:
