@@ -1188,6 +1188,48 @@ def json_config(config_path):
         return json.load(json_file)
 
 
+def resolve_config(args):
+    """Resolve command-line arguments with a JSON configuration file
+    
+    :param args: Command-line arguments obtained with `argparse`
+    :type args: dict
+    :return: Resolved command-line arguments
+    :rtype: dict
+    
+    .. note:: 
+    
+        * Modifies/overrides command-line arguments specified explicitly in the JSON file
+        * For boolean arguments, use `true` or `false` in the JSON file rather than `True` or `False`
+    
+    **Example JSON config file**
+    .. code-block:: json
+
+        {
+            "input_files": ["sample1.bam", "sample2.bam"],
+            "output": "rocco_peaks_output.bed",
+            "genome": "hg38",
+            "chroms": ["chr21", "chr22"],
+            "int_tol": .01,
+            "verbose": true,
+            "solver": "pdlp"
+        }
+    
+    Can then run `rocco --config config.json [...]`.
+    """
+    
+    args_ = copy.deepcopy(args)
+    if args_['config'] is None or not os.path.exists(args_['config']):
+        return args_
+
+    json_args = json_config(args_['config'])
+    for key, value in json_args.items():
+        if key not in args_.keys():
+            continue
+        args_[key] = value
+        logger.info(f'Setting {key}={value} per {args_["config"]}')
+    return args_
+
+
 def main():
     ID = str(int(uuid.uuid4().hex[:5], base=16))
     logger.info(f'\nID: {ID}')
@@ -1299,14 +1341,9 @@ def main():
     parser.add_argument('--min_length_bp', type=int, default=None,
                         help='Minimum length of regions to output in the final BED file')
     parser.add_argument('--name_features', action='store_true', help='Name the features in the output BED file')
-    parser.add_argument('--config', type=str, default=None, help='Supply arguments with a JSON file. Arguments specified in this JSON file are secondary to those given at the command line.')
+    parser.add_argument('--config', type=str, default=None, help='Supply arguments with a JSON file. May override command-line arguments.')
     args = vars(parser.parse_args())
-
-    if args['config']:
-        json_args = json_config(args['config'])
-        for key, value in json_args.items():
-            if key in args.keys() and args[key] is None:
-                args[key] = value
+    args = resolve_config(args)
 
     if (len(sys.argv)==1 or args['input_files'] is None or len(args['input_files']) == 0):
         parser.print_help(sys.stdout)
@@ -1352,6 +1389,8 @@ def main():
             raise FileNotFoundError(f'File not found: {file_}')
         if _get_input_type(file_) == 'bam':
             logger.info(f'Input file: {file_}')
+            if args['ignore_for_norm'] is None or len(args['ignore_for_norm']) == 0:
+                args['ignore_for_norm'] = ['chrX', 'chrY', 'chrM']
             bw_file_ = generate_bigwig(file_,step=args['step'],
                     effective_genome_size=args['effective_genome_size'],
                     norm_method=args['norm_method'],
