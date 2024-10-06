@@ -162,7 +162,7 @@ Usage
 
 .. code-block:: bash
 
-        rocco -i sample1.bam sample2.bam [...] sampleM.bam-g hg38 --transform_locratio
+        rocco -i sample1.bam sample2.bam [...] sampleM.bam -g hg38 --transform_locratio
 
 
 **Run with parametric-sigmoid transformation of scores**:
@@ -1299,13 +1299,13 @@ def main():
     parser.add_argument('--min_length_bp', type=int, default=None,
                         help='Minimum length of regions to output in the final BED file')
     parser.add_argument('--name_features', action='store_true', help='Name the features in the output BED file')
-    parser.add_argument('--config', type=str, default=None, help='Supply arguments with a JSON file. Arguments specified in this JSON file override those specifified at the command line')
+    parser.add_argument('--config', type=str, default=None, help='Supply arguments with a JSON file. Arguments specified in this JSON file are secondary to those given at the command line.')
     args = vars(parser.parse_args())
 
     if args['config']:
         json_args = json_config(args['config'])
         for key, value in json_args.items():
-            if args[key] is None:
+            if key in args.keys() and args[key] is None:
                 args[key] = value
 
     if (len(sys.argv)==1 or args['input_files'] is None or len(args['input_files']) == 0):
