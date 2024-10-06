@@ -1305,10 +1305,10 @@ def main():
     if args['config']:
         json_args = json_config(args['config'])
         for key, value in json_args.items():
-            if args[key] is None:  # Only set the JSON value if not provided by CLI
+            if args[key] is None:
                 args[key] = value
 
-    if (len(sys.argv)==1 or args['input_files'] is None or len(args['input_files']) == 0) and not args['config']:
+    if (len(sys.argv)==1 or args['input_files'] is None or len(args['input_files']) == 0):
         parser.print_help(sys.stdout)
         sys.exit(0)
     
