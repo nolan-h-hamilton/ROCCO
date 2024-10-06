@@ -946,7 +946,8 @@ def get_floor_eps_sol(chrom_lp_sol:np.ndarray, budget:float,
             chrom_lp_sol[i] = 1
 
     if eps_mult <= 1:
-        raise ValueError('`eps_mult` must be greater than 1')
+        logger.warning('`eps_mult` must be greater than 1...setting to 1.001')
+        eps_mult = 1.001
 
     n = len(chrom_lp_sol)
     plus_half = np.array([x for x in chrom_lp_sol if x > 0 and x < 1])
