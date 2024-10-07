@@ -1202,6 +1202,7 @@ def resolve_config(args):
         * For boolean arguments, use `true` or `false` in the JSON file rather than `True` or `False`
     
     **Example JSON config file**
+
     .. code-block:: json
 
         {
