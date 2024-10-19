@@ -15,17 +15,32 @@ ROCCO is an algorithm for efficient identification of "consensus peaks" in multi
 
 ROCCO's repository is hosted on `GitHub <https://github.com/nolan-h-hamilton/ROCCO>`_
 
+
 Example Behavior
-~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^
 
-In the image below, ROCCO is run on a set of ten heterogeneous ATAC-seq samples (lymphoblast) from independent donors (ENCODE). The samples' tracks are colored gray.
+**Input**
 
-* ROCCO consensus peaks (default parameters) are shown in blue
-* MACS2 (pooled, `q=.01`) consensus peaks are shown in red.
-* ENCODE cCREs are included as a rough reference of potentially active regions, but note that these regions are not specific to the data samples used in this analysis, nor are they derived from the same cell type or assay.
+- ENCODE lymphoblastoid data (BEST5, WORST5)
+
+  - 10 real ATAC-seq alignment tracks of varying quality (TSS enrichment)
+
+- Synthetic noisy data (NOISY5)
+
+  - 5 random alignments
+
+**Output**
+
+- ROCCO consensus peaks (blue)
+
+  - Effectively separates true signal from noise across multiple samples
+  - Robust to noisy samples (e.g., NOISY5)
+  - High resolution separation of enriched regions
 
 .. image:: example_behavior.png
-   :width: 600px
+   :width: 700px
+   :height: 450px
+   :alt: example
    :align: center
 
 How
@@ -175,13 +190,7 @@ Usage
 
         rocco -i sample1.bam sample2.bam [...] sampleM.bam -g hg38 --rescale_parsig
 
-* Other relevant options `--transform_logpc`, `--scale_gamma`, etc.
-
-See below for a visualization of the effects of several of ROCCO's fundamental options for preprocessing, scoring, optimization, etc.
-
-.. image:: rocco_options.png
-   :width: 600px
-   :align: center
+* See `here <https://github.com/nolan-h-hamilton/ROCCO/blob/main/docs/rocco_options.png>`_ for a visualization of the effects of several of ROCCO's fundamental options for preprocessing, scoring, optimization, etc.
 
 """
 
