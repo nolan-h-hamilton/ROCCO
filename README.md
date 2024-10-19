@@ -10,21 +10,24 @@ ROCCO is an efficient algorithm for detection of "consensus peaks" in large data
 
 ### Example Behavior
 
-In the image below, ROCCO is run on a set of heterogeneous ATAC-seq samples (lymphoblast) from independent donors (ENCODE). The samples' read density tracks are colored gray.
+#### Input
 
-* ROCCO consensus peaks (default parameters) are shown in blue
-* MACS2 (pooled, `q=.01`) consensus peaks are shown in red.
-* ENCODE cCREs are included as a rough reference of potentially active regions, but note that these regions are not specific to the data samples used in this analysis, nor are they derived from the same cell type or assay.
+* ENCODE lymphoblastoid data (BEST5, WORST5)
+  * 10 real ATAC-seq alignment tracks of varying quality (TSS enrichment)
+  
+* Synthetic noisy data (NOISY5)
+  * 5 random alignments
+
+#### Output
+
+* ROCCO consensus peaks (blue)
+  * Effectively separates true signal from noise across multiple samples
+  * Robust to noisy samples (e.g., NOISY5)
+  * High precision separation of enriched regions
 
 <p align="center">
-<img width="600" height="450" alt="example" src="docs/example_behavior.png">
+<img width="700" height="450" alt="example" src="docs/example_behavior.png">
 </p>
-
-#### Additional Examples
-
-* ROCCO offers several alternative features for preprocessing, scoring, and optimization
-* [A visual characterization of different settings and their effects](docs/rocco_options.png) is available
-* See documentation at <https://nolan-h-hamilton.github.io/ROCCO/> for additional details
 
 ## How
 
@@ -35,7 +38,7 @@ ROCCO models consensus peak calling as a constrained optimization problem with a
 ROCCO offers several attractive features:
 
 1. **Consideration of enrichment and spatial characteristics** of open chromatin signals
-2. **Scaling to large sample sizes** with an asymptotic time complexity independent of sample size
+2. **Scaling to large sample sizes (100+)** with an asymptotic time complexity independent of sample size
 3. **No required training data** or a heuristically determined set of initial candidate peak regions
 4. **No rigid thresholds** on the minimum number/width of supporting samples/replicates
 5. **Mathematically tractable model** permitting worst-case analysis of runtime and performance
