@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 import pyBigWig as pbw
 import scipy.signal as signal
+import scipy.ndimage as ndimage
 
 
 logging.basicConfig(level=logging.INFO,
@@ -492,6 +493,7 @@ def generate_chrom_matrix(chromosome: str, bigwig_files: list, chrom_sizes_file:
     """
 
     # get sync'd intervals for all bigwigs
+    # revisit this in future versions, potential bottleneck
     interval_matrix = []
     vals_matrix = []
     for bigwig_file in bigwig_files:
@@ -586,7 +588,7 @@ def apply_filter(intervals: np.ndarray, count_matrix: np.ndarray, filter_type: s
         filter_kernel = _next_odd_number(medfilt_kernel_bp//step_size)
         logger.info(f"Applying median filter with kernel size: {filter_kernel*step_size}bp")
         for i in range(count_matrix.shape[0]):
-            count_matrix[i] = signal.medfilt(count_matrix[i], filter_kernel)
+            count_matrix[i] = ndimage.median_filter(count_matrix[i], filter_kernel)
 
     return intervals, count_matrix
 
@@ -629,7 +631,7 @@ def apply_transformation(intervals: np.ndarray, count_matrix: np.ndarray,
         local_ratio_window_steps = max(_next_odd_number(local_ratio_window_bp // step_size),5)
         logger.info(f"Transforming data as ratio x/(median_filter(x,row,kernel={(step_size*max(1,local_ratio_window_steps-1))}bp) + ε)")
         for i in range(count_matrix.shape[0]):
-            local_ref = signal.medfilt(count_matrix[i], local_ratio_window_steps)
+            local_ref = ndimage.median_filter(count_matrix[i], local_ratio_window_steps)
             if local_ratio_pc is None:
                 local_ratio_pc = 1.0
             local_ref = local_ref + local_ratio_pc

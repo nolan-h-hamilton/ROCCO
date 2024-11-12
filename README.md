@@ -8,26 +8,12 @@
 
 ROCCO is an efficient algorithm for detection of "consensus peaks" in large datasets with multiple HTS data samples (namely, ATAC-seq), where an enrichment in read counts/densities is observed in a nontrivial subset of samples.
 
-### Example Behavior
+### Input/Output
 
-#### Input
+* *Input*: Samples' BAM alignments or BigWig tracks
+* *Output*: BED file of consensus peak regions
 
-* ENCODE lymphoblastoid data (BEST5, WORST5)
-  * 10 real ATAC-seq alignment tracks of varying quality (TSS enrichment)
-  
-* Synthetic noisy data (NOISY5)
-  * 5 random alignments
-
-#### Output
-
-* ROCCO consensus peaks (blue)
-  * Effectively separates true signal from noise across multiple samples
-  * Robust to noisy samples (e.g., NOISY5)
-  * High precision separation of enriched regions
-
-<p align="center">
-<img width="700" height="450" alt="example" src="docs/example_behavior.png">
-</p>
+*Note, if BigWig input is used, no preprocessing options can be applied at the alignment level.*
 
 ## How
 
@@ -43,7 +29,33 @@ ROCCO offers several attractive features:
 4. **No rigid thresholds** on the minimum number/width of supporting samples/replicates
 5. **Mathematically tractable model** permitting worst-case analysis of runtime and performance
 
-### Paper/Citation
+## Example Behavior
+
+### Input
+
+* ENCODE lymphoblastoid data (BEST5, WORST5): 10 real ATAC-seq alignments of varying TSS enrichment (SNR-like)
+* Synthetic noisy data (NOISY5)
+
+We run twice under two conditions -- with noisy samples and without
+
+  ```shell
+  rocco -i *.BEST5.bam *.WORST5.bam -g hg38 -o rocco_output_without_noise.bed
+  rocco -i *.BEST5.bam *.WORST5.bam *.NOISY5.bam -g hg38 -o rocco_output_with_noise.bed
+  ```
+
+### Output
+
+Comparing each output file:
+
+* *ROCCO effectively separates true signal from noise across multiple samples*
+* *ROCCO is robust to noisy samples (e.g., output unaffected by inclusion of NOISY5 inputs)*
+* *ROCCO offers high resolution separation of enriched regions*
+
+<p align="center">
+<img width="800" height="400" alt="example" src="docs/example_behavior.png">
+</p>
+
+## Paper/Citation
 
 If using ROCCO in your research, please cite the [original paper](https://doi.org/10.1093/bioinformatics/btad725) in *Bioinformatics* (DOI: `btad725`)
 
@@ -52,19 +64,19 @@ If using ROCCO in your research, please cite the [original paper](https://doi.or
     Bioinformatics, Volume 39, Issue 12, December 2023
    ```
 
-### Documentation
+## Documentation
 
 For additional details, usage examples, etc. please see ROCCO's documentation: <https://nolan-h-hamilton.github.io/ROCCO/>
 
-### Installation
+## Installation
 
-#### PyPI (`pip`)
+### PyPI (`pip`)
 
    ```shell
-   pip install rocco # most recent version
+   pip install rocco --upgrade
    ```
 
-#### Build from Source
+### Build from Source
 
 If preferred, ROCCO can easily be built from source:
 
@@ -76,9 +88,3 @@ If preferred, ROCCO can easily be built from source:
   python setup.py sdist bdist_wheel
   pip install -e .
   ```
-
-### Input/Output
-
-* *Input*: Samples' BAM alignments or BigWig tracks
-  * Note, if BigWig input is used, no preprocessing options can be applied at the alignment level.
-* *Output*: BED file of consensus peak regions
