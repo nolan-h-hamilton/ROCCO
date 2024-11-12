@@ -1341,8 +1341,9 @@ def main():
                         type=float, default=None,
                         help='Constant to add to count tracks before log transformation.')
     ## Local ratio transformation
-    parser.add_argument('--transform_locratio', '--transform_local_ratio', dest='transform_locratio', action='store_true',
+    parser.add_argument('--transform_locratio', '--transform_local_ratio', dest='transform_locratio', default=True, action='store_true',
                         help='Apply local ratio transformation to count tracks after normalization.')
+    parser.add_argument('--disable_locratio', '--no_locratio', action='store_false', dest='transform_locratio', help='Disable local ratio transformation.')
     parser.add_argument('--transform_locratio_window_bp','--local_ratio_window_bp', dest='transform_locratio_window_bp', type=int, default=None, help='Window size for local ratio transformation in base pairs.')
     parser.add_argument('--transform_locratio_window_steps', '--local_ratio_window_steps', dest='transform_locratio_window_steps', type=int, default=None, help='Window size for local ratio transformation in steps.')
     parser.add_argument('--transform_locratio_eps', '--local_ratio_pc', dest='transform_locratio_eps', type=float, default=None, help='Add to local_ref when computing local ratio "background" with median/savgol filter.')
