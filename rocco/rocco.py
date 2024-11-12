@@ -1,107 +1,112 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 r"""
-ROCCO: (R)obust (O)pen (C)hromatin Detection via (C)onvex (O)ptimization
-==================================================================================
+=========================================
+ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
+=========================================
 
-.. image:: logo.png
-   :width: 400px
+.. image:: ../docs/logo.png
+   :alt: logo
+   :width: 400
    :align: center
 
 What
-----
+====
 
-ROCCO is an algorithm for efficient identification of "consensus peaks" in multiple HTS data samples (namely, ATAC-seq), where read densities are consistently enriched across samples or particularly strong enrichment is observed in a nontrivial subset of samples.
+ROCCO is an efficient algorithm for detection of "consensus peaks" in large datasets with multiple HTS data samples (namely, ATAC-seq), where an enrichment in read counts/densities is observed in a nontrivial subset of samples.
 
-ROCCO's repository is hosted on `GitHub <https://github.com/nolan-h-hamilton/ROCCO>`_
+Input/Output
+------------
 
+- *Input*: Samples' BAM alignments or BigWig tracks
+- *Output*: BED file of consensus peak regions
 
-Example Behavior
-^^^^^^^^^^^^^^^^^^
-
-**Input**
-
-- ENCODE lymphoblastoid data (BEST5, WORST5)
-
-  - 10 real ATAC-seq alignment tracks of varying quality (TSS enrichment)
-
-- Synthetic noisy data (NOISY5)
-
-  - 5 random alignments
-
-**Output**
-
-- ROCCO consensus peaks (blue)
-
-  - Effectively separates true signal from noise across multiple samples
-  - Robust to noisy samples (e.g., NOISY5)
-  - High resolution separation of enriched regions
-
-.. image:: example_behavior.png
-   :width: 700px
-   :height: 450px
-   :alt: example
-   :align: center
+*Note, if BigWig input is used, no preprocessing options can be applied at the alignment level.*
 
 How
----
+===
 
-ROCCO models consensus peak calling as a constrained optimization problem with an upper-bound on the total proportion of the genome selected as open/accessible and a 'total variation' or 'fragmentation' penalty to promote spatial consistency in active regions and sparsity elsewhere.
+ROCCO models consensus peak calling as a constrained optimization problem with an upper-bound on the total proportion of the genome selected as open/accessible and a fragmentation penalty to promote spatial consistency in active regions and sparsity elsewhere.
 
 Why
----
+===
 
 ROCCO offers several attractive features:
 
-1. **Consideration of enrichment and spatial characteristics** of open chromatin signals
-2. **Scaling to large sample sizes** with an asymptotic time complexity independent of sample size
-3. **No required training data** or a heuristically determined set of initial candidate peak regions
-4. **No rigid thresholds** on the minimum number/width of supporting samples/replicates
-5. **Mathematically tractable model** permitting worst-case analysis of runtime and performance
+#. **Consideration of enrichment and spatial characteristics** of open chromatin signals
+#. **Scaling to large sample sizes (100+)** with an asymptotic time complexity independent of sample size
+#. **No required training data** or a heuristically determined set of initial candidate peak regions
+#. **No rigid thresholds** on the minimum number/width of supporting samples/replicates
+#. **Mathematically tractable model** permitting worst-case analysis of runtime and performance
 
+Example Behavior
+================
+
+Input
+-----
+
+- ENCODE lymphoblastoid data (BEST5, WORST5): 10 real ATAC-seq alignments of varying TSS enrichment (SNR-like)
+- Synthetic noisy data (NOISY5)
+
+We run twice under two conditions -- once with noisy samples and once without: :math:`m=15,m=10` samples, respectively.
+
+.. code-block:: shell
+
+   rocco -i *.BEST5.bam *.WORST5.bam -g hg38 -o rocco_output_without_noise.bed
+   rocco -i *.BEST5.bam *.WORST5.bam *.NOISY5.bam -g hg38 -o rocco_output_with_noise.bed
+
+Output
+------
+
+- *ROCCO effectively separates true signal from noise across multiple samples*
+- *ROCCO is robust to noisy samples (e.g., NOISY5)*
+- *ROCCO offers high resolution separation of enriched regions*
+
+.. image:: ../docs/example_behavior.png
+   :alt: example
+   :width: 800
+   :height: 400
+   :align: center
 
 Paper/Citation
---------------
+==============
 
-If using ROCCO in your research, please cite the `original paper <https://doi.org/10.1093/bioinformatics/btad725>`_ in *Bioinformatics* (DOI: `btad725`)
+If using ROCCO in your research, please cite the `original paper <https://doi.org/10.1093/bioinformatics/btad725>`_ in *Bioinformatics* (DOI: ``btad725``)
 
-.. code-block:: text
+::
 
    Nolan H Hamilton, Terrence S Furey, ROCCO: a robust method for detection of open chromatin via convex optimization,
    Bioinformatics, Volume 39, Issue 12, December 2023
 
+Documentation
+=============
 
-Installation:
--------------
+For additional details, usage examples, etc. please see ROCCO's documentation: `<https://nolan-h-hamilton.github.io/ROCCO/>`_
 
+Installation
+============
 
-**PyPI (pip)**:
+PyPI (``pip``)
+--------------
 
-To install ROCCO via `pip/PyPI <https://pypi.org/project/rocco/>`_  
+.. code-block:: shell
 
-.. code-block:: bash
+   pip install rocco --upgrade
 
-    pip install rocco --upgrade
+Build from Source
+-----------------
 
+If preferred, ROCCO can easily be built from source:
 
-**Build ROCCO from Source**
+- Clone or download this repository
 
-To build ROCCO from source:
+  .. code-block:: shell
 
-1. Clone or download the repository:
+     git clone https://github.com/nolan-h-hamilton/ROCCO.git
+     cd ROCCO
+     python setup.py sdist bdist_wheel
+     pip install -e .
 
-.. code-block:: bash
-
-    git clone https://github.com/nolan-h-hamilton/ROCCO.git
-    cd ROCCO
-
-
-2. Build and install the package:
-
-.. code-block:: bash
-
-    python setup.py sdist bdist_wheel
-    pip install -e .
 
 System-Level Dependencies:
 ----------------------------
@@ -136,61 +141,6 @@ Conda:
 or built from source (See  Samtools (http://www.htslib.org) and bedtools (https://bedtools.readthedocs.io/en/latest/)).
 
 As a supplementary resource, see `docs/environments <https://github.com/nolan-h-hamilton/ROCCO/tree/main/docs/environments>`_ in the GitHub repository for environment files with detailed package version information.
-
-
-Input/Output
--------------
-
-* Input: BAM alignments or BigWig tracks from multiple data samples
-   * If BigWig tracks are used as input, no preprocessing can be performed at the alignment level.
-
-* Output: BED file of consensus peak regions
-
-
-Usage
-------
-.. note::
-
-    * In the examples below, BigWig files may also be supplied as input but alignment-level preprocessing options (e.g., `--min_mapping_score`) cannot be applied.
-    * The names of certain command-line options have been changed for improved consistency but the previous names are still supported via aliases, such that no necessary changes to existing scripts are required.
-    * For increased flexibility, consider writing scripts (e.g., `import rocco`) and using the library directly instead of interfacing through the command-line.
-
-**Run with defaults using BAM input files**:
-
-.. code-block:: bash
-
-        rocco -i sample1.bam sample2.bam [...] sampleM.bam -g hg38
-
-* Wildcards are supported by the command-line interface, e.g., `rocco -i *.bam -g hg38`
-
-**Run on a subset of chromosomes**:
-
-* Useful for debugging, testing, etc.
-
-.. code-block:: bash
-
-        rocco -i sample1.bam sample2.bam [...] sampleM.bam -g hg38 --chroms chr21 chr22
-
-**Run ROCCO on `locratio`-transformed data**:
-
-* See :func:`rocco.readtracks.apply_transformation`
-
-.. code-block:: bash
-
-        rocco -i sample1.bam sample2.bam [...] sampleM.bam -g hg38 --transform_locratio
-
-
-**Run with parametric-sigmoid transformation of scores**:
-
-* Useful to promote near-integral solutions to the LP relaxation and increase solver speed, creating separation between lower/higher scores.
-
-* See :func:`parsig`
-
-.. code-block:: bash
-
-        rocco -i sample1.bam sample2.bam [...] sampleM.bam -g hg38 --rescale_parsig
-
-* See `here <https://github.com/nolan-h-hamilton/ROCCO/blob/main/docs/rocco_options.png>`_ for a visualization of the effects of several of ROCCO's fundamental options for preprocessing, scoring, optimization, etc.
 
 """
 
@@ -466,12 +416,12 @@ def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scal
     For each value :math:`x` in the input array `scores`, the transformation is given by:
 
     .. math::
-        \mathsf{Parsig}(x) = \frac{M}{1 + \exp(-R(x - \frac{B_q}{2}))}
+        \mathsf{Parsig}(x) = \frac{M}{1 + \exp(-R(x - B_q))}
 
     where
     
     .. math::
-        B_q = \mathsf{Quantile}(scores, q = parsig\_B)
+        B_q = \mathsf{Quantile}(scores, q = parsig\_B)/2
 
     Such that the inflection point occurs at `quantile(scores, parsig_B)/2`.
 
@@ -489,25 +439,26 @@ def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scal
         >>> import numpy as np
         >>> np.set_printoptions(formatter={'float_kind': lambda x: '{0:.3f}'.format(x)})
         >>> a = np.zeros(50)
-        >>> # First 25: Poisson(λ=1), Sorted WLOG
+        >>> # First 25 elements ~ Poisson(λ=1)
         >>> a[:25] = sorted(np.random.poisson(1,size=25))
-        >>> # Second 25: Poisson(λ=10), Sorted WLOG
+        >>> # Second 25 elements ~ Poisson(λ=10)
         >>> a[25:] = sorted(np.random.poisson(10,size=25))
-        >>> a # before parsig
+        >>> a # before parsig rescaling
         array([0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000,
-            0.000, 0.000, 0.000, 1.000, 1.000, 1.000, 1.000, 1.000, 2.000,
-            2.000, 2.000, 2.000, 2.000, 3.000, 3.000, 4.000, 4.000, 6.000,
-            6.000, 7.000, 7.000, 7.000, 8.000, 8.000, 8.000, 10.000, 10.000,
-            10.000, 10.000, 10.000, 10.000, 10.000, 11.000, 11.000, 12.000,
-            13.000, 13.000, 14.000, 16.000, 17.000, 18.000])
-        >>> rocco.parsig(a) # after parsig
-        rocco.parsig -  INFO - Parsig transformation applied with M=13.0, B=16.0, R=2.0
+            0.000, 0.000, 0.000, 1.000, 1.000, 1.000, 1.000, 1.000, 1.000,
+            1.000, 2.000, 2.000, 2.000, 3.000, 4.000, 4.000, 5.000, 6.000,
+            6.000, 7.000, 7.000, 8.000, 8.000, 9.000, 9.000, 10.000, 10.000,
+            10.000, 11.000, 12.000, 12.000, 12.000, 12.000, 13.000, 13.000,
+            14.000, 14.000, 15.000, 15.000, 16.000, 16.000])
+        >>> rocco.parsig(a) # after parsig rescaling
+        rocco.parsig -  INFO - Parsig transformation applied with M=11.0, B=15.0, R=2.0
         array([0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000,
             0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000,
-            0.000, 0.000, 0.000, 0.000, 0.001, 0.001, 0.004, 0.004, 0.234,
-            0.234, 1.550, 1.550, 1.550, 6.500, 6.500, 6.500, 12.766, 12.766,
-            12.766, 12.766, 12.766, 12.766, 12.766, 12.968, 12.968, 12.996,
-            12.999, 12.999, 13.000, 13.000, 13.000, 13.000])
+            0.000, 0.000, 0.000, 0.000, 0.001, 0.010, 0.010, 0.074, 0.522,
+            0.522, 2.958, 2.958, 8.042, 8.042, 10.478, 10.478, 10.926, 10.926,
+            10.926, 10.990, 10.999, 10.999, 10.999, 10.999, 11.000, 11.000,
+            11.000, 11.000, 11.000, 11.000, 11.000, 11.000])
+        >>> exit()
 
 
     :param scores: Scores for each genomic position within a given chromosome. Assumed to be scores generated with :func:`score_chrom_linear`, but can work for others as well.
@@ -520,7 +471,7 @@ def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scal
     :type parsig_B: float
     :param parsig_R: Scales the rate of change around the inflection point at `quantile(scores, parsig_B)/2`. Higher values of `parsig_R` will result in a steeper sigmoid curve, approaching a step function in the limit with two distinct values. Defaults to 2.0 if None.
     :type parsig_R: float
-    :param scale_quantile: Quantile of *unique set of values in initial scores* used to determine the new range (maximum value) of scores under the transformation. Only used if `parsig_M` is None. 
+    :param scale_quantile: Not used in this version.
     :type scale_quantile: float
     :param remove_min: If True, subtract the minimum value of the transformed scores to ensure values are non-negative
     :return: transformed scores
@@ -542,11 +493,8 @@ def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scal
         raise ValueError('`parsig_R` must be greater than zero')
 
     scores_ = np.array(scores)
-    scores_unique = np.array(sorted(list(set(list(scores)))))
 
-    # If not specified, the new maximum is determined by the quantile of *unique
-    # values* in the initial scores and the fragmentation penalty, gamma (because sparsity)
-    scale_ = max(0,np.quantile(scores_unique, q=scale_quantile, method='nearest'))
+    scale_ = max(0,np.quantile(scores, q=0.99, method='nearest')/2)
     M_ = (2*gamma +1) + scale_ if parsig_M is None else parsig_M
 
     if M_ < 0:
@@ -554,7 +502,7 @@ def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scal
 
     # The point at which the smooth step begins depends on parsig_B via B_, defined below
     B_ = np.quantile(scores_, parsig_B, method='nearest')
-    parsig_values = M_ / (1 + np.exp(-(parsig_R * ((scores - (B_ / 2))))))
+    parsig_values = M_ / (1 + np.exp(-(parsig_R * ((scores - (B_/2))))))
 
     if remove_min:
         parsig_values = parsig_values - np.min(parsig_values) # in case first inflection occurs below zero
@@ -614,9 +562,7 @@ def solve_relaxation_chrom_pdlp(scores,
                     save_model:str=None) -> Tuple[np.ndarray, float]:
     r"""Solve the relaxation for a specific chromosome using the *first-order* method, pdlp
     
-    See the  `full paper for pdlp <https://proceedings.neurips.cc/paper/2021/hash/a8fbbd3b11424ce032ba813493d95ad7-Abstract.html>`_ for a complete technical exposition.
-    
-    `OR-tools linear programming resources and documentation <https://developers.google.com/optimization/lp>`_
+    See the `full paper for PDLP <https://arxiv.org/abs/2106.04756>`_ (Applegate et al., 2021) 
     
     :param scores: Scores for each genomic pisition within a given chromosome
     :type scores: np.ndarray
@@ -632,7 +578,7 @@ def solve_relaxation_chrom_pdlp(scores,
     :type scale_gamma: bool
     :param pdlp_proto: pdlp-specific protocol buffer. If this is not None, the explicit solver arguments in this function definition are ignored. See `<https://protobuf.dev>`_ for more information on protocol buffers and `solvers.proto <https://github.com/google/or-tools/blob/2c333f58a37d7c75d29a58fd772c9b3f94e2ca1c/ortools/pdlp/solvers.proto>`_ for Google's pdlp-specific protocol buffer.
     :type pdlp_proto: solvers_pb2.PrimalDualHybridGradientParams
-    :param pdlp_presolve_options_use_glop: Use glop's presolve routines but solve with pdlp. Recommended for most cases unless the user is confident in the problem's structure and the solver's behavior and computational resources are limited.
+    :param pdlp_presolve_options_use_glop: Use glop's presolve routines but solve with pdlp. Recommended for most cases unless computational resources are limited or the user has specified the problem already to exploit context-specific structure.
     :type pdlp_presolve_options_use_glop: bool
     :param pdlp_termination_criteria_eps_optimal_absolute: Appealing to strong duality for LPs, the duality gap (difference between the primal objective function and the dual objective function at a given iteration) must be less than this value *plus a scaling of the primal/dual objective values* (See `solvers.proto` linked above for exact details).  If computational resources are limited, consider using `1.0e-4` per the `ortools <https://developers.google.com/optimization/lp/lp_advanced>`_ documentation.
     :type pdlp_termination_criteria_eps_optimal_absolute: float
@@ -1295,7 +1241,8 @@ def main():
     parser.add_argument('--c_3', type=float, default=1.0, help='Score parameter: coefficient for boundary measure. Assumed positive in the default implementation')
 
     ## Rescale scores
-    parser.add_argument('--rescale_parsig', '--use_parsig', action='store_true', dest='rescale_parsig', help='Apply `rocco.parsig()` function to scores. Equivalent to the `--use_parsig` argument.')   
+    parser.add_argument('--rescale_parsig', '--use_parsig', default=True, action='store_true', dest='rescale_parsig', help='Apply `rocco.parsig()` function to scores. Equivalent to the `--use_parsig` argument.')
+    parser.add_argument('--disable_parsig', '--no_parsig', action='store_false', dest='rescale_parsig', help='Disable `rocco.parsig()` function.')  
     parser.add_argument('--rescale_parsig_B', '--parsig_B', dest='rescale_parsig_B', type=float, default=None, help='parsig function `B` parameter. Equivalent to the `--parsig_B` argument (location of inflection pt. in `rocco.parsig()` func.) Equivalent to the `--parsig_B` argument.')
     parser.add_argument('--rescale_parsig_M', '--parsig_M', type=float, dest='rescale_parsig_M', default=None, help='parsig function `M` parameter (supremum of `rocco.parsig()` func.) Equivalent to the `--parsig_M` argument.')
     parser.add_argument('--rescale_parsig_R', '--parsig_R', dest='rescale_parsig_R', type=float, default=None, help='parsig function `R` parameter (steepness of `rocco.parsig()` func).')
