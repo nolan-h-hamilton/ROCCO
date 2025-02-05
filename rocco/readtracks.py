@@ -12,12 +12,15 @@ import logging
 import multiprocessing
 import os
 import subprocess
+import random
 import sys
 import time
 from typing import Tuple
 
 import numpy as np
 import pandas as pd
+import pysam
+import pybedtools as pbt
 import pyBigWig as pbw
 import scipy.signal as signal
 import scipy.ndimage as ndimage
@@ -643,3 +646,103 @@ def apply_transformation(intervals: np.ndarray, count_matrix: np.ndarray,
         logger.info(f"Transforming data as log2(x + {log_const})")
         count_matrix = np.log2(count_matrix + log_const)
     return intervals, count_matrix
+
+
+def raw_count_matrix(bam_list_file: str, bed_file: str, output_file: str):
+    r"""Generate a raw count matrix from a list of BAM files and a BED file.
+    :param bam_list_file: Path to the file containing a list of BAM files (one filepath per line, order will be preserved in the output matrix).
+    :type bam_list_file: str
+    :param bed_file: Path to the BED file containing the intervals.
+    :type bed_file: str
+    :param output_file: Path to the output file.
+    :type output_file: str
+    :return: A tuple containing the output file path, list of BAM files, matrix of counts, and lengths of the intervals.
+    :rtype: tuple
+    """
+
+    bams = []
+    samples = []
+    with open(bam_list_file) as f:
+        for line in f:
+            bam = line.strip()
+            if bam:
+                bams.append(bam)
+                name = os.path.basename(bam)
+                if name.endswith(".bam"):
+                    name = name[:-4]
+                samples.append(name)
+    header = "peak_name\t" + "\t".join(samples)
+    bed = pbt.BedTool(bed_file)
+    matrix_ = np.zeros((len(bed), len(bams)))
+    logger.info(f"Calling bedtools multicov for {len(bams)} samples and {len(bed)} intervals.")
+    result = bed.multicov(bams=bams)
+    lengths = []
+    with open(output_file, "w") as out:
+        out.write(header + "\n")
+        for i,interval in enumerate(result):
+            fields = interval.fields
+            peak_name = f"{fields[0]}_{fields[1]}_{fields[2]}"
+            out.write(f"{peak_name}\t{'\t'.join(fields[3:])}\n")
+            matrix_[i, :] = np.array(fields[3:], dtype=int)
+            lengths.append(int(fields[2]) - int(fields[1]))
+    lengths = np.array(lengths, dtype=int)
+    return output_file, bams, matrix_, lengths
+
+
+def get_read_length(bam_file: str, num_reads: int = 1000):
+    r"""Get the median *mapped* read length from a BAM file.
+    
+    Used for 1x-genome normalization.
+    :param bam_file: Path to the BAM file. 
+    :type bam_file: str
+    :param num_reads: Number of reads to sample for the median calculation.
+    :type num_reads: int
+    :return: median *mapped* read length
+    :rtype: int
+    """
+
+    with pysam.AlignmentFile(bam_file, "rb", threads=max(multiprocessing.cpu_count()//2 - 1,1)) as bam:
+        read_lengths = []
+        for read in bam.fetch():
+            if random.random() < 0.10:
+                continue
+            if read.is_unmapped:
+                continue
+            read_lengths.append(read.reference_length)
+            if len(read_lengths) >= num_reads:
+                break
+    return int(np.median(read_lengths))
+
+
+def peak_scores(samples: list, matrix_: np.ndarray, lengths: np.ndarray, effective_genome_size: float=2.7e9,
+                        skip_for_norm: list = ['chrX', 'chrY', 'chrM'], pc=1.0):
+    r"""Compute relative peak score based on 1x-normalized, length-scaled counts.
+    """
+    logger.info(get_shape(matrix_))
+    logger.info(samples)
+    mapped_counts = []
+    for sample in samples:
+        aln_sample = pysam.AlignmentFile(sample, "rb", threads=max(multiprocessing.cpu_count()//2 - 1,1))
+        aln_all_mapped = aln_sample.mapped
+        for chrom in skip_for_norm:
+            aln_all_mapped -= aln_sample.count(chrom)
+        mapped_counts.append(aln_all_mapped)
+
+    rlens = [get_read_length(sample) for sample in samples]
+    mapped_sizes = np.array(mapped_counts) * np.array(rlens)
+    sample_scaling_constants = (effective_genome_size)/mapped_sizes
+
+    for sample_idx in range(len(samples)):
+        # scale by (mapped_aln_count*mapped_read_length)
+        matrix_[:, sample_idx] = matrix_[:, sample_idx] * sample_scaling_constants[sample_idx]
+
+    for feature_idx in range(len(lengths)):
+        # scale by feature length
+        matrix_[feature_idx, :] = (matrix_[feature_idx, :] / lengths[feature_idx])*1e6
+    ref_ = np.median(np.sum(matrix_, axis=1))
+    for feature_idx in range(len(lengths)):
+        # scale by median normalized/scaled row sum
+        matrix_[:, sample_idx] = np.log2((np.sum(matrix_[feature_idx, :]) / ref_) + pc)
+        
+    return matrix_
+
