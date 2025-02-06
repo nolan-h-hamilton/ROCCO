@@ -10,19 +10,23 @@ for downstream analysis.
 
 import logging
 import multiprocessing
+import threading
 import os
 import subprocess
 import random
 import sys
 import time
+from io import StringIO
 from typing import Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pysam
 import pybedtools as pbt
 import pyBigWig as pbw
 import scipy.signal as signal
+import scipy.stats as stats
 import scipy.ndimage as ndimage
 
 
@@ -656,7 +660,7 @@ def raw_count_matrix(bam_list_file: str, bed_file: str, output_file: str):
     :type bed_file: str
     :param output_file: Path to the output file.
     :type output_file: str
-    :return: A tuple containing the output file path, list of BAM files, matrix of counts, and lengths of the intervals.
+    :return: A tuple containing the output file path, list of samples' BAM files, matrix of counts
     :rtype: tuple
     """
 
@@ -672,27 +676,38 @@ def raw_count_matrix(bam_list_file: str, bed_file: str, output_file: str):
                     name = name[:-4]
                 samples.append(name)
     header = "peak_name\t" + "\t".join(samples)
-    bed = pbt.BedTool(bed_file)
-    matrix_ = np.zeros((len(bed), len(bams)))
-    logger.info(f"Calling bedtools multicov for {len(bams)} samples and {len(bed)} intervals.")
-    result = bed.multicov(bams=bams)
-    lengths = []
-    with open(output_file, "w") as out:
-        out.write(header + "\n")
-        for i,interval in enumerate(result):
-            fields = interval.fields
-            peak_name = f"{fields[0]}_{fields[1]}_{fields[2]}"
-            out.write(f"{peak_name}\t{'\t'.join(fields[3:])}\n")
-            matrix_[i, :] = np.array(fields[3:], dtype=int)
-            lengths.append(int(fields[2]) - int(fields[1]))
-    lengths = np.array(lengths, dtype=int)
-    return output_file, bams, matrix_, lengths
+
+    cmd = f"bedtools multicov -bams {' '.join(bams)} -bed {bed_file}"
+    linecount = sum(1 for _ in open(bed_file))
+    linecount_tenpct = int(linecount * 0.10)
+    matrix_ = np.zeros((linecount, len(bams)), dtype=int)
+    lengths = np.zeros(linecount, dtype=int)
+    peak_names = []
+    logger.info(f"Running bedtools multicov on {len(bams)} alignments and {linecount} peak regions.")  
+    with subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', bufsize=1) as proc:
+        i = 0
+        for line in proc.stdout:
+            line = line.strip()
+            fields = line.split("\t")
+            peak_name = '_'.join(fields[0:3])
+            length = int(fields[2])-int(fields[1])
+            lengths[i] = length
+            matrix_[i,:] = np.array(fields[3:], dtype=int)
+            peak_names.append(peak_name)
+            if i % linecount_tenpct == 0:
+                print(f"Processed {i} of {linecount} peaks.")
+            i += 1
+
+    with open(output_file, 'w') as f:
+        f.write(header + "\n")
+        for peak_name, length, counts in zip(peak_names, lengths, matrix_):
+            f.write(f"{peak_name}\t" + "\t".join(map(str, counts)) + "\n")
+    return output_file, bams, matrix_
 
 
 def get_read_length(bam_file: str, num_reads: int = 1000):
     r"""Get the median *mapped* read length from a BAM file.
     
-    Used for 1x-genome normalization.
     :param bam_file: Path to the BAM file. 
     :type bam_file: str
     :param num_reads: Number of reads to sample for the median calculation.
@@ -704,8 +719,6 @@ def get_read_length(bam_file: str, num_reads: int = 1000):
     with pysam.AlignmentFile(bam_file, "rb", threads=max(multiprocessing.cpu_count()//2 - 1,1)) as bam:
         read_lengths = []
         for read in bam.fetch():
-            if random.random() < 0.10:
-                continue
             if read.is_unmapped:
                 continue
             read_lengths.append(read.reference_length)
@@ -714,35 +727,78 @@ def get_read_length(bam_file: str, num_reads: int = 1000):
     return int(np.median(read_lengths))
 
 
-def peak_scores(samples: list, matrix_: np.ndarray, lengths: np.ndarray, effective_genome_size: float=2.7e9,
-                        skip_for_norm: list = ['chrX', 'chrY', 'chrM'], pc=1.0):
+def score_peaks(bam_files: list, chrom_sizes_file: str, bed_file: str=None,
+                matrix_: np.ndarray=None, matrix_file: str=None,
+                effective_genome_size: float=None,
+                skip_for_norm: list = ['chrX', 'chrY', 'chrM'],
+                pc=1.0, row_scale=1000, a=0, b=1000):
     r"""Compute relative peak score based on 1x-normalized, length-scaled counts.
     """
-    logger.info(get_shape(matrix_))
-    logger.info(samples)
+    # can either use the matrix object returned by `raw_count_matrix` or its `output_file`
+    if matrix_ is None:
+        if matrix_file is None:
+            # if both are None, raise
+            raise ValueError("Either matrix_ or matrix_file must be provided.")
+        # didn't get an object, so read the count matrix file
+        matrix_df = pd.read_csv(matrix_file, sep="\t", header=0, index_col=0)
+        matrix_ = matrix_df.values
+
+    # get vector of peak lengths (in bp) from the bed/peak file
+    # if we only got a count_matrix file as input, we can try
+    # ...to extract lengths from the index
+    lengths = np.zeros(matrix_.shape[0])
+    try:
+        with open(bed_file) as f:
+            for i, line in enumerate(f):
+                fields = line.strip().split("\t")
+                lengths[i] = int(fields[2]) - int(fields[1])
+    except Exception as e:
+        if matrix_df is None:
+            raise e
+
+        # if no bed file is provided, try to extract lengths from the count matrix file header
+        # this assumes if the index column of the count matrix has peaks named as: `chr_start_end`
+        # ...which will be the case if the count matrix was generated by `bedtools multicov`
+        lengths = np.array([int(x.split('_')[2]) - int(x.split('_')[1]) for x in matrix_df.index])
+        
+    if effective_genome_size is None:
+        effective_genome_size = np.sum([x[1] for x in get_chroms_and_sizes(chrom_sizes_file).items() if x[0] not in skip_for_norm])
+
     mapped_counts = []
-    for sample in samples:
+    # get number of mapped counts in chromosomes --not in skip_for_norm--
+    for sample in bam_files:
         aln_sample = pysam.AlignmentFile(sample, "rb", threads=max(multiprocessing.cpu_count()//2 - 1,1))
         aln_all_mapped = aln_sample.mapped
         for chrom in skip_for_norm:
             aln_all_mapped -= aln_sample.count(chrom)
         mapped_counts.append(aln_all_mapped)
 
-    rlens = [get_read_length(sample) for sample in samples]
+    # approximate mapped rlen 
+    rlens = [get_read_length(sample) for sample in bam_files]
+
     mapped_sizes = np.array(mapped_counts) * np.array(rlens)
+    # compute sample scaling constants:
+    #   rlen * mapped_counts 'covers' genome --> scale <= 1
+    #   rlen * mapped_counts does not 'cover' entire genome  --> scale > 1
     sample_scaling_constants = (effective_genome_size)/mapped_sizes
 
-    for sample_idx in range(len(samples)):
+    for sample_idx in range(len(bam_files)):
         # scale by (mapped_aln_count*mapped_read_length)
         matrix_[:, sample_idx] = matrix_[:, sample_idx] * sample_scaling_constants[sample_idx]
 
+    row_means = np.zeros(len(lengths))
     for feature_idx in range(len(lengths)):
-        # scale by feature length
-        matrix_[feature_idx, :] = (matrix_[feature_idx, :] / lengths[feature_idx])*1e6
-    ref_ = np.median(np.sum(matrix_, axis=1))
-    for feature_idx in range(len(lengths)):
-        # scale by median normalized/scaled row sum
-        matrix_[:, sample_idx] = np.log2((np.sum(matrix_[feature_idx, :]) / ref_) + pc)
-        
-    return matrix_
+        if feature_idx % 1000 == 0:
+            logger.info(f"Processing peak {feature_idx} of {len(lengths)}")
+        # using geometric mean since all values share the same reference (bp length)
+        row_means[feature_idx]  = _gmean(matrix_[feature_idx, :] * (row_scale/lengths[feature_idx]))
+    # scale between [a,b]
+    scores = row_means
+    if a is not None and b is not None:
+        scores = a + (row_means - np.min(row_means)) * (b - a) / (np.max(row_means) -  np.min(row_means))
+    return scores
 
+    
+def _gmean(vals):
+    r"""helper to compute geometric mean"""
+    return np.power(np.prod(vals), 1/len(vals))
