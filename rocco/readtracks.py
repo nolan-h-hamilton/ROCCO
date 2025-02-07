@@ -28,6 +28,7 @@ import pyBigWig as pbw
 import scipy.signal as signal
 import scipy.stats as stats
 import scipy.ndimage as ndimage
+import scipy.special as special
 
 
 logging.basicConfig(level=logging.INFO,
@@ -739,8 +740,8 @@ def score_peaks(bam_files, chrom_sizes_file: str=None,
                 count_matrix_file: str=None,
                 effective_genome_size: float=None,
                 skip_for_norm: list = ['chrX', 'chrY', 'chrM'],
-                row_scale=1, a=None, b=None,
-                threads: int=None, pc=1e-2, background: np.ndarray=None):
+                row_scale=1, a=0, b=1000,
+                threads: int=None, pc=1e-4):
     r"""Compute peak scores based on geometric mean of 1x-normalized, length-scaled counts.
     
     :param bam_files: List of paths to the BAM files OR a single filepath to a text file containing a list of BAM files (one filepath per line).
@@ -790,8 +791,8 @@ def score_peaks(bam_files, chrom_sizes_file: str=None,
     if effective_genome_size is None:
         effective_genome_size = np.sum([x[1] for x in get_chroms_and_sizes(chrom_sizes_file).items() if x[0] not in skip_for_norm])
     threads = threads if threads is not None else max(multiprocessing.cpu_count()//2 - 1,1)
-    mapped_counts = np.zeros(len(bam_files), dtype=int)
-    mapped_rlens = np.zeros(len(bam_files), dtype=int)
+    mapped_counts = np.zeros(len(bam_files_), dtype=int)
+    mapped_rlens = np.zeros(len(bam_files_), dtype=int)
     # get number of mapped counts in chromosomes that are not in `skip_for_norm`
     for i,sample in enumerate(bam_files_):
         aln_sample = pysam.AlignmentFile(sample, "rb", threads=threads)
@@ -806,8 +807,9 @@ def score_peaks(bam_files, chrom_sizes_file: str=None,
     #   Case 1: (mapped_rlen*mapped_counts) >= effective_genome_size, i.e., 'covers' genome --> scale DOWN to 1x genome
     #   Case 2: (mapped_rlen*mapped_counts < effective_genome_size) < effective_genome_size --> scale UP to 1x genome
     sample_scaling_constants = (effective_genome_size)/mapped_sizes
-    for sample_idx in range(len(bam_files)):
+    for sample_idx in range(len(bam_files_)):
         # scale by (mapped_aln_count*mapped_read_length)
+        print(matrix_.shape)
         matrix_[:, sample_idx] = matrix_[:, sample_idx] * sample_scaling_constants[sample_idx]
 
     row_gmeans = np.zeros(matrix_.shape[0])
@@ -829,8 +831,63 @@ def score_peaks(bam_files, chrom_sizes_file: str=None,
     # (e.g., signal is specific to a poorly represented trait-group in terms of total sample size) may be
     # under-scored relative to other peaks with a more ubiquitious signal across samples
     scores = row_gmeans
+    pvals = np.zeros(len(scores))
+    bed6_scores = np.zeros(len(scores))
+
+    length_count_dict = randcounts_over_flen(bam_files, lengths, chrom_sizes_file=chrom_sizes_file, sample_scaling_constants=sample_scaling_constants)
+        
+    pvals = np.array([stats.poisson.sf(length_count_dict[lengths[i]], scores[i]) for i in range(len(lengths))])
 
     # scale between [a,b]
     if a is not None and b is not None:
-        scores = a + (scores - np.min(scores)) * (b - a) / (np.max(scores) -  np.min(scores))
-    return scores
+        bed6_scores = a + (scores - np.min(scores)) * (b - a) / (np.max(scores) -  np.min(scores))
+    return scores, bed6_scores, pvals
+
+
+def _check_read(read: pysam.AlignedSegment, min_mapping_quality: int = 0):
+    return not read.is_unmapped
+
+
+def randcounts_over_flen(bam_files, lengths,  chrom_sizes_file: str=None, nsamples_per_length=25, sample_scaling_constants=None):
+    r"""crude lambda estimate specific to peak length. For efficiency, estimate background for only a subset of unique lengths and then fit a polynomial to approximate the rest."""
+    
+    if isinstance(bam_files, str):
+        with open(bam_files, 'r') as f:
+            bam_files_ = [line.strip() for line in f if line.strip()]
+            # check they exist
+            for file_ in bam_files_:
+                if not os.path.exists(file_):
+                    raise FileNotFoundError(f"File in `bam_files_` not found: {file_}")
+    if isinstance(bam_files, list):
+        for file_ in bam_files:
+            if not os.path.exists(file_):
+                raise FileNotFoundError(f"File in `bam_files` not found: {file_}")
+
+    uniq_lengths = np.unique(lengths)
+
+    counts_per_length = dict.fromkeys(np.round(np.linspace(min(uniq_lengths), max(uniq_lengths), min(50,len(uniq_lengths)))), 0)
+
+    for len_ in counts_per_length.keys():
+        cmd = f"bedtools random  -l {len_} -n {nsamples_per_length} -g {chrom_sizes_file}"
+        logger.info(f"background est for {len_}bp regions...")
+        with subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', bufsize=1) as proc:
+            for line in proc.stdout:
+                line = line.strip()
+                fields = line.split("\t")
+                chrom = fields[0]
+                start = int(fields[1])
+                end = int(fields[2])
+                cperlen = []
+                for bam_file in bam_files_:
+                    with pysam.AlignmentFile(bam_file, "rb", threads=max(multiprocessing.cpu_count() - 2,1)) as aln_sample:
+                        cperlen.append(aln_sample.count(chrom,start,end, read_callback=_check_read)*sample_scaling_constants[bam_files_.index(bam_file)])
+                counts_per_length[len_] = _gmean((cperlen/len_) + 1e-4)
+    # interpolate original lengths
+    fit_lens = []
+
+    coefficients = np.polyfit(np.array([x for x in counts_per_length.keys()]), np.array([counts_per_length[x] for x in counts_per_length.keys()]), deg=3)
+    poly = np.poly1d(coefficients)
+    for length in lengths:
+        fit_lens.append(poly(length))
+    return dict(zip(lengths, fit_lens))
+
