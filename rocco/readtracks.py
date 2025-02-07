@@ -652,16 +652,16 @@ def apply_transformation(intervals: np.ndarray, count_matrix: np.ndarray,
     return intervals, count_matrix
 
 
-def raw_count_matrix(bam_list_file: str, bed_file: str, output_file: str):
+def raw_count_matrix(bam_list_file: str, peak_file: str, output_file: str, bed_columns: int=3, overwrite=True):
     r"""Generate a raw count matrix from a list of BAM files and a BED file.
     :param bam_list_file: Path to the file containing a list of BAM files (one filepath per line, order will be preserved in the output matrix).
     :type bam_list_file: str
-    :param bed_file: Path to the BED file containing the intervals.
+    :param peak_file: Path to the BED file containing peaks.
     :type bed_file: str
-    :param output_file: Path to the output file.
+    :param output_file: name of file to write the count matrix in.
     :type output_file: str
-    :return: A tuple containing the output file path, list of samples' BAM files, matrix of counts
-    :rtype: tuple
+    :return: Name/path of the output file if successful, otherwise None.
+    :rtype: str
     """
 
     bams = []
@@ -677,35 +677,35 @@ def raw_count_matrix(bam_list_file: str, bed_file: str, output_file: str):
                 samples.append(name)
     header = "peak_name\t" + "\t".join(samples)
 
-    cmd = f"bedtools multicov -bams {' '.join(bams)} -bed {bed_file}"
-    linecount = sum(1 for _ in open(bed_file))
-    linecount_tenpct = int(linecount * 0.10)
-    matrix_ = np.zeros((linecount, len(bams)), dtype=int)
-    lengths = np.zeros(linecount, dtype=int)
-    peak_names = []
-    logger.info(f"Running bedtools multicov on {len(bams)} alignments and {linecount} peak regions.")  
-    with subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', bufsize=1) as proc:
-        i = 0
-        for line in proc.stdout:
-            line = line.strip()
-            fields = line.split("\t")
-            peak_name = '_'.join(fields[0:3])
-            length = int(fields[2])-int(fields[1])
-            lengths[i] = length
-            matrix_[i,:] = np.array(fields[3:], dtype=int)
-            peak_names.append(peak_name)
-            if i % linecount_tenpct == 0:
-                print(f"Processed {i} of {linecount} peaks.")
-            i += 1
+    cmd = f"bedtools multicov -bams {' '.join(bams)} -bed {peak_file}"
+    linecount = sum(1 for _ in open(peak_file))
+    linecount_tenpct = int(linecount * 0.10) - 1
+    logger.info(f"Running bedtools multicov on {len(bams)} alignments and {linecount} peak regions.")
+    if os.path.exists(output_file):
+        if overwrite:
+            logger.warning(f"{output_file} already exists...overwriting.")
+            os.remove(output_file)
+        else:
+            logger.warning(f"{output_file} already exists...returning None.")
+            return None
 
-    with open(output_file, 'w') as f:
+    with open(output_file, 'a', encoding='utf-8') as f:
         f.write(header + "\n")
-        for peak_name, length, counts in zip(peak_names, lengths, matrix_):
-            f.write(f"{peak_name}\t" + "\t".join(map(str, counts)) + "\n")
-    return output_file, bams, matrix_
+        with subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', bufsize=1) as proc:
+            i = 0
+            for line in proc.stdout:
+                line = line.strip()
+                fields = line.split("\t")
+                peak_name = '_'.join(fields[0:3])
+                counts = fields[bed_columns:]
+                f.write(f"{peak_name}\t" + "\t".join(counts) + "\n")
+                if i % linecount_tenpct == 0:
+                    print(f"Processed {i} of {linecount} peaks.")
+                i += 1
+    return output_file
 
 
-def get_read_length(bam_file: str, num_reads: int = 1000):
+def get_read_length(bam_file: str, num_reads: int = 1000, min_mapping_quality: int = 10):
     r"""Get the median *mapped* read length from a BAM file.
     
     :param bam_file: Path to the BAM file. 
@@ -719,36 +719,60 @@ def get_read_length(bam_file: str, num_reads: int = 1000):
     with pysam.AlignmentFile(bam_file, "rb", threads=max(multiprocessing.cpu_count()//2 - 1,1)) as bam:
         read_lengths = []
         for read in bam.fetch():
-            if read.is_unmapped:
+            if read.is_unmapped or read.is_secondary or read.is_supplementary:
                 continue
-            read_lengths.append(read.reference_length)
+            # check mapping quality 
+            if read.mapping_quality < min_mapping_quality:
+                continue
+            read_lengths.append(read.infer_query_length())
             if len(read_lengths) >= num_reads:
                 break
-    return int(np.median(read_lengths))
+    return int(np.percentile(read_lengths, 75))
+
+def _gmean(vals):
+    # helper function (no geometric mean in standard library or numpy)
+    return np.power(np.prod(vals), 1/len(vals))
 
 
-def score_peaks(bam_files: list, chrom_sizes_file: str, bed_file: str=None,
-                matrix_: np.ndarray=None, matrix_file: str=None,
+def score_peaks(bam_files, chrom_sizes_file: str=None,
+                peak_file: str=None,
+                count_matrix_file: str=None,
                 effective_genome_size: float=None,
                 skip_for_norm: list = ['chrX', 'chrY', 'chrM'],
-                pc=1.0, row_scale=1000, a=0, b=1000):
-    r"""Compute relative peak score based on 1x-normalized, length-scaled counts.
+                row_scale=1, a=None, b=None,
+                threads: int=None, pc=1e-2, background: np.ndarray=None):
+    r"""Compute peak scores based on geometric mean of 1x-normalized, length-scaled counts.
+    
+    :param bam_files: List of paths to the BAM files OR a single filepath to a text file containing a list of BAM files (one filepath per line).
+    :type bam_files: list or str
+    :param chrom_sizes_file: Path to the chromosome sizes file.
+    :type chrom_sizes_file: str
+    :param peak_file: Path to (BED) file containing peak regions. 
+    :type peak_file: str
     """
-    # can either use the matrix object returned by `raw_count_matrix` or its `output_file`
-    if matrix_ is None:
-        if matrix_file is None:
-            # if both are None, raise
-            raise ValueError("Either matrix_ or matrix_file must be provided.")
-        # didn't get an object, so read the count matrix file
-        matrix_df = pd.read_csv(matrix_file, sep="\t", header=0, index_col=0)
-        matrix_ = matrix_df.values
+    # check type of bam_files
+    bam_files_ = None
+    if isinstance(bam_files, str):
+        with open(bam_files, 'r') as f:
+            bam_files_ = [line.strip() for line in f if line.strip()]
+            # check they exist
+            for file_ in bam_files_:
+                if not os.path.exists(file_):
+                    raise FileNotFoundError(f"File in `bam_files_` not found: {file_}")
+    if isinstance(bam_files, list):
+        for file_ in bam_files:
+            if not os.path.exists(file_):
+                raise FileNotFoundError(f"File in `bam_files` not found: {file_}")
+
+    matrix_df = pd.read_csv(count_matrix_file, sep="\t", header=0, index_col=0)
+    matrix_ = matrix_df.values
 
     # get vector of peak lengths (in bp) from the bed/peak file
-    # if we only got a count_matrix file as input, we can try
+    # if we only receive a count_matrix file as input, we can try
     # ...to extract lengths from the index
     lengths = np.zeros(matrix_.shape[0])
     try:
-        with open(bed_file) as f:
+        with open(peak_file) as f:
             for i, line in enumerate(f):
                 fields = line.strip().split("\t")
                 lengths[i] = int(fields[2]) - int(fields[1])
@@ -756,49 +780,57 @@ def score_peaks(bam_files: list, chrom_sizes_file: str, bed_file: str=None,
         if matrix_df is None:
             raise e
 
-        # if no bed file is provided, try to extract lengths from the count matrix file header
+        # if no peak file is provided, try to extract lengths from the count matrix file header
         # this assumes if the index column of the count matrix has peaks named as: `chr_start_end`
-        # ...which will be the case if the count matrix was generated by `bedtools multicov`
+        # ...which will be the case if the count matrix was generated by `rocco.readtracks.raw_count_matrix()`
         lengths = np.array([int(x.split('_')[2]) - int(x.split('_')[1]) for x in matrix_df.index])
-        
+        logger.info(f"Extracted peak lengths from count matrix file: {count_matrix_file}")
+
+    # normalize each sample's counts to so that their total coverage is comparable to the 'effective genome size'
     if effective_genome_size is None:
         effective_genome_size = np.sum([x[1] for x in get_chroms_and_sizes(chrom_sizes_file).items() if x[0] not in skip_for_norm])
-
-    mapped_counts = []
-    # get number of mapped counts in chromosomes --not in skip_for_norm--
-    for sample in bam_files:
-        aln_sample = pysam.AlignmentFile(sample, "rb", threads=max(multiprocessing.cpu_count()//2 - 1,1))
+    threads = threads if threads is not None else max(multiprocessing.cpu_count()//2 - 1,1)
+    mapped_counts = np.zeros(len(bam_files), dtype=int)
+    mapped_rlens = np.zeros(len(bam_files), dtype=int)
+    # get number of mapped counts in chromosomes that are not in `skip_for_norm`
+    for i,sample in enumerate(bam_files_):
+        aln_sample = pysam.AlignmentFile(sample, "rb", threads=threads)
         aln_all_mapped = aln_sample.mapped
         for chrom in skip_for_norm:
             aln_all_mapped -= aln_sample.count(chrom)
-        mapped_counts.append(aln_all_mapped)
+        mapped_counts[i] = aln_all_mapped
+        mapped_rlens[i] = get_read_length(sample)
+    mapped_sizes = mapped_counts * mapped_rlens
 
-    # approximate mapped rlen 
-    rlens = [get_read_length(sample) for sample in bam_files]
-
-    mapped_sizes = np.array(mapped_counts) * np.array(rlens)
     # compute sample scaling constants:
-    #   rlen * mapped_counts 'covers' genome --> scale <= 1
-    #   rlen * mapped_counts does not 'cover' entire genome  --> scale > 1
+    #   Case 1: (mapped_rlen*mapped_counts) >= effective_genome_size, i.e., 'covers' genome --> scale DOWN to 1x genome
+    #   Case 2: (mapped_rlen*mapped_counts < effective_genome_size) < effective_genome_size --> scale UP to 1x genome
     sample_scaling_constants = (effective_genome_size)/mapped_sizes
-
     for sample_idx in range(len(bam_files)):
         # scale by (mapped_aln_count*mapped_read_length)
         matrix_[:, sample_idx] = matrix_[:, sample_idx] * sample_scaling_constants[sample_idx]
 
-    row_means = np.zeros(len(lengths))
+    row_gmeans = np.zeros(matrix_.shape[0])
     for feature_idx in range(len(lengths)):
         if feature_idx % 1000 == 0:
             logger.info(f"Processing peak {feature_idx} of {len(lengths)}")
-        # using geometric mean since all values share the same reference (bp length)
-        row_means[feature_idx]  = _gmean(matrix_[feature_idx, :] * (row_scale/lengths[feature_idx]))
-    # scale between [a,b]
-    scores = row_means
-    if a is not None and b is not None:
-        scores = a + (row_means - np.min(row_means)) * (b - a) / (np.max(row_means) -  np.min(row_means))
-    return scores
+        # Scale by length of peak region, optionally multiply by, e.g., `row_scale=1000` for units in kb
+        # since the relationship between peak width and counts may be dependent on sample-
+        # and-region-specific covariates, we might consider a lightweight model to better account for size
+        # take the geometric mean of the scaled counts
+        row_gmeans[feature_idx] = _gmean(pc + matrix_[feature_idx, :] * (row_scale/lengths[feature_idx]))
 
-    
-def _gmean(vals):
-    r"""helper to compute geometric mean"""
-    return np.power(np.prod(vals), 1/len(vals))
+
+    # For a given peak region, the 'absolute' score is currently defined
+    # as the geometric mean of the samples' [RPGC-normed counts]/[base pair length of peak]
+
+    # Intuitively, this is a measure of the 'intensity' of the signal in that region per base pair
+    # ...Note, peaks determined due to strong evidence of signal in only a subset of samples 
+    # (e.g., signal is specific to a poorly represented trait-group in terms of total sample size) may be
+    # under-scored relative to other peaks with a more ubiquitious signal across samples
+    scores = row_gmeans
+
+    # scale between [a,b]
+    if a is not None and b is not None:
+        scores = a + (scores - np.min(scores)) * (b - a) / (np.max(scores) -  np.min(scores))
+    return scores
