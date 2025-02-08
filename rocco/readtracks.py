@@ -33,9 +33,6 @@ import scipy.special as special
 
 from collections import OrderedDict
 
-multiprocessing.freeze_support()
-multiprocessing.set_start_method('fork')
-
 logging.basicConfig(level=logging.INFO,
                      format='%(asctime)s - %(module)s.%(funcName)s -  %(levelname)s - %(message)s')
 logging.basicConfig(level=logging.WARNING,
@@ -928,7 +925,8 @@ def multi_ecdf(bam_files, lengths, chrom_sizes_file: str,
     
     uniq_lengths = np.unique(lengths)
     ecdf_len_dict = dict.fromkeys(uniq_lengths, None)
-    with multiprocessing.Pool(processes=max(multiprocessing.cpu_count() - 2,1)) as pool:
+    ctx = multiprocessing.get_context('fork')
+    with ctx.Pool(processes=max(multiprocessing.cpu_count() - 2, 1)) as pool:
         args = [(bam_files_, len_, chrom_sizes_file, nsamples_per_length, sample_scaling_constants, seed) for len_ in ecdf_len_dict.keys()]
         results = pool.starmap(wrap_run_ecdf, args)
     
