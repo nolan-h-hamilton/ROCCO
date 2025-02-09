@@ -11,9 +11,9 @@ ROCCO is an efficient algorithm for detection of "consensus peaks" in large data
 ### Input/Output
 
 * *Input*: Samples' BAM alignments or BigWig tracks
-* *Output*: BED file of consensus peak regions
+* *Output*: BED file of consensus peak regions (Default format is BED3: `chrom,start,end`)
 
-*Note, if BigWig input is used, no preprocessing options can be applied at the alignment level.*
+* Note, if BigWig input is used, no preprocessing options can be applied at the alignment level and narrowPeak output cannot be generated.
 
 ## How
 
@@ -33,10 +33,10 @@ ROCCO offers several attractive features:
 
 ### Input
 
-* ENCODE lymphoblastoid data (BEST5, WORST5): 10 real ATAC-seq alignments of varying TSS enrichment (SNR-like)
+* ENCODE lymphoblastoid data (BEST5, WORST5): 10 real ATAC-seq alignments of varying TSS enrichment (SNR-like quality measure for ATAC-seq)
 * Synthetic noisy data (NOISY5)
 
-We run twice under two conditions -- with noisy samples and without
+We run twice under two conditions -- *with noisy samples* and *without* for comparison (blue)
 
   ```shell
   rocco -i *.BEST5.bam *.WORST5.bam -g hg38 -o rocco_output_without_noise.bed
@@ -47,9 +47,8 @@ We run twice under two conditions -- with noisy samples and without
 
 Comparing each output file:
 
-* *ROCCO effectively separates true signal from noise across multiple samples*
-* *ROCCO is robust to noisy samples (e.g., output unaffected by inclusion of NOISY5 inputs)*
-* *ROCCO offers high resolution separation of enriched regions*
+* *ROCCO is unaffected by the Noisy5 samples and effectively identifies true signal across multiple samples*
+* *ROCCO simultaneously detects both wide and narrow consensus peaks*
 
 <p align="center">
 <img width="800" height="400" alt="example" src="docs/example_behavior.png">
@@ -73,8 +72,11 @@ For additional details, usage examples, etc. please see ROCCO's documentation: <
 ### PyPI (`pip`)
 
    ```shell
-   pip install rocco --upgrade
+   python -m pip install rocco --upgrade
    ```
+
+If lacking administrative control, you may need to append `--user` to the above.
+
 
 ### Build from Source
 

@@ -12,15 +12,14 @@ import logging
 import multiprocessing
 import os
 import subprocess
-import sys
 import time
 from typing import Tuple
 
 import numpy as np
 import pandas as pd
+import pysam
 import pyBigWig as pbw
-import scipy.signal as signal
-import scipy.ndimage as ndimage
+from scipy import signal,ndimage
 
 
 logging.basicConfig(level=logging.INFO,
@@ -28,6 +27,7 @@ logging.basicConfig(level=logging.INFO,
 logging.basicConfig(level=logging.WARNING,
                     format='%(asctime)s - %(module)s.%(funcName)s -  %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
 
 def get_shape(matrix: np.ndarray) -> Tuple:
     r"""Helper function to get the shape of a 1D/2D numpy array"""
@@ -56,6 +56,7 @@ def _run_cmd(cmd):
             cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except subprocess.CalledProcessError as e:
         raise
+
 
 def clean_string(string_input):
     if string_input is None:
@@ -643,3 +644,22 @@ def apply_transformation(intervals: np.ndarray, count_matrix: np.ndarray,
         logger.info(f"Transforming data as log2(x + {log_const})")
         count_matrix = np.log2(count_matrix + log_const)
     return intervals, count_matrix
+
+
+def check_type_bam_files(bam_files):
+    if isinstance(bam_files, str):
+        with open(bam_files, 'r') as f:
+            bam_files_ = [line.strip() for line in f if line.strip()]
+        for file_ in bam_files_:
+            if not os.path.exists(file_):
+                raise FileNotFoundError(f"File in `bam_files_` not found: {file_}")
+    elif isinstance(bam_files, list):
+        bam_files_ = bam_files
+        for file_ in bam_files_:
+            if not os.path.exists(file_):
+                raise FileNotFoundError(f"File in `bam_files` not found: {file_}")
+    else:
+        raise ValueError("`bam_files` must be either a list or a path to a text file containing a list of BAM file paths.")
+    return bam_files_
+
+

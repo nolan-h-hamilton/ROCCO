@@ -103,36 +103,6 @@ def test_combine_chrom_results_no_names(test_setup):
 
 
 @pytest.mark.correctness
-def test_combine_chrom_results_add_names(test_setup):
-    r"""Test :func:`rocco.combine_chrom_results` with names for each feature (column 4)"""
-    # combine the chromosome-specific reference bed files in the repo and combine to create a new file
-    combined_outfile = combine_chrom_results([str(x) for x in test_setup["chrom_ref_results"].values()], output_file='test_combined.bed', name_features=True)
-    assert os.path.exists(combined_outfile), f'Combined solution file {combined_outfile} not found'
-    # load the combined file created by combine_chrom_results into a BedTool object
-    combined_pbt = pbt.BedTool(combined_outfile)
-
-    # load the already-combined reference combined file that is in the repo to a BedTool object
-    combined_ref_pbt = pbt.BedTool(test_setup['combined_ref_file'])
-    
-    # check the jaccard index between the combined solution and the reference
-    combined_jaccard = round(combined_pbt.jaccard(combined_ref_pbt)['jaccard'],5)
-    assert combined_jaccard > test_setup["min_jaccard"], f'Jaccard index for combined results with reference is below threshold {combined_jaccard} < {test_setup["min_jaccard"]}'
-    
-    # now check the naming
-    assert combined_pbt.field_count() > 3, f'Combined solution file does not have the expected number of fields: {combined_pbt.field_count()}'
-    np.random.seed(42)
-    for i in np.random.choice(range(len(combined_pbt)-1), size=50):
-        idx_ = int(i)
-        assert combined_pbt[idx_].name.split('_')[0] == combined_pbt[idx_].chrom, f'Incorrect chromosome name assigned to feature {combined_pbt[idx_].name}'
-        assert combined_pbt[idx_].name.split('_')[1] == str(combined_pbt[idx_].start), f'Incorrect start position assigned to feature {combined_pbt[idx_].name}'
-        assert combined_pbt[idx_].name.split('_')[2] == str(combined_pbt[idx_].end), f'Incorrect end position assigned to feature {combined_pbt[idx_].name}'
-    try:
-        os.remove(combined_outfile)
-    except:
-        pass
-
-
-@pytest.mark.correctness
 def test_score_central_tendency_chrom():
     r"""Test :func:`rocco.score_central_tendency_chrom`"""
     # Case I

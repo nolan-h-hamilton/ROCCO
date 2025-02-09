@@ -6,6 +6,8 @@
 
 .. automodule:: rocco.readtracks
 
+.. automodule:: rocco.scores
+
 .. automodule:: rocco.constants
    :members:
    :undoc-members:

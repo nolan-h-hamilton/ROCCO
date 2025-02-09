@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 r"""
-=========================================
+==========================================================================
 ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
-=========================================
+==========================================================================
 
 .. image:: ../docs/logo.png
    :alt: logo
@@ -48,19 +48,20 @@ Input
 - ENCODE lymphoblastoid data (BEST5, WORST5): 10 real ATAC-seq alignments of varying TSS enrichment (SNR-like)
 - Synthetic noisy data (NOISY5)
 
-We run twice under two conditions -- once with noisy samples and once without: :math:`m=15,m=10` samples, respectively.
+We run twice under two conditions -- once *with* noisy samples and once *without* to compare results (blue).
 
 .. code-block:: shell
 
    rocco -i *.BEST5.bam *.WORST5.bam -g hg38 -o rocco_output_without_noise.bed
    rocco -i *.BEST5.bam *.WORST5.bam *.NOISY5.bam -g hg38 -o rocco_output_with_noise.bed
 
+Note, users may run ROCCO with flag `--narrowPeak <https://genome.ucsc.edu/FAQ/FAQformat.html#format12>`_ to generate 10-column output with various statistics for comparison.
+
 Output
 ------
 
-- *ROCCO effectively separates true signal from noise across multiple samples*
-- *ROCCO is robust to noisy samples (e.g., NOISY5)*
-- *ROCCO offers high resolution separation of enriched regions*
+- *ROCCO is unaffected by the Noisy5 samples and effectively identifies true signal across multiple samples*
+- *ROCCO simultaneously detects both wide and narrow consensus peaks*
 
 .. image:: ../docs/example_behavior.png
    :alt: example
@@ -91,7 +92,10 @@ PyPI (``pip``)
 
 .. code-block:: shell
 
-   pip install rocco --upgrade
+   python -m pip install rocco --upgrade
+
+If lacking administrative control, you may need to append `--user` to the above.
+
 
 Build from Source
 -----------------
@@ -172,6 +176,7 @@ from ortools.pdlp import solvers_pb2
 
 from rocco.constants import GENOME_DICT
 from rocco.readtracks import *
+import rocco.scores as posthoc_scores
 
 
 logging.basicConfig(level=logging.INFO,
@@ -1298,8 +1303,13 @@ def main():
     # post-processing-related arguments
     parser.add_argument('--min_length_bp', type=int, default=None,
                         help='Minimum length of regions to output in the final BED file')
-    parser.add_argument('--name_features', action='store_true', help='Name the features in the output BED file')
+    parser.add_argument('--name_features', action='store_true', help='Deprecated: no effect.')
     parser.add_argument('--config', type=str, default=None, help='Supply arguments with a JSON file. May override command-line arguments.')
+    parser.add_argument('--narrowPeak', action='store_true', default=False, help="If True, an additional output narrowPeak file with statistics for each ROCCO-identified peak computed --agnostically-- with respect to the optimization problem addressed by ROCCO. Requires BAM input.")
+    parser.add_argument('--ecdf_samples', type=int, default=250, help='Number of "null" genomic regions used to estimate the background CDF for each unique peak length. Only relevant if `--narrowPeak` is invoked.')
+    parser.add_argument('--ecdf_seed', type=int, default=42, help='Random seed for selecting matched-length "background" regions for CDF estimation. Only relevant if `--narrowPeak` is invoked.')
+    parser.add_argument('--bamlist_txt', type=str, default=None, help="File containing list of samples' BAM filepaths (absolute paths,one per line). Use if supplying related BigWig input to ROCCO for peak calling (e.g., Consenrich output) but still desire `--narrowPeak` output based on sequence alignment data. Only relevant if `--narrowPeak` is invoked.")
+    
     args = vars(parser.parse_args())
     args = resolve_config(args)
 
@@ -1480,7 +1490,7 @@ def main():
         tmp_chrom_bed_files.append(chrom_outfile)
 
     logger.info('Combining chromosome solutions')
-    final_output = combine_chrom_results(tmp_chrom_bed_files, args['output'], name_features=args['name_features'])
+    final_output = combine_chrom_results(tmp_chrom_bed_files, args['output'], name_features=False) # --name_features is deprecated
     if os.path.exists(final_output):
         logger.info(f'Final output: {final_output}')
 
@@ -1490,6 +1500,16 @@ def main():
             os.remove(tmp_file)
         except Exception as e:
             logger.info(f'Could not remove chromosome-specific temp. file: {tmp_file}\n{e}')
+
+    if args['narrowPeak']:
+        narrowPeak_filepath = final_output.replace('.bed', '.narrowPeak')
+        logger.info(f'Generating narrowPeak file: {narrowPeak_filepath}')
+        if all([file_.endswith('.bam') for file_ in args['input_files']]) and args['bamlist_txt'] is None:
+            posthoc_scores.score_peaks(args['input_files'], args['chrom_sizes_file'], final_output, count_matrix_file=final_output.replace('.bed','.counts.tsv'), output_file=narrowPeak_filepath, ecdf_nsamples=args['ecdf_samples'], seed=args['ecdf_seed'])
+        elif args['bamlist_txt'] is not None and os.path.exists(args['bamlist_txt']):
+            posthoc_scores.score_peaks(args['bamlist_txt'], args['chrom_sizes_file'], final_output, count_matrix_file=final_output.replace('.bed','.counts.tsv'), output_file=narrowPeak_filepath, ecdf_nsamples=args['ecdf_samples'], seed=args['ecdf_seed'])
+        else:
+            logger.warning("Ignoring `--narrowPeak`: requires BAM inputs or `--bamlist_txt`")
     
 if __name__ == '__main__':
     main()
