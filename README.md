@@ -1,5 +1,9 @@
 # ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
 
+[![API](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/docs.yml/badge.svg)](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/docs.yml)
+[![Tests](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml/badge.svg)](https://github.com/nolan-h-hamilton/ROCCO/actions/workflows/tests.yml)
+![PyPI - Version](https://img.shields.io/pypi/v/rocco?logo=Python&logoColor=%23FFFFFF&color=%233776AB&link=https%3A%2F%2Fpypi.org%2Fproject%2Frocco%2F)
+
 <p align="center">
 <img width="400" alt="logo" src="docs/logo.png">
 </p>
@@ -42,6 +46,7 @@ We run twice under two conditions -- *with noisy samples* and *without* for comp
   rocco -i *.BEST5.bam *.WORST5.bam -g hg38 -o rocco_output_without_noise.bed
   rocco -i *.BEST5.bam *.WORST5.bam *.NOISY5.bam -g hg38 -o rocco_output_with_noise.bed
   ```
+Note, users may run ROCCO with flag [`--narrowPeak`](https://genome.ucsc.edu/FAQ/FAQformat.html#format12) to generate 10-column output with various statistics for comparison of peaks.
 
 ### Output
 
