@@ -13,11 +13,22 @@ setup(
     long_description_content_type="text/markdown",
     url='https://github.com/nolan-h-hamilton/rocco',
     packages=find_packages(),
+    license="MIT",
+    license_files=[],
     classifiers=[
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: Science/Research",
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3",
-        "Development Status :: 4 - Beta",
+        "Topic :: Scientific/Engineering :: Bio-Informatics",
     ],
+    keywords=[
+        "genomics",
+        "functional genomics",
+        "epigenomics",
+        "epigenetics",
+        "peak calling",
+        "ATAC-seq",],
     python_requires='>=3.8, <4',
     install_requires=[
         'ortools>=9.10',
