@@ -1303,7 +1303,7 @@ def main():
     parser.add_argument('--name_features', action='store_true', help='Deprecated: no effect.')
     parser.add_argument('--config', type=str, default=None, help='Supply arguments with a JSON file. May override command-line arguments.')
     parser.add_argument('--narrowPeak', action='store_true', default=False, help="Experimental feature. If not None, an additional output narrowPeak file with statistics for each ROCCO-identified peak computed --agnostically-- with respect to the optimization problem addressed by ROCCO. Requires BAM input.")
-    parser.add_argument('--ecdf_samples', type=int, default=500, help='Number of samples to use for empirical CDF estimation for each unique peak length. Only relevant if `--narrowPeak` is invoked.')
+    parser.add_argument('--ecdf_samples', type=int, default=250, help='Number of "null" genomic regions used to estimate the background CDF for each unique peak length. Only relevant if `--narrowPeak` is invoked.')
     parser.add_argument('--ecdf_seed', type=int, default=42, help='Random seed for selecting matched-length "background" regions for CDF estimation. Only relevant if `--narrowPeak` is invoked.')
     
     args = vars(parser.parse_args())

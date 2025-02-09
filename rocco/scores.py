@@ -160,7 +160,7 @@ def score_peaks(bam_files, chrom_sizes_file: str=None,
         Selection of length-specific 'null' regions.
           Should be revisited in future verisons. Though the current approach appears to yield approximately uniformly-distributed p-values
           under the null, there's no explicit check to verify the sampled regions are 'background'. At the cost of some execution
-          speed, we might consider checking :math:`A_{xx}(\tau=0) > a\left(\max_{\tau > 0} A_{xx}(0)\right)`,
+          speed, we might consider checking detrended :math:`A_{xx}(\tau=0) > a\left(\max_{\tau > 0} A_{xx}(\tau)\right)`,
           :math:`\max - \min < \textsf{threshold}`, distance to nearest peak, etc. The `nullranges` R package provides a rich set of features for sampling null regions--consider integrating in future efforts to migrate to R.
 
     """
