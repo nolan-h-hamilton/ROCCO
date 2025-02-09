@@ -1302,9 +1302,10 @@ def main():
                         help='Minimum length of regions to output in the final BED file')
     parser.add_argument('--name_features', action='store_true', help='Deprecated: no effect.')
     parser.add_argument('--config', type=str, default=None, help='Supply arguments with a JSON file. May override command-line arguments.')
-    parser.add_argument('--narrowPeak', action='store_true', default=False, help="Experimental feature. If not None, an additional output narrowPeak file with statistics for each ROCCO-identified peak computed --agnostically-- with respect to the optimization problem addressed by ROCCO. Requires BAM input.")
+    parser.add_argument('--narrowPeak', action='store_true', default=False, help="If True, an additional output narrowPeak file with statistics for each ROCCO-identified peak computed --agnostically-- with respect to the optimization problem addressed by ROCCO. Requires BAM input.")
     parser.add_argument('--ecdf_samples', type=int, default=250, help='Number of "null" genomic regions used to estimate the background CDF for each unique peak length. Only relevant if `--narrowPeak` is invoked.')
     parser.add_argument('--ecdf_seed', type=int, default=42, help='Random seed for selecting matched-length "background" regions for CDF estimation. Only relevant if `--narrowPeak` is invoked.')
+    parser.add_argument('--bamlist_txt', type=str, default=None, help="File containing list of samples' BAM filepaths (absolute paths,one per line). Use if supplying related BigWig input to ROCCO for peak calling (e.g., Consenrich output) but still desire `--narrowPeak` output based on sequence alignment data. Only relevant if `--narrowPeak` is invoked.")
     
     args = vars(parser.parse_args())
     args = resolve_config(args)
@@ -1496,14 +1497,16 @@ def main():
             os.remove(tmp_file)
         except Exception as e:
             logger.info(f'Could not remove chromosome-specific temp. file: {tmp_file}\n{e}')
-    if args['narrowPeak'] is not None:
-        logger.info(f'Generating narrowPeak file: {args["narrowPeak"]}')
+
+    if args['narrowPeak']:
         narrowPeak_filepath = final_output.replace('.bed', '.narrowPeak')
-        if all([file_ for file_ in args['input_files'] if file_.endswith('.bam')]):
-            logger.info(f'Generating narrowPeak file: {narrowPeak_filepath}...')
-            posthoc_scores.score_peaks(args['input_files'], args['chrom_sizes_file'], final_output, count_matrix_file=final_output.replace('.bed','.counts.tsv'), output_file=narrowPeak_filepath, ecdf_nsamples=args['ecdf_samples'], ecdf_seed=args['ecdf_seed'])
+        logger.info(f'Generating narrowPeak file: {narrowPeak_filepath}')
+        if all([file_.endswith('.bam') for file_ in args['input_files']]) and args['bamlist_txt'] is None:
+            posthoc_scores.score_peaks(args['input_files'], args['chrom_sizes_file'], final_output, count_matrix_file=final_output.replace('.bed','.counts.tsv'), output_file=narrowPeak_filepath, ecdf_nsamples=args['ecdf_samples'], seed=args['ecdf_seed'])
+        elif args['bamlist_txt'] is not None and os.path.exists(args['bamlist_txt']):
+            posthoc_scores.score_peaks(args['bamlist_txt'], args['chrom_sizes_file'], final_output, count_matrix_file=final_output.replace('.bed','.counts.tsv'), output_file=narrowPeak_filepath, ecdf_nsamples=args['ecdf_samples'], seed=args['ecdf_seed'])
         else:
-            logger.warning("Ignoring `--narrowPeak`: requires BAM inputs")
+            logger.warning("Ignoring `--narrowPeak`: requires BAM inputs or `--bamlist_txt`")
     
 if __name__ == '__main__':
     main()
