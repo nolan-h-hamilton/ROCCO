@@ -29,15 +29,14 @@ jobs:
       - name: Install dependencies
         run: |
           pip install sphinx myst_parser pytest pybedtools pysam numpy scipy pandas pyBigWig matplotlib deeptools ortools rocco
-
+          
       - name: Sphinx build
         run: |
           sphinx-build docs docs/build_
-
+          
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-pages-artifact@v1
         with:
-          name: github-pages   # Set artifact name to match deploy-pages expectations
           path: docs/build_/
 
   deploy:
