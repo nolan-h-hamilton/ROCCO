@@ -72,8 +72,11 @@ For additional details, usage examples, etc. please see ROCCO's documentation: <
 ### PyPI (`pip`)
 
    ```shell
-   pip install rocco --upgrade
+   python -m pip install rocco --upgrade
    ```
+
+If lacking administrative control, you may need to append `--user` to the above.
+
 
 ### Build from Source
 

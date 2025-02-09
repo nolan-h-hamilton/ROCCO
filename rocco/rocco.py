@@ -92,7 +92,10 @@ PyPI (``pip``)
 
 .. code-block:: shell
 
-   pip install rocco --upgrade
+   python -m pip install rocco --upgrade
+
+If lacking administrative control, you may need to append `--user` to the above.
+
 
 Build from Source
 -----------------
