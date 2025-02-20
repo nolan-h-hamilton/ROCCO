@@ -17,7 +17,7 @@ ROCCO is an efficient algorithm for detection of "consensus peaks" in large data
 * *Input*: Samples' BAM alignments or BigWig tracks
 * *Output*: BED file of consensus peak regions (Default format is BED3: `chrom,start,end`)
 
-* Note, if BigWig input is used, no preprocessing options can be applied at the alignment level and narrowPeak output cannot be generated.
+* Note, if BigWig input is used, no preprocessing options can be applied at the alignment level.
 
 ## How
 
@@ -46,7 +46,9 @@ We run twice under two conditions -- *with noisy samples* and *without* for comp
   rocco -i *.BEST5.bam *.WORST5.bam -g hg38 -o rocco_output_without_noise.bed
   rocco -i *.BEST5.bam *.WORST5.bam *.NOISY5.bam -g hg38 -o rocco_output_with_noise.bed
   ```
-Note, users may run ROCCO with flag [`--narrowPeak`](https://genome.ucsc.edu/FAQ/FAQformat.html#format12) to generate 10-column output with various statistics for comparison of peaks.
+
+* Note, users may run ROCCO with flag [`--narrowPeak`](https://genome.ucsc.edu/FAQ/FAQformat.html#format12) to generate 10-column output with various statistics for comparison of peaks and supplemental validation independent of ROCCO's optimality criterion.
+  * As a byproduct, `--narrowPeak` will likewise produce a 'raw' peak-by-count matrix (one row per peak, one column per sample) that can be used in downstream analyses such as differential accessibility testing.
 
 ### Output
 
@@ -93,5 +95,5 @@ If preferred, ROCCO can easily be built from source:
   git clone https://github.com/nolan-h-hamilton/ROCCO.git
   cd ROCCO
   python setup.py sdist bdist_wheel
-  pip install -e .
+  python -m pip install -e .
   ```
