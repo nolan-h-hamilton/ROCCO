@@ -621,7 +621,7 @@ def solve_relaxation_chrom_pdlp(scores,
     if threads >= 1:
         solver.SetNumThreads(threads)
     elif threads < 0:
-        solver.SetNumThreads(max(multiprocessing.cpu_count()-1,1))
+        solver.SetNumThreads(max(multiprocessing.cpu_count()//2 - 1,1))
 
     if verbose:
         solver.EnableOutput()
@@ -674,7 +674,7 @@ def solve_relaxation_chrom_pdlp(scores,
     if threads > 0:
         solver.SetNumThreads(threads)
     elif threads < 0:
-        solver.SetNumThreads(max(multiprocessing.cpu_count()-1,1))
+        solver.SetNumThreads(max(multiprocessing.cpu_count()//2 - 1,1))
 
     if not verbose:
         logger.info('Solving...Rerun with `--verbose` to see solver progress output.')
@@ -839,7 +839,7 @@ def solve_relaxation_chrom_glop(scores,
     if threads > 0:
         solver.SetNumThreads(threads)
     elif threads < 0:
-        solver.SetNumThreads(max(multiprocessing.cpu_count()-1,1))
+        solver.SetNumThreads(max(multiprocessing.cpu_count()//2 - 1,1))
 
     if not verbose:
         logger.info('Solving...Rerun with `--verbose` to see solver progress output.')
@@ -1207,7 +1207,7 @@ def main():
     parser.add_argument('--effective_genome_size', type=int, default=None, help='Effective genome size. Required if genome is not specified and using RPGC normalization')
     parser.add_argument('--chroms', nargs='+', type=str, default=[], help='Chromosomes to process. If not specified, all chromosomes will be processed')
     parser.add_argument('--skip_chroms', nargs='+', type=str, default=[], help='Chromosomes to skip')
-    parser.add_argument('--verbose', action='store_true', help='Invoke for verbose output')
+    parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Invoke for verbose output')
 
 
     # optimization-related arguments
@@ -1309,6 +1309,7 @@ def main():
     parser.add_argument('--ecdf_samples', type=int, default=250, help='Number of "null" genomic regions used to estimate the background CDF for each unique peak length. Only relevant if `--narrowPeak` is invoked.')
     parser.add_argument('--ecdf_seed', type=int, default=42, help='Random seed for selecting matched-length "background" regions for CDF estimation. Only relevant if `--narrowPeak` is invoked.')
     parser.add_argument('--bamlist_txt', type=str, default=None, help="File containing list of samples' BAM filepaths (absolute paths,one per line). Use if supplying related BigWig input to ROCCO for peak calling (e.g., Consenrich output) but still desire `--narrowPeak` output based on sequence alignment data. Only relevant if `--narrowPeak` is invoked.")
+    parser.add_argument('--ecdf_proc', type=int, default=None, dest='ecdf_proc', help='Number of processors to use for estimating the background CDF for each unique peak length. Only relevant if `--narrowPeak` is invoked. If left None, one-half of the number of available CPUs will be used.')
     
     args = vars(parser.parse_args())
     args = resolve_config(args)
@@ -1402,10 +1403,10 @@ def main():
                 chrom_gamma = params_df.loc[params_df['chrom'] == chrom_]['gamma'].values[0]
 
         if chrom_budget is None or args['budget'] is not None:
-            chrom_budget = args['budget']
+            chrom_budget = args['budget'] if args['budget'] is not None else 0.03
 
         if chrom_gamma is None or args['gamma'] is not None:
-            chrom_gamma = args['gamma']
+            chrom_gamma = args['gamma'] if args['gamma'] is not None else 1.0
 
         # Computing chromosome-specific matrix of read counts/densities/enrichments...
         logger.info(f'Generating chromosome matrix: {chrom_}')
@@ -1505,9 +1506,9 @@ def main():
         narrowPeak_filepath = final_output.replace('.bed', '.narrowPeak')
         logger.info(f'Generating narrowPeak file: {narrowPeak_filepath}')
         if all([file_.endswith('.bam') for file_ in args['input_files']]) and args['bamlist_txt'] is None:
-            posthoc_scores.score_peaks(args['input_files'], args['chrom_sizes_file'], final_output, count_matrix_file=final_output.replace('.bed','.counts.tsv'), output_file=narrowPeak_filepath, ecdf_nsamples=args['ecdf_samples'], seed=args['ecdf_seed'])
+            posthoc_scores.score_peaks(args['input_files'], args['chrom_sizes_file'], final_output, count_matrix_file=final_output.replace('.bed','.counts.tsv'), output_file=narrowPeak_filepath, ecdf_nsamples=args['ecdf_samples'], seed=args['ecdf_seed'], proc=args['ecdf_proc'])
         elif args['bamlist_txt'] is not None and os.path.exists(args['bamlist_txt']):
-            posthoc_scores.score_peaks(args['bamlist_txt'], args['chrom_sizes_file'], final_output, count_matrix_file=final_output.replace('.bed','.counts.tsv'), output_file=narrowPeak_filepath, ecdf_nsamples=args['ecdf_samples'], seed=args['ecdf_seed'])
+            posthoc_scores.score_peaks(args['bamlist_txt'], args['chrom_sizes_file'], final_output, count_matrix_file=final_output.replace('.bed','.counts.tsv'), output_file=narrowPeak_filepath, ecdf_nsamples=args['ecdf_samples'], seed=args['ecdf_seed'], proc=args['ecdf_proc'])
         else:
             logger.warning("Ignoring `--narrowPeak`: requires BAM inputs or `--bamlist_txt`")
     

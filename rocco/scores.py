@@ -144,9 +144,9 @@ def score_peaks(bam_files, chrom_sizes_file: str=None,
                 count_matrix_file: str=None,
                 effective_genome_size: float=None,
                 skip_for_norm: list = ['chrX', 'chrY', 'chrM'],
-                row_scale=1000, ucsc_base=500,
+                row_scale=1000, ucsc_base=250,
                 threads: int=None, pc=1, ecdf_nsamples=500,
-                output_file = 'scored_peaks.bed', seed: int=None):
+                output_file = 'scored_peaks.bed', seed: int=None, proc: int=None):
     r"""Compute peak scores based on geometric mean of 1x-normalized, length-scaled counts. p-values based on ECDFs of read counts in each peak length.
     
     :param bam_files: List of paths to the BAM files OR a single filepath to a text file containing a list of BAM files (one filepath per line).
@@ -155,18 +155,20 @@ def score_peaks(bam_files, chrom_sizes_file: str=None,
     :type chrom_sizes_file: str
     :param peak_file: Path to (BED) file containing peak regions. 
     :type peak_file: str
-    
-    .. note::
-        Selection of length-specific 'null' regions.
-          Should be revisited in future verisons. Though the current approach appears to yield approximately uniformly-distributed p-values
-          under the null, there's no explicit check to verify the sampled regions are 'background'. At the cost of some execution
-          speed, we might consider checking detrended :math:`A_{xx}(\tau=0) > a\left(\max_{\tau > 0} A_{xx}(\tau)\right)`,
-          :math:`\max - \min < \textsf{threshold}`, distance to nearest peak, etc. The `nullranges` R package provides a rich set of features for sampling null regions--consider integrating in future efforts to migrate to R.
-
+    :param uscc_base: Base value for UCSC score column. Default is 250 such that no peaks are indiscernible.
+    :type uscc_base: int
     """
-    # check type of bam_files
-    bam_files_ = check_type_bam_files(bam_files)
 
+    threads_ = 1
+    threads_ = threads if threads is not None else max(multiprocessing.cpu_count()//2 - 1,1)
+
+    proc_ = 1
+    if proc is None or (isinstance(proc, int) and proc < 1):
+        proc_ = min(max(multiprocessing.cpu_count()//2 - 1,1), 8)
+    else:
+        proc_ = proc
+
+    bam_files_ = check_type_bam_files(bam_files)
     matrix_df = None
     matrix_ = None
     try:
@@ -213,12 +215,11 @@ def score_peaks(bam_files, chrom_sizes_file: str=None,
     # Normalize each sample's counts so their total coverage is comparable to the 'effective genome size'
     if effective_genome_size is None:
         effective_genome_size = np.sum([x[1] for x in get_chroms_and_sizes(chrom_sizes_file).items() if x[0] not in skip_for_norm])
-    threads = threads if threads is not None else max(multiprocessing.cpu_count()//2 - 1,1)
     mapped_counts = np.zeros(len(bam_files_), dtype=int)
     mapped_rlens = np.zeros(len(bam_files_), dtype=int)
     # get number of mapped counts in chromosomes that are not in `skip_for_norm`
     for i,sample in enumerate(bam_files_):
-        aln_sample = pysam.AlignmentFile(sample, "rb", threads=threads)
+        aln_sample = pysam.AlignmentFile(sample, "rb", threads=threads_)
         aln_all_mapped = aln_sample.mapped
         for chrom in skip_for_norm:
             aln_all_mapped -= aln_sample.count(chrom)
@@ -240,7 +241,7 @@ def score_peaks(bam_files, chrom_sizes_file: str=None,
     if seed is None:
         seed = np.random.randint(1, 10000)
         logger.info(f"Using random seed: {seed} to sample length-matched regions for ECDFs.")
-    ecdf_dict = multi_ecdf(bam_files, lengths, chrom_sizes_file, nsamples_per_length=ecdf_nsamples, sample_scaling_constants=sample_scaling_constants, seed=seed)
+    ecdf_dict = multi_ecdf(bam_files, lengths, chrom_sizes_file, nsamples_per_length=ecdf_nsamples, sample_scaling_constants=sample_scaling_constants, seed=seed, proc=proc_)
 
     # (i) Signal value for a peak is the geometric mean of the 1x-normalized, length-scaled counts
     # ...observed in each sample over the peak
@@ -343,7 +344,7 @@ def multi_ecdf(bam_files, lengths, chrom_sizes_file: str,
     """
     bam_files_ = check_type_bam_files(bam_files)
     if proc is None:
-        proc = min(max(multiprocessing.cpu_count() - 2,1), 8)
+        proc = min(max(multiprocessing.cpu_count()//2 - 1,1), 8)
 
     uniq_lengths = np.unique(lengths)
     ecdf_len_dict = OrderedDict.fromkeys(uniq_lengths, None)

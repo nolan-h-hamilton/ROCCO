@@ -597,7 +597,8 @@ def apply_filter(intervals: np.ndarray, count_matrix: np.ndarray, filter_type: s
 def apply_transformation(intervals: np.ndarray, count_matrix: np.ndarray,
                         transform_log_pc: bool = False, log_const: float = None,
                         transform_local_ratio: bool = False, local_ratio_window_bp: int = None,
-                        local_ratio_window_steps: int = None, local_ratio_pc: float = None) -> Tuple[np.ndarray, np.ndarray]:
+                        local_ratio_window_steps: int = None, local_ratio_pc: float = None,
+                        nonnegative: bool=True) -> Tuple[np.ndarray, np.ndarray]:
     r"""Transform the count matrix after computing read densities.
 
     :param intervals: The genomic intervals.
@@ -616,6 +617,8 @@ def apply_transformation(intervals: np.ndarray, count_matrix: np.ndarray,
     :type local_ratio_window_steps: int
     :param local_ratio_pc: Constant to add to the local reference before taking the ratio.
     :type local_ratio_pc: float
+    :param nonnegative: If True, the transformation will compute enrichment with respect to a non-negative reference. Otherwise, the transformation will allow negative reference values to divide the signal values.
+    :type nonnegative: bool
 
     :return: A tuple containing two numpy arrays. The first array contains genomic intervals, and the second is a matrix (2d array) containing the corresponding values.
     :rtype: tuple(numpy.ndarray, numpy.ndarray)
@@ -635,6 +638,8 @@ def apply_transformation(intervals: np.ndarray, count_matrix: np.ndarray,
             local_ref = ndimage.median_filter(count_matrix[i], local_ratio_window_steps)
             if local_ratio_pc is None:
                 local_ratio_pc = 1.0
+            if nonnegative:
+                local_ref = np.maximum(local_ref,0)
             local_ref = local_ref + local_ratio_pc
             count_matrix[i] = (count_matrix[i]) / (local_ref)
 
