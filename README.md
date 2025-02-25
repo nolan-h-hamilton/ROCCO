@@ -17,7 +17,7 @@ ROCCO is an efficient algorithm for detection of "consensus peaks" in large data
 * *Input*: Samples' BAM alignments or BigWig tracks
 * *Output*: BED file of consensus peak regions (Default format is BED3: `chrom,start,end`)
 
-* Note, if BigWig input is used, no preprocessing options can be applied at the alignment level.
+Note, if BigWig input is used, no preprocessing options can be applied at the alignment level.
 
 ## How
 
@@ -60,6 +60,8 @@ Comparing each output file:
 <p align="center">
 <img width="800" height="400" alt="example" src="docs/example_behavior.png">
 </p>
+
+Additional examples are available [here](docs/downstream.md).
 
 ## Paper/Citation
 
