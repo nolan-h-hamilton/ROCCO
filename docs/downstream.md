@@ -53,4 +53,4 @@ rocco -i als_bamfiles/*.bam -g hg38 -o rocco_peaks_als_n3.bed  --narrowPeak \
 
 ## Consenrich --> ROCCO
 
-Consensus peak calling is a natural downstream use-case for the multi-sample signal extraction method, [Consenrich](https://github.com/nolan-h-hamilton/Consenrich). See [here](https://github.com/nolan-h-hamilton/Consenrich/blob/main/docs/consensus_peaks.md) for several examples of integration of Consenrich results with ROCCO.
+Consensus peak calling is a natural downstream use-case for the multi-sample, multi-assay signal extraction method, Consenrich. See [Consenrich/Examples.md](https://github.com/nolan-h-hamilton/Consenrich/blob/main/Examples.md), which includes multiple analyses demonstrating opportunity for integration of Consenrich with ROCCO to identify consensus enriched signal regions from uncertainty-moderated, fused representations of multiple HTS inputs.
