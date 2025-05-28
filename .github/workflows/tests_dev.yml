@@ -6,6 +6,7 @@ on:
       - rocco/**/*.py
     branches:
       - develop
+      - dev
 jobs:
   build:
     runs-on: ubuntu-latest

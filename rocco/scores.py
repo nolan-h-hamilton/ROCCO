@@ -10,15 +10,16 @@ import logging
 import multiprocessing
 import os
 import subprocess
-from typing import Tuple
+from typing import Tuple, Optional
 from collections import OrderedDict
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
 import pysam
 from scipy import ndimage, signal, stats
 
-from rocco.readtracks import get_chroms_and_sizes, check_type_bam_files 
+from rocco.readtracks import get_chroms_and_sizes, check_type_bam_files
 
 
 logging.basicConfig(level=logging.INFO,
@@ -35,19 +36,21 @@ def _check_read(read: pysam.AlignedSegment, min_mapping_quality: int=30):
     return not read.is_unmapped and read.mapping_quality >= min_mapping_quality
 
 
-def _gmean(vals, trim_left: float=None, trim_right: float=None):
-    r"""Helper function to compute geometric mean for a list of (optionally) truncated values.
+def _null_stat(vals: np.ndarray):
+    r"""Default statistic for `get_ecdf()` and `score_peaks()`.
+
+    Computes the 75th percentile of the input values. Previously, the default
+    was the sample mean, but this did not capture strong evidence of enrichment
+    present in subsets of the data, e.g., in the case of a peak with
+    a strong signal in  :math:`k_1 < k_2 < m`, where :math:`k_1` and :math:`k_2` are the number of
+    samples in a particular grouping of samples and `m` is the total number of samples.
+
+    :param vals: Array of values to compute the null statistic from.
+    :type vals: np.ndarray
+    :return: The 75th percentile of the input values.
+    :rtype: float
     """
-    truncated_vals = None
-    if trim_left is not None and trim_right is None:
-        truncated_vals = vals[vals > np.quantile(vals, trim_left)]
-    elif trim_left is None and trim_right is not None:
-        truncated_vals = vals[vals < np.quantile(vals, 1-trim_right)]
-    elif trim_left is not None and trim_right is not None:
-        truncated_vals = vals[(vals > np.quantile(vals, trim_left)) & (vals < np.quantile(vals, 1-trim_right))]
-    if truncated_vals is not None:
-        return np.power(np.prod(truncated_vals), 1/len(truncated_vals))
-    return np.power(np.prod(vals), 1/len(vals))
+    return np.percentile(vals, 75)
 
 
 def raw_count_matrix(bam_files: str, peak_file: str, output_file: str, bed_columns: int=3, overwrite=True):
@@ -71,10 +74,13 @@ def raw_count_matrix(bam_files: str, peak_file: str, output_file: str, bed_colum
         BED3 format.
           Default expects three-column BED peak files. If the peak file contains additional columns, set `bed_columns` accordingly.
 
+    .. todo::
+        Parallelize wrt `bam_files` to speed up the counting process.
+
     """
     bam_files = check_type_bam_files(bam_files)
     samples = []
-    
+
     for bam in bam_files:
         name = os.path.basename(bam)
         if name.endswith(".bam"):
@@ -88,15 +94,9 @@ def raw_count_matrix(bam_files: str, peak_file: str, output_file: str, bed_colum
     linecount_tenpct = int(linecount * 0.10) - 1
     logger.info(f"Running `bedtools multicov` on {len(bam_files)} alignments and {linecount} peak regions.")
     if output_file is not None and os.path.exists(output_file):
-        if overwrite:
-            logger.warning(f"{output_file} already exists...overwriting.")
-            os.remove(output_file)
-        else:
-            logger.warning(f"{output_file} already exists...returning None.")
-            return None
-    elif output_file is None:
-        output_file = peak_file + ".raw_counts.tsv"
-        logger.info(f"Output file not specified...writing to {output_file}.")
+        logger.warning(f"{output_file} already exists...overwriting.")
+        os.remove(output_file)
+
     with open(output_file, 'a', encoding='utf-8') as f:
         f.write(header + "\n")
         with subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', bufsize=1) as proc:
@@ -116,8 +116,8 @@ def raw_count_matrix(bam_files: str, peak_file: str, output_file: str, bed_colum
 
 def get_read_length(bam_file: str, num_reads: int = 1000, min_mapping_quality: int = 10):
     r"""Get the *mapped* read length from a BAM file's first `num_reads`.
-    
-    :param bam_file: Path to the BAM file. 
+
+    :param bam_file: Path to the BAM file.
     :type bam_file: str
     :param num_reads: Number of reads to sample for the approximation.
     :type num_reads: int
@@ -130,7 +130,7 @@ def get_read_length(bam_file: str, num_reads: int = 1000, min_mapping_quality: i
         for read in bam.fetch():
             if read.is_unmapped or read.is_secondary or read.is_supplementary:
                 continue
-            # check mapping quality 
+            # check mapping quality
             if read.mapping_quality < min_mapping_quality:
                 continue
             read_lengths.append(read.infer_query_length())
@@ -146,14 +146,15 @@ def score_peaks(bam_files, chrom_sizes_file: str=None,
                 skip_for_norm: list = ['chrX', 'chrY', 'chrM'],
                 row_scale=1000, ucsc_base=250,
                 threads: int=None, pc=1, ecdf_nsamples=500,
-                output_file = 'scored_peaks.bed', seed: int=None, proc: int=None):
-    r"""Compute peak scores based on geometric mean of 1x-normalized, length-scaled counts. p-values based on ECDFs of read counts in each peak length.
-    
+                output_file = 'scored_peaks.bed', seed: int=None, proc: int=None,
+                null_stat: Callable[[np.ndarray], float] = _null_stat):
+    r"""Compute peak scores based on arcsinh-transformed, 1x-normalized counts, scaled by length. p-values based on ECDFs of read counts in each peak length.
+
     :param bam_files: List of paths to the BAM files OR a single filepath to a text file containing a list of BAM files (one filepath per line).
     :type bam_files: list or str
     :param chrom_sizes_file: Path to the chromosome sizes file.
     :type chrom_sizes_file: str
-    :param peak_file: Path to (BED) file containing peak regions. 
+    :param peak_file: Path to (BED) file containing peak regions.
     :type peak_file: str
     :param uscc_base: Base value for UCSC score column. Default is 250 such that no peaks are indiscernible.
     :type uscc_base: int
@@ -243,23 +244,23 @@ def score_peaks(bam_files, chrom_sizes_file: str=None,
         logger.info(f"Using random seed: {seed} to sample length-matched regions for ECDFs.")
     ecdf_dict = multi_ecdf(bam_files, lengths, chrom_sizes_file, nsamples_per_length=ecdf_nsamples, sample_scaling_constants=sample_scaling_constants, seed=seed, proc=proc_)
 
-    # (i) Signal value for a peak is the geometric mean of the 1x-normalized, length-scaled counts
+    # (i) Signal value for a peak is the ~75th percentile~ of 1x-normalized, arcsinh'd, length-scaled counts
     # ...observed in each sample over the peak
     sig_vals = np.zeros(matrix_.shape[0])
 
     # p-value for a peak is the proportion of randomly selected, length-matched regions
-    # ...with greater enrichment than the mean of counts observed in the peak over samples.
+    # ...with greater values than the null statistic from random regions
     pvals = np.zeros(matrix_.shape[0])
 
     for feature_idx in range(len(lengths)):
         if feature_idx % 1000 == 0:
             logger.info(f"Processing peak {feature_idx} of {len(lengths)}")
         # (i)
-        sig_vals[feature_idx] = _gmean((matrix_[feature_idx, :]*(row_scale/lengths[feature_idx])) + pc)
+        sig_vals[feature_idx] = np.percentile(np.arcsinh(matrix_[feature_idx, :]*(row_scale/lengths[feature_idx])), 75)
         # (ii)
-        pvals[feature_idx] = 1 - ecdf_dict[lengths[feature_idx]].evaluate(np.mean(matrix_[feature_idx,:]))
+        pvals[feature_idx] = 1 - ecdf_dict[lengths[feature_idx]].evaluate(null_stat(np.array(matrix_[feature_idx, :])))
     scores = sig_vals
-    
+
     # We will use BH FDR correction to compute q-values
     # ...may later consider an alternative that does not
     # ...assume independence or at least gives users options
@@ -267,28 +268,28 @@ def score_peaks(bam_files, chrom_sizes_file: str=None,
     qvals = stats.false_discovery_control(pvals, method='bh')
 
     # Scale signal values, p-values, q-values according to narrowPeak convention
-    bed6_scores = np.minimum(np.array(ucsc_base + sig_vals/np.quantile(sig_vals,q=0.975)*(1000 - ucsc_base), dtype=int),1000)
+    bed6_scores = np.minimum(np.array(ucsc_base + sig_vals/np.quantile(sig_vals,q=0.99)*(1000 - ucsc_base), dtype=int),1000)
     pvals_out = np.round(-np.log10(pvals + 1e-10),4)
     qvals_out = np.round(-np.log10(qvals + 1e-10),4)
     sig_vals = np.round(sig_vals,4)
 
-
     with open(output_file, 'w') as f:
         for i, peak in enumerate(bed_strings):
-            # for now, call summit as midpoint of peak
-            mp_ = int((int(peak.split('\t')[1]) + int(peak.split('\t')[2]))/2)
-            f.write(f"{peak}\t{names[i]}\t{bed6_scores[i]}\t.\t{sig_vals[i]}\t{pvals_out[i]}\t{qvals_out[i]}\t{mp_}\n")
+            f.write(f"{peak}\t{names[i]}\t{bed6_scores[i]}\t.\t{sig_vals[i]}\t{pvals_out[i]}\t{qvals_out[i]}\t-1\n")
         logger.info(f"Scored output: {output_file}")
     return scores, bed6_scores, pvals
 
 
 def get_ecdf(bam_files, length: int, chrom_sizes_file: str,
-             nsamples=500, sample_scaling_constants: list = None, seed: int=None):
-    r"""Compute an empirical cdf of counts from randomly selected genomic regions of `length` bases
-    
-    In the current implementation, this function is called for each unique peak length by `score_peaks()`
-    so that the empirical cdf used to approximate p-values is based on regions of the same length as the peaks.
-    
+             nsamples=500, sample_scaling_constants: list = None, seed: int=None,
+             null_stat: Callable[[np.ndarray], np.float64] = _null_stat,
+             trim_proportion: float = 0.005):
+    r"""Approximate null distribution of `null_stat` for a specific peak length
+    by sampling genomic regions matched in length.
+
+    This function uses `bedtools random` to sample regions of a given length. Future implementations
+    should account for GC content, mappability, distance to peak, etc.
+
     :param bam_files: List of paths to the BAM files OR a single filepath to a text file containing a list of BAM files (one filepath per line).
     :type bam_files: list or str
     :param length: Defines length of regions that will be randomly sampled to estimate the background distribution
@@ -325,8 +326,10 @@ def get_ecdf(bam_files, length: int, chrom_sizes_file: str,
             for j,bam_file in enumerate(bam_files_):
                 with pysam.AlignmentFile(bam_file, "rb") as aln_sample:
                     cperlen[j] = aln_sample.count(chrom, start, end, read_callback=_check_read)*sample_scaling_constants[bam_files_.index(bam_file)]
-            sample_vals.extend(cperlen)
-    len_avgs = np.array(sample_vals)
+            len_avgs.append(null_stat(np.array(cperlen)))
+    len_avgs = np.array(len_avgs)
+    # trim `len_avgs` right tail by `trim_proportion` (default is half a percent)
+    len_avgs = stats.trim1(len_avgs, proportiontocut=trim_proportion, tail='right')
     return stats.ecdf(len_avgs).cdf
 
 
@@ -337,11 +340,12 @@ def wrap_run_ecdf(*args):
 
 def multi_ecdf(bam_files, lengths, chrom_sizes_file: str,
                 nsamples_per_length, sample_scaling_constants=None, seed=None,
-                proc: int=None):
-    r"""Compute ECDFs in parallel for each unique peak length and a correspondding dictionary of `scipy` ECDF objects.
-    
+                proc: int=None, null_stat: Callable[[np.ndarray], float] = _null_stat):
+    r"""Compute ECDFs in parallel for each unique peak length
+
     See `get_ecdf()` for details.
     """
+
     bam_files_ = check_type_bam_files(bam_files)
     if proc is None:
         proc = min(max(multiprocessing.cpu_count()//2 - 1,1), 8)
@@ -350,9 +354,9 @@ def multi_ecdf(bam_files, lengths, chrom_sizes_file: str,
     ecdf_len_dict = OrderedDict.fromkeys(uniq_lengths, None)
     ctx = multiprocessing.get_context('fork')
     with ctx.Pool(processes=proc) as pool:
-        args = [(bam_files_, len_, chrom_sizes_file, nsamples_per_length, sample_scaling_constants, seed) for len_ in ecdf_len_dict.keys()]
+        args = [(bam_files_, len_, chrom_sizes_file, nsamples_per_length, sample_scaling_constants, seed, null_stat) for len_ in ecdf_len_dict.keys()]
         results = pool.starmap(wrap_run_ecdf, args)
-    
+
     for idx, result in enumerate(results):
         ecdf_len_dict[uniq_lengths[idx]] = result
     return ecdf_len_dict

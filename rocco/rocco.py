@@ -19,7 +19,7 @@ Input/Output
 ------------
 
 - *Input*: Samples' BAM alignments or BigWig tracks
-- *Output*: BED file of consensus peak regions
+- *Output*: BED (or narrowPeak) file of consensus peak regions
 
 *Note, if BigWig input is used, no preprocessing options can be applied at the alignment level.*
 
@@ -248,7 +248,7 @@ def minmax_scale_scores(vector:np.ndarray, min_val:float, max_val:float) -> np.n
 
 def score_central_tendency_chrom(chrom_matrix, method='quantile', quantile=0.50, tprop=0.05, power=1.0) -> np.ndarray:
     r"""Calculate the central tendency of read measures across samples (rows) at each genomic position (column) in a given chrom.
-    
+
     :param chrom_matrix: Matrix of values for a given chromosome
     :type chrom_matrix: np.ndarray
     :param method: Method to calculate central tendency. Options are 'quantile', 'tmean' (trimmed-mean), and 'mean'. Default is quantile, q=.50 (median)
@@ -261,7 +261,7 @@ def score_central_tendency_chrom(chrom_matrix, method='quantile', quantile=0.50,
     :type power: float
     :return: Central tendency score
     :rtype: np.ndarray
-    
+
     """
     if get_shape(chrom_matrix)[0] == 1:
         return chrom_matrix[0,:]**power
@@ -282,7 +282,7 @@ def score_central_tendency_chrom(chrom_matrix, method='quantile', quantile=0.50,
         # Calculate lower and upper limits for trimming
         llim = np.quantile(chrom_matrix, tprop, axis=0, method='nearest')
         ulim = np.quantile(chrom_matrix, 1-tprop, axis=0, method='nearest')
-        
+
         # Apply trimmed mean column-wise
         central_tendency_stats = np.array([
             stats.tmean(chrom_matrix[:, i], limits=(llim[i], ulim[i]), inclusive=(True, True))
@@ -300,7 +300,7 @@ def score_central_tendency_chrom(chrom_matrix, method='quantile', quantile=0.50,
 
 def score_dispersion_chrom(chrom_matrix:np.ndarray, method:str='mad', rng=(25,75), tprop=.05, power:float=1.0) -> np.ndarray:
     r"""Calculate the dispersion of read measures across samples (rows) at each genomic position (column) in a given chrom.
-    
+
     :param chrom_matrix: Matrix of values for a given chromosome
     :type chrom_matrix: np.ndarray
     :param method: Method to calculate dispersion. Options are 'mad', 'iqr', 'tstd' (trimmed std.), and 'std'. Default is 'mad'
@@ -313,12 +313,12 @@ def score_dispersion_chrom(chrom_matrix:np.ndarray, method:str='mad', rng=(25,75
     :type power: float
     :return: Dispersion scores
     :rtype: np.ndarray
-    
+
     """
 
     if get_shape(chrom_matrix)[0] == 1:
         return np.zeros_like(chrom_matrix)[0,:]**power
-    
+
     method_ = clean_string(method)
     dispersion_stats = None
 
@@ -350,7 +350,7 @@ def score_boundary_chrom(signal_vector: np.ndarray, denom:float=1.0, power:float
     :type power: float
     :return: Boundary scores
     :rtype: np.ndarray
-    
+
     """
     boundary_stats = np.zeros_like(signal_vector, dtype=float)
     for i in range(len(signal_vector)):
@@ -366,7 +366,7 @@ def score_boundary_chrom(signal_vector: np.ndarray, denom:float=1.0, power:float
 
 def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarray, boundary_vec:np.ndarray, gamma=None, c_1=1.0, c_2=-1.0, c_3=1.0, eps_neg=-1.0e-3, transform_parsig=False, parsig_B=None, parsig_M=None, parsig_R=None) -> np.ndarray:
     r"""Compute array of default scores :math:`(\mathbf{G}\boldsymbol{\alpha})^{\top}` where :math:`\mathbf{G}` is the :math:`n \times 3` matrix of central tendency scores, dispersion scores, and boundary scores for a given chromosome and :math:`\boldsymbol{\alpha}` is the 3D vector of coefficients for each.
-        
+
     :param central_tendency_vec: Central tendency scores for a given chromosome
     :type central_tendency_vec: np.ndarray
     :param dispersion_vec: Dispersion scores for a given chromosome
@@ -399,7 +399,7 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
         logger.warning('Central tendency score coefficient is negative. In the default implementation, this may reward weak signals.')
     if c_2 > 0:
         logger.warning('Dispersion score coefficient is positive. In the default implementation, this may reward regions with inconsistent signals among samples.')
-        
+
     chrom_scores = (c_1*central_tendency_vec
                     + c_2*dispersion_vec
                     + c_3*boundary_vec)
@@ -415,71 +415,23 @@ def score_chrom_linear(central_tendency_vec:np.ndarray, dispersion_vec:np.ndarra
 
 def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scale_quantile:float=0.50, remove_min=True) -> np.ndarray:
     r"""Applies a smooth step function mapping input `scores` to `[0,parsig_M)`
-    
-    This transformation of scores can be used to promote integral solutions for the relaxed optimization: The relative gradients for roughly the top `(100)*(1-parsig_B)` percent of scores are amplified, which pushes these decision variables closer to their integral bounds in the optimal LP solution. The remaining scores below this inflection point are pushed towards zero such that their respective decision variables' gradients are relatively small. Ideally, this yields a more efficient optimization procedure that is also less likely to yield an excess of fractional decision variables.
-
-    For each value :math:`x` in the input array `scores`, the transformation is given by:
 
     .. math::
-        \mathsf{Parsig}(x) = \frac{M}{1 + \exp(-R(x - B_q))}
+        \mathsf{Parsig}(x) = \frac{M}{1 + \exp(-R(x - B))}
 
-    where
-    
-    .. math::
-        B_q = \mathsf{Quantile}(scores, q = parsig\_B)/2
+    where :math:`B` is the quantile of the input scores at `parsig_B`, :math:`M` is the upper bound (sup.) of scores under the transformation, and :math:`R` is a scaling factor that controls the rate of change around the inflection point.
+    May be replaced in the default implementation for future versions in favor of a more general, easily-tuned transformation.
 
-    Such that the inflection point occurs at `quantile(scores, parsig_B)/2`.
-
-    **Implementation Notes**:
-
-      * If `parsig_B` is None, it defaults to 0.95. 
-      * `parsig_R` determines the 'steepness' of the function, approaching a discontinuous step function in the limit (only two distinct values). If `parsig_R` is None, it defaults to 2.0. Setting very large `parsig_R` and `parsig_M` may result in trivial solutions.
-      * `parsig_M` determines the upper bound of the transformed scores. If `parsig_M` is None, it is determined using the observed distribution of scores and :math:`\gamma`.
-
-    **Example**:
-
-    .. code-block:: python
-    
-        >>> import rocco
-        >>> import numpy as np
-        >>> np.set_printoptions(formatter={'float_kind': lambda x: '{0:.3f}'.format(x)})
-        >>> a = np.zeros(50)
-        >>> # First 25 elements ~ Poisson(λ=1)
-        >>> a[:25] = sorted(np.random.poisson(1,size=25))
-        >>> # Second 25 elements ~ Poisson(λ=10)
-        >>> a[25:] = sorted(np.random.poisson(10,size=25))
-        >>> a # before parsig rescaling
-        array([0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000,
-            0.000, 0.000, 0.000, 1.000, 1.000, 1.000, 1.000, 1.000, 1.000,
-            1.000, 2.000, 2.000, 2.000, 3.000, 4.000, 4.000, 5.000, 6.000,
-            6.000, 7.000, 7.000, 8.000, 8.000, 9.000, 9.000, 10.000, 10.000,
-            10.000, 11.000, 12.000, 12.000, 12.000, 12.000, 13.000, 13.000,
-            14.000, 14.000, 15.000, 15.000, 16.000, 16.000])
-        >>> rocco.parsig(a) # after parsig rescaling
-        rocco.parsig -  INFO - Parsig transformation applied with M=11.0, B=15.0, R=2.0
-        array([0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000,
-            0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000,
-            0.000, 0.000, 0.000, 0.000, 0.001, 0.010, 0.010, 0.074, 0.522,
-            0.522, 2.958, 2.958, 8.042, 8.042, 10.478, 10.478, 10.926, 10.926,
-            10.926, 10.990, 10.999, 10.999, 10.999, 10.999, 11.000, 11.000,
-            11.000, 11.000, 11.000, 11.000, 11.000, 11.000])
-        >>> exit()
-
-
-    :param scores: Scores for each genomic position within a given chromosome. Assumed to be scores generated with :func:`score_chrom_linear`, but can work for others as well.
+    :param scores: Scores for each genomic position within a given chromosome.
     :type scores: np.ndarray
-    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty (See :func:`solve_relaxation_chrom_pdlp` or :func:`solve_relaxation_chrom_glop`)
+    :param gamma: :math:`\gamma` is the coefficient for the fragmentation (TV-like) penalty (See :func:`solve_relaxation_chrom_pdlp` or :func:`solve_relaxation_chrom_glop`)
     :type gamma: float
     :param parsig_M: Upper bound (sup.) of scores under the transformation. Determined with `scale_quantile` and `gamma` if `parsig_M` is None.
     :type parsig_M: float
     :param parsig_B: Defined such that an inflection occurs at `quantile(scores, parsig_B)/2`. For a given `parsig_R`, larger `parsig_B` value will result in more scores being pushed toward the minimum value of the transformed scores. Defaults to 0.95 if None.
     :type parsig_B: float
-    :param parsig_R: Scales the rate of change around the inflection point at `quantile(scores, parsig_B)/2`. Higher values of `parsig_R` will result in a steeper sigmoid curve, approaching a step function in the limit with two distinct values. Defaults to 2.0 if None.
+    :param parsig_R: Scales the rate of change around the inflection point at `quantile(scores, parsig_B)/2`.
     :type parsig_R: float
-    :param scale_quantile: Not used in this version.
-    :type scale_quantile: float
-    :param remove_min: If True, subtract the minimum value of the transformed scores to ensure values are non-negative
-    :return: transformed scores
     :rtype: np.ndarray
 
     """
@@ -491,63 +443,25 @@ def parsig(scores, gamma=None, parsig_B=None, parsig_M=None, parsig_R=None, scal
         parsig_B = 0.95
     elif parsig_B < 0 or parsig_B > 1:
         raise ValueError('`parsig_B` must be in the range (0,1)')
-    
+
     if parsig_R is None:
         parsig_R= 2.0
     elif parsig_R < 0:
         raise ValueError('`parsig_R` must be greater than zero')
 
     scores_ = np.array(scores)
-
     scale_ = max(0,np.quantile(scores, q=0.99, method='nearest')/2)
     M_ = (2*gamma +1) + scale_ if parsig_M is None else parsig_M
-
     if M_ < 0:
         raise ValueError('`parsig_M` must be greater than zero')
-
     # The point at which the smooth step begins depends on parsig_B via B_, defined below
     B_ = np.quantile(scores_, parsig_B, method='nearest')
     parsig_values = M_ / (1 + np.exp(-(parsig_R * ((scores - (B_/2))))))
-
     if remove_min:
-        parsig_values = parsig_values - np.min(parsig_values) # in case first inflection occurs below zero
+        parsig_values = parsig_values - np.min(parsig_values)
 
     logger.info(f'Parsig transformation applied with M={M_}, B={B_}, R={parsig_R}')
     return parsig_values
-
-
-def get_warm_idx(scores, budget, gamma, warm_thresh=None) -> Tuple[np.ndarray, np.ndarray, float]:
-    r"""Prior to solving, identify 'warm' indices--those with scores greater than the worst-case fragmentation penalty that could be incurred by their selection assuming integrality (`2*gamma`). Note that this loses meaning if gamma is scaled. 
-
-    :param scores: Scores for each genomic position within a given chromosome
-    :type scores: np.ndarray
-    :param budget: :math:`b` upper bounds the proportion of the chromosome that can be selected as open/accessible
-    :type budget: float
-    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere. The ideal value of `gamma` is for a given dataset is dependent on the user's preference. Increase to encourage solutions that are 'block-like'.
-    :type gamma: float
-    :param warm_thresh: Threshold for warm indices. If None, the threshold is set to 2*gamma
-    :type warm_thresh: float
-
-    :return: Warm indices, warm scores, and the proportion of warm indices to the maximum number of selections
-    :rtype: Tuple[np.ndarray, np.ndarray, float]
-    
-    """
-    n = len(scores)
-    max_selections = np.floor(n*budget)
-    warm_idx = []
-    warm_scores = []
-    if warm_thresh is None:
-        warm_thresh = 2*gamma + 1
-    for i in range(n):
-        if scores[i] > warm_thresh:
-            warm_idx.append(i)
-            warm_scores.append(scores[i])
-    warm_idx = np.array([int(x) for _, x in sorted(zip(warm_scores, warm_idx), reverse=True, key=lambda pair: pair[0])], dtype=int)
-    
-    if len(warm_idx) == 0:
-        return np.array([]), np.array([]), 0.0
-
-    return warm_idx, scores[warm_idx], len(warm_idx)/max_selections
 
 
 def solve_relaxation_chrom_pdlp(scores,
@@ -565,13 +479,13 @@ def solve_relaxation_chrom_pdlp(scores,
                     threads:int=0,
                     verbose:bool=False,
                     save_model:str=None) -> Tuple[np.ndarray, float]:
-    r"""Solve the relaxation for a specific chromosome using the *first-order* method, pdlp
-    
-    See the `full paper for PDLP <https://arxiv.org/abs/2106.04756>`_ (Applegate et al., 2021) 
-    
-    :param scores: Scores for each genomic pisition within a given chromosome
+    r"""Solve the relaxation for a specific chromosome using the *first-order* PDHG method, PDLP
+
+    See the `full paper for PDLP <https://arxiv.org/abs/2106.04756>`_ (Applegate et al., 2021)
+
+    :param scores: Scores for each genomic position within a given chromosome
     :type scores: np.ndarray
-    :param budget: :math:`b` upper bounds the proportion of the chromosome that can be selected as open/accessible
+    :param budget: :math:`b` upper bounds the proportion of the chromosome that can be selected as open/accessible.
     :type budget: float
     :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere. The ideal value of `gamma` is for a given dataset is dependent on the user's preference. Increase to encourage solutions that are 'block-like'.
     :type  gamma: float
@@ -599,7 +513,6 @@ def solve_relaxation_chrom_pdlp(scores,
     :type save_model: str
     :return: Solution vector and optimal value
     :rtype: Tuple[np.ndarray, float]
-    
     """
 
     solver = pywraplp.Solver.CreateSolver('PDLP')
@@ -653,7 +566,7 @@ def solve_relaxation_chrom_pdlp(scores,
             beta = 1.0/2.0
         logger.info(f'Scaling γ positionally: `γ/(|Score_i - Score_i+1| + ε)^β`, with β={beta} and ε={denom_const}')
         denom = (np.abs(np.diff(scores,1)) + denom_const)**beta
-    
+
     for j in range(n-1):
         # log every 10% of the way
         if j % (n//10) == 0:
@@ -663,7 +576,7 @@ def solve_relaxation_chrom_pdlp(scores,
         elif denom is None:
             objective.SetCoefficient(ell_aux[j], (1.0*gamma))
     objective.SetMinimization()
-    
+
     if hint is not None:
         try:
             solver.SetHint(ell, hint)
@@ -708,7 +621,7 @@ def solve_relaxation_chrom_pdlp(scores,
 
 def solve_relaxation_chrom_glop(scores,
                      budget:float=0.035,
-                     gamma:float=1.0, 
+                     gamma:float=1.0,
                      beta:float=None,
                      denom_const:float=None,
                      glop_parameters=None,
@@ -727,10 +640,10 @@ def solve_relaxation_chrom_glop(scores,
     r"""Solve the relaxation for a specific chromosome using the *simplex-based* method, glop
 
     `OR-tools linear programming resources and documentation <https://developers.google.com/optimization/lp>`_
-    
-    A simplex-based method that yields *corner-point feasible* (CPF, vertex) solutions.
-    
-    :param scores: Scores for each genomic pisition within a given chromosome
+
+    A simplex-based method that yields *corner-point feasible* (CPF, vertex) solutions. May become deprecated in future releases of ROCCO in favor of the pdlp solver.
+
+    :param scores: Scores for each genomic position within a given chromosome
     :type scores: np.ndarray
     :param budget: :math:`b` upper bounds the proportion of the chromosome that can be selected as open/accessible
     :type budget: float
@@ -760,7 +673,7 @@ def solve_relaxation_chrom_glop(scores,
     :type save_model: str
     :return: Solution vector and optimal value
     :rtype: Tuple[np.ndarray, float]
-    
+
     """
     solver = pywraplp.Solver.CreateSolver('GLOP')
     if glop_parameters is None:
@@ -776,7 +689,7 @@ def solve_relaxation_chrom_glop(scores,
             elif glop_initial_basis.upper() == 'MAROS':
                 glop_parameters.initial_basis = parameters_pb2.GlopParameters.MAROS
         glop_parameters.use_scaling = glop_use_scaling
-        
+
         if glop_use_scaling:
             glop_parameters.scaling_method = parameters_pb2.GlopParameters.EQUILIBRATION
             glop_parameters.cost_scaling = parameters_pb2.GlopParameters.CONTAIN_ONE_COST_SCALING
@@ -875,12 +788,12 @@ def solve_relaxation_chrom_glop(scores,
 def get_floor_eps_sol(chrom_lp_sol:np.ndarray, budget:float,
                       int_tol:float=1e-6,
                       eps_mult:float=1.01) -> np.ndarray:
-    r"""Compute the `floor_eps` heuristic from the relaxation
-    
+    r"""Compute the integral `floor_eps` solution from the relaxation
+
     Adds a small :math:`\epsilon` to each decision variable before applying the floor function. Addresses solutions in the interior of the feasible region near integer corner point solutions.  The `floor_eps` approach is a crude heuristic to obtain an initial integer-feasible solution from the LP relaxation, but is
-    well-suited as an initial reference point for the ROCCO-RR heuristic. In many cases, the relaxed LP solution is
+    well-suited as an initial reference point for randomization (`ROCCO-RR`). In many cases, the relaxed LP solution is
     nearly integral and the `floor_eps` heuristic and randomized `ROCCO-RR` procedure has little effect.
-    
+
     :param chrom_lp_sol: Solution vector from the LP relaxation
     :type chrom_lp_sol: np.ndarray
     :param budget: :math:`b` upper bounds the proportion of the chromosome that can be selected as open/accessible
@@ -891,9 +804,9 @@ def get_floor_eps_sol(chrom_lp_sol:np.ndarray, budget:float,
     :type eps_mult: float
     :return: Initial integer-feasible solution
     :rtype: np.ndarray
-    
+
     """
-    
+
     # check if LP solution is already integral
     if _check_integrality(chrom_lp_sol, int_tol):
         return np.round(chrom_lp_sol)
@@ -928,7 +841,7 @@ def get_rround_sol(chrom_lp_sol, scores, budget, gamma,
                    rand_iter=1000, int_tol=1.0e-6,
                    eps_mult:float=1.01) -> Tuple[np.ndarray, float]:
     r"""Get the ROCCO-RR solution from the solution to the relaxation
-    
+
     :param chrom_lp_sol: Solution vector from the LP relaxation
     :type chrom_lp_sol: np.ndarray
     :param scores: Scores for each genomic position within a given chromosome
@@ -943,13 +856,13 @@ def get_rround_sol(chrom_lp_sol, scores, budget, gamma,
     :type int_tol: float
     :param eps_mult: Value by which to divide the initial :func:`get_floor_eps_sol` epsilon value
     :type eps_mult: float
-    :return: ROCCO-RR solution and optimal value    
+    :return: ROCCO-RR solution and optimal value
 
     """
     n = len(scores)
     floor_sol = np.floor(chrom_lp_sol)
     floor_score = _objective_function(sol=floor_sol, scores=scores, gamma=gamma)
-    
+
     floor_eps_sol = get_floor_eps_sol(chrom_lp_sol, budget, int_tol=int_tol, eps_mult=eps_mult)
     floor_eps_score = _objective_function(sol=floor_eps_sol, scores=scores, gamma=gamma)
     init_sol = None
@@ -972,7 +885,7 @@ def get_rround_sol(chrom_lp_sol, scores, budget, gamma,
     if len(nonint_loci) == 0:
         logger.info('LP solution is integral. Returning.\n')
         return init_sol, init_score
- 
+
     rround_sol = copy.copy(init_sol)
     rround_sum = np.sum(init_sol)
     best_score = init_score
@@ -1000,7 +913,7 @@ def get_rround_sol(chrom_lp_sol, scores, budget, gamma,
 def chrom_solution_to_bed(chromosome, intervals, solution, ID=None,
                           check_gaps_intervals=True, min_length_bp=None)-> str:
     r"""Convert the ROCCO-generated vector of decision variables for a given chromosome to a BED file
-    
+
     :param chromosome: Chromosome name
     :type chromosome: str
     :param intervals: Intervals for the chromosome
@@ -1015,7 +928,7 @@ def chrom_solution_to_bed(chromosome, intervals, solution, ID=None,
     :type min_length_bp: int
     :return: Output BED file
     :rtype: str
-    
+
     """
     if len(intervals) != len(solution):
         raise ValueError(f'Intervals and solution must have the same length at the pre-merge stage: {len(intervals)} != {len(solution)}')
@@ -1048,7 +961,7 @@ def chrom_solution_to_bed(chromosome, intervals, solution, ID=None,
 def combine_chrom_results(chrom_bed_files:list, output_file:str, name_features:bool=False) -> str:
     r"""Combine the results from individual chromosome solutions into a single BED file after running
     ROCCO on each chromosome
-    
+
     :param chrom_bed_files: List of BED files for each chromosome
     :type chrom_bed_files: list
     :param output_file: Output BED file
@@ -1057,10 +970,10 @@ def combine_chrom_results(chrom_bed_files:list, output_file:str, name_features:b
     :type name_features: bool
     :return: Output BED file
     :rtype: str
-    
+
     """
     printed_colct_msg = False
-    
+
     if os.path.exists(output_file):
         logger.info(f'Removing existing output file: {output_file}')
         try:
@@ -1092,7 +1005,7 @@ def combine_chrom_results(chrom_bed_files:list, output_file:str, name_features:b
 
 def resolve_transformations(args: dict):
     """Check if both savgol and medfilt transformations are invoked by CLI, resolve to medfilt if so.
-    
+
     :param args: Command-line arguments
     :type args: dict
     :return: Resolved command-line arguments
@@ -1104,12 +1017,12 @@ def resolve_transformations(args: dict):
         'transform_savgol_window_bp': args['transform_savgol_window_bp'],
         'transform_savgol_order': args['transform_savgol_order'],
     }
-    
+
     medfilt_params = {
         'transform_medfilt': args['transform_medfilt'],
         'transform_medfilt_kernel': args['transform_medfilt_kernel'],
     }
-    
+
     savgol_on = savgol_params['transform_savgol'] or args['transform_savgol_window_bp'] is not None or args['transform_savgol_order'] is not None
     medfilt_on = medfilt_params['transform_medfilt'] or args['transform_medfilt_kernel'] is not None
 
@@ -1136,7 +1049,7 @@ def cscores_quantiles(chrom_scores: np.ndarray, quantiles:np.ndarray=None, add_n
     :seealso: :func:`score_chrom_linear()`
     """
     if quantiles is None:
-        quantiles = np.array([0.0, 0.01, 0.05, 0.25,0.50, 0.75, 0.95, 0.99, 1.0])
+        quantiles = np.array([0.0, 0.01, 0.05, 0.25,0.50, 0.75, 0.95, 0.975, 0.99, 1.0])
     formatted_string = pformat({f'Quantile={q}': round(np.quantile(chrom_scores, q=q, method='higher'), 4) for q in quantiles})
     if add_newlines:
         return f'\n{formatted_string}\n'
@@ -1150,17 +1063,17 @@ def json_config(config_path):
 
 def resolve_config(args):
     """Resolve command-line arguments with a JSON configuration file
-    
+
     :param args: Command-line arguments obtained with `argparse`
     :type args: dict
     :return: Resolved command-line arguments
     :rtype: dict
-    
-    .. note:: 
-    
+
+    .. note::
+
         * Modifies/overrides command-line arguments specified explicitly in the JSON file
         * For boolean arguments, use `true` or `false` in the JSON file rather than `True` or `False`
-    
+
     **Example JSON config file**
 
     .. code-block:: json
@@ -1174,10 +1087,10 @@ def resolve_config(args):
             "verbose": true,
             "solver": "pdlp"
         }
-    
+
     Can then run `rocco --config config.json [...]`.
     """
-    
+
     args_ = copy.deepcopy(args)
     if args_['config'] is None or not os.path.exists(args_['config']):
         return args_
@@ -1216,6 +1129,7 @@ def main():
     parser.add_argument('--eps_mult', type=float, default=1.01, help='Successively divides the floor_eps solution epsilon value until the floor_eps solution, floor(lp_solution + ε) is feasible.')
     parser.add_argument('--rand_iter', type=int, default=1000, help='Number of random iterations for the ROCCO-RR randomization procedure. If less than or equal to zero, ROCCO-RR is not applied and one of the floor-based heuristics is used to obtain an integer feasible solution.')
     parser.add_argument('--budget', type=float, default=None, help='Upper bounds the proportion of the genome that can be selected as open chromatin. NOTE: if invoked, this argument value will override the chromosome-specific budget values in (`--params`), assuming they were provided.')
+    parser.add_argument('--scale_chrom_budgets', type=float, default=1.0, help='This constant will scale each chromosome-specific budget if they are provided via `--params` or `--genome`.')
     parser.add_argument('--gamma', type=float, default=None, help='Gamma penalty in the optimization problem. Controls weight of the "fragmentation penalty" to promote spatial consistency over enriched regions and sparsity elsewhere.  NOTE: if invoked, this value will override the chromosome-specific gamma values (`--params`), assuming they were provided.')
     parser.add_argument('--params', type=str, default=None, help='CSV file containing chromosome-specific optimization parameters. Each supported genome has a custom `--params` file packaged with ROCCO, but a custom file can be easily be created manually and passed to ROCCO with this argument. Consider using this argument to set chromosome-specific budget and gamma values custom to your data and preferences.')
     parser.add_argument('--threads', type=int, default=-1, help='Number of threads to use for optimization. Default is -1 (use all available threads)')
@@ -1310,14 +1224,14 @@ def main():
     parser.add_argument('--ecdf_seed', type=int, default=42, help='Random seed for selecting matched-length "background" regions for CDF estimation. Only relevant if `--narrowPeak` is invoked.')
     parser.add_argument('--bamlist_txt', type=str, default=None, help="File containing list of samples' BAM filepaths (absolute paths,one per line). Use if supplying related BigWig input to ROCCO for peak calling (e.g., Consenrich output) but still desire `--narrowPeak` output based on sequence alignment data. Only relevant if `--narrowPeak` is invoked.")
     parser.add_argument('--ecdf_proc', type=int, default=None, dest='ecdf_proc', help='Number of processors to use for estimating the background CDF for each unique peak length. Only relevant if `--narrowPeak` is invoked. If left None, one-half of the number of available CPUs will be used.')
-    
+
     args = vars(parser.parse_args())
     args = resolve_config(args)
 
     if (len(sys.argv)==1 or args['input_files'] is None or len(args['input_files']) == 0):
         parser.print_help(sys.stdout)
         sys.exit(0)
-    
+
     if any([_get_input_type(args['input_files'][i]) == 'bw' for i in range(len(args['input_files']))]):
         bigwig_notice = (
         """\nNote, some read counting/filtering/etc. options cannot be applied to
@@ -1399,7 +1313,7 @@ def main():
             params_df = pd.read_csv(args['params'], sep=',')
             if chrom_ in params_df['chrom'].values:
                 # assign float values
-                chrom_budget = params_df.loc[params_df['chrom'] == chrom_]['budget'].values[0]
+                chrom_budget = params_df.loc[params_df['chrom'] == chrom_]['budget'].values[0] * args['scale_chrom_budgets']
                 chrom_gamma = params_df.loc[params_df['chrom'] == chrom_]['gamma'].values[0]
 
         if chrom_budget is None or args['budget'] is not None:
@@ -1425,7 +1339,7 @@ def main():
             'local_ratio_window_steps': args['transform_locratio_window_steps'],
             'local_ratio_pc': args['transform_locratio_eps']
         }
-        
+
         if args['transform_savgol']:
             chrom_intervals, chrom_matrix = generate_chrom_matrix(chrom_, bigwig_files, args['chrom_sizes_file'], args['step'], round_digits=args['round_digits'], filter_type='savgol',savgol_window_bp=args['transform_savgol_window_bp'], savgol_order=args['transform_savgol_order'], **logpc_kwargs, **locratio_kwargs)
         elif args['transform_medfilt']:
@@ -1444,7 +1358,7 @@ def main():
         except Exception as e:
             logger.info(f'Could not scale gamma based on step size: {e}')
 
-        
+
         # Scoring phase
         logger.info(f'Scoring regions: {chrom_}')
 
@@ -1493,24 +1407,27 @@ def main():
     logger.info('Combining chromosome solutions')
     final_output = combine_chrom_results(tmp_chrom_bed_files, args['output'], name_features=False) # --name_features is deprecated
     if os.path.exists(final_output):
-        logger.info(f'Final output: {final_output}')
+        logger.info(f'Final BED output: {final_output}')
 
     logger.info('Cleaning up temporary files')
     for tmp_file in tmp_chrom_bed_files:
         try:
             os.remove(tmp_file)
         except Exception as e:
-            logger.info(f'Could not remove chromosome-specific temp. file: {tmp_file}\n{e}')
-
-    if args['narrowPeak']:
-        narrowPeak_filepath = final_output.replace('.bed', '.narrowPeak')
-        logger.info(f'Generating narrowPeak file: {narrowPeak_filepath}')
-        if all([file_.endswith('.bam') for file_ in args['input_files']]) and args['bamlist_txt'] is None:
-            posthoc_scores.score_peaks(args['input_files'], args['chrom_sizes_file'], final_output, count_matrix_file=final_output.replace('.bed','.counts.tsv'), output_file=narrowPeak_filepath, ecdf_nsamples=args['ecdf_samples'], seed=args['ecdf_seed'], proc=args['ecdf_proc'])
-        elif args['bamlist_txt'] is not None and os.path.exists(args['bamlist_txt']):
-            posthoc_scores.score_peaks(args['bamlist_txt'], args['chrom_sizes_file'], final_output, count_matrix_file=final_output.replace('.bed','.counts.tsv'), output_file=narrowPeak_filepath, ecdf_nsamples=args['ecdf_samples'], seed=args['ecdf_seed'], proc=args['ecdf_proc'])
-        else:
-            logger.warning("Ignoring `--narrowPeak`: requires BAM inputs or `--bamlist_txt`")
-    
+            logger.info(f'\nCould not remove chromosome-specific temp. file: {tmp_file}\n{e}')
+    try:
+        if args['narrowPeak']:
+            narrowPeak_filepath = final_output.replace('.bed', '.narrowPeak')
+            logger.info(f'Generating narrowPeak file: {narrowPeak_filepath}')
+            if all([file_.endswith('.bam') for file_ in args['input_files']]) and args['bamlist_txt'] is None:
+                posthoc_scores.score_peaks(args['input_files'], args['chrom_sizes_file'], final_output, count_matrix_file=final_output.replace('.bed','.counts.tsv'), output_file=narrowPeak_filepath, ecdf_nsamples=args['ecdf_samples'], seed=args['ecdf_seed'], proc=args['ecdf_proc'])
+                logger.info(f'Final narrowPeak output: {narrowPeak_filepath}')
+            elif args['bamlist_txt'] is not None and os.path.exists(args['bamlist_txt']):
+                posthoc_scores.score_peaks(args['bamlist_txt'], args['chrom_sizes_file'], final_output, count_matrix_file=final_output.replace('.bed','.counts.tsv'), output_file=narrowPeak_filepath, ecdf_nsamples=args['ecdf_samples'], seed=args['ecdf_seed'], proc=args['ecdf_proc'])
+                logger.info(f'Final narrowPeak output: {narrowPeak_filepath}')
+            else:
+                logger.warning("Ignoring `--narrowPeak`: requires BAM inputs or `--bamlist_txt`")
+    except Exception as e:
+        logger.info(f'\nCould not generate narrowPeak-formatted output\n{e}')
 if __name__ == '__main__':
     main()
