@@ -61,8 +61,7 @@ Comparing each output file:
 <img width="800" height="400" alt="example" src="docs/example_behavior.png">
 </p>
 
-Additional examples are available [here](docs/downstream.md). For multi-assay, multi-sample consensus peak calling,
-users may wish to integrate ROCCO with [Consenrich](https://github.com/nolan-h-hamilton/Consenrich/blob/main/Examples.md).
+See also: [Running Consenrich+ROCCO](https://nolan-h-hamilton.github.io/Consenrich/examples.html).
 
 ## Paper/Citation
 
