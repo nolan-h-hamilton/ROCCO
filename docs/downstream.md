@@ -1,7 +1,7 @@
 # Example Use
 
 * For the sake of brevity and to accommodate personal computing environments, we restrict this lightweight demo to $N=3$ alignments over chr16 and chr21.
-  * N.B. ROCCO generally offers its greatest performance relative to benchmarks for larger sample sizes, e.g., $N \geq 10$.
+  * N.B. ROCCO generally offers its greatest performance relative to benchmarks for larger sample sizes, e.g., $N \geq 5$.
 
 ## Metadata
 
@@ -18,8 +18,8 @@ rocco -i als_bamfiles/*.bam -g hg38 -o rocco_peaks_als_n3.bed  --narrowPeak \
 --chroms chr16 chr21 --threads 4
 ```
 
-* Note, the number of threads will affect memory usage during the optimization step, and we have observed diminishing returns with respect to runtime for $\textsf{--threads} > 8$.
-* $\textsf{--narrowPeak}$ invokes generation of narrowPeak output, with bootstrapped $p$-values and BH-corrected $q$-values in $-\log_{10}(\cdot)$ scale.
+* Note, the number of threads used (`--threads`) can affect memory usage during the optimization step. In our own experiments, we have observed diminishing returns with respect to runtime for $\textsf{--threads} > 8$.
+* $\textsf{--narrowPeak}$ invokes generation of narrowPeak output, with empirical $p$-values and BH-corrected $q$-values in $-\log_{10}(\cdot)$ scale
   * This flag also creates a 'raw' peak-by-count matrix (one row for each peak, one column for each sample) that can be used downstream.
 
 ### Output Snippets
