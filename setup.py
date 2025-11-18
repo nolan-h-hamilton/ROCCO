@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as readme_file:
 
 setup(
     name='rocco',
-    version='1.6.3',
+    version='1.7.0',
     author='Nolan Holt Hamilton',
     author_email='nolan.hamilton@unc.edu',
     description='Multisample Consensus Peak Calling via Convex Optimization',
@@ -35,7 +35,7 @@ setup(
         "ATAC",
         "ChIP-seq",
     ],
-    python_requires='>=3.9, <4',
+    python_requires='>=3.10, <4',
     install_requires=[
         'ortools>=9.10',
         'numpy',

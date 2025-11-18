@@ -10,7 +10,7 @@
 
 ## What
 
-ROCCO is an efficient algorithm for detection of "consensus peaks" in large datasets with multiple HTS data samples (namely, ATAC-seq), where an enrichment in read counts/densities is observed in a nontrivial subset of samples.
+ROCCO is an efficient algorithm for detection of "consensus peaks" in large datasets with multiple HTS samples (e.g., ATAC-seq), where an enrichment in read counts/densities is observed in a nontrivial subset of samples.
 
 ### Input/Output
 
@@ -25,11 +25,9 @@ ROCCO models consensus peak calling as a constrained optimization problem with a
 
 ## Why
 
-ROCCO offers several attractive features:
-
 1. **Consideration of enrichment and spatial characteristics** of open chromatin signals
 2. **Scaling to large sample sizes (100+)** with an asymptotic time complexity independent of sample size
-3. **No required training data** or a heuristically determined set of initial candidate peak regions
+3. **Unsupervised** Does not require training data or a heuristically determined set of initial candidate peak regions
 4. **No rigid thresholds** on the minimum number/width of supporting samples/replicates
 5. **Mathematically tractable model** permitting worst-case analysis of runtime and performance
 
@@ -42,6 +40,8 @@ ROCCO offers several attractive features:
 
 We run twice under two conditions -- *with noisy samples* and *without* for comparison (blue)
 
+Ideally, the resulting consensus peaks should be largely unaffected by the Noisy5 input samples. Likewise, both broad and narrow peaks should be captured.
+
   ```shell
   rocco -i *.BEST5.bam *.WORST5.bam -g hg38 -o rocco_output_without_noise.bed
   rocco -i *.BEST5.bam *.WORST5.bam *.NOISY5.bam -g hg38 -o rocco_output_with_noise.bed
@@ -51,11 +51,6 @@ We run twice under two conditions -- *with noisy samples* and *without* for comp
   * As a byproduct, `--narrowPeak` will likewise produce a 'raw' peak-by-count matrix (one row per peak, one column per sample) that can be used in downstream analyses such as differential accessibility testing.
 
 ### Output
-
-Comparing each output file:
-
-* *ROCCO is unaffected by the Noisy5 samples and effectively identifies true signal across multiple samples*
-* *ROCCO simultaneously detects both wide and narrow consensus peaks*
 
 <p align="center">
 <img width="800" height="400" alt="example" src="docs/example_behavior.png">
