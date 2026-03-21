@@ -8,7 +8,6 @@ ROCCO: Scores
 import logging
 import multiprocessing
 import os
-import subprocess
 from typing import Tuple, Optional
 from collections import OrderedDict
 from collections.abc import Callable
@@ -34,6 +33,48 @@ logging.basicConfig(
     format="%(asctime)s - %(module)s.%(funcName)s -  %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def _random_intervals(
+    chrom_sizes_file: str,
+    length: int,
+    nsamples: int,
+    seed: int | None = None,
+) -> list[tuple[str, int, int]]:
+    chrom_sizes = get_chroms_and_sizes(chrom_sizes_file)
+    length_ = int(max(1, length))
+    chroms = []
+    max_starts = []
+    for chrom, chrom_size in chrom_sizes.items():
+        max_start = int(chrom_size) - length_ + 1
+        if max_start <= 0:
+            continue
+        chroms.append(str(chrom))
+        max_starts.append(int(max_start))
+    if len(chroms) == 0:
+        raise ValueError(
+            f"No chromosome in {chrom_sizes_file} is long enough for intervals of length {length_}."
+        )
+    weights = np.asarray(max_starts, dtype=np.float64)
+    weight_sum = float(np.sum(weights))
+    if not np.isfinite(weight_sum) or weight_sum <= 0.0:
+        raise ValueError("Could not construct a valid random-interval sampler.")
+    weights = weights / weight_sum
+    rng = np.random.default_rng(seed)
+    chrom_indices = rng.choice(
+        len(chroms),
+        size=int(max(1, nsamples)),
+        replace=True,
+        p=weights,
+    )
+    starts = [
+        int(rng.integers(0, max_starts[int(chrom_idx)]))
+        for chrom_idx in chrom_indices
+    ]
+    return [
+        (chroms[int(chrom_idx)], int(start), int(start + length_))
+        for chrom_idx, start in zip(chrom_indices, starts)
+    ]
 
 
 def _require_native_counter():
@@ -585,8 +626,8 @@ def get_ecdf(
 ):
     r"""Approximate a null distribution for one representative length bin.
 
-    This uses `bedtools random` to sample regions of a representative bin
-    length. Future versions could condition on more than just width.
+    This samples random genomic intervals of a representative bin length.
+    Future versions could condition on more than just width.
 
     :param bam_files: List of paths to the BAM files OR a single filepath to a text file containing a list of BAM files (one filepath per line).
     :type bam_files: list or str
@@ -598,7 +639,7 @@ def get_ecdf(
     :type nsamples: int
     :param sample_scaling_constants: List of scaling constants (floats) for each sample, typically provided by `score_peaks()`.
     :type sample_scaling_constants: list
-    :param seed: Random seed supplied to `bedtools random`
+    :param seed: Random seed for interval sampling
     :type seed: int
     :return: Empirical null object with `survival()` and `evaluate()` methods.
     :rtype: EmpiricalNull
@@ -608,46 +649,41 @@ def get_ecdf(
 
     bam_files_ = check_type_bam_files(bam_files)
     len_avgs = []
-    cmd = f"bedtools random  -l {length} -n {nsamples} -g {chrom_sizes_file}"
-    if seed is not None:
-        cmd = cmd + f" -seed {seed}"
+    sample_scaling_constants_ = (
+        np.ones(len(bam_files_), dtype=np.float64)
+        if sample_scaling_constants is None
+        else np.asarray(sample_scaling_constants, dtype=np.float64)
+    )
+    if sample_scaling_constants_.shape[0] != len(bam_files_):
+        raise ValueError(
+            "`sample_scaling_constants` must match the number of BAM files."
+        )
     logger.info(
         f"Computing ECDF for representative length bin: {length} with {nsamples} samples."
     )
-    with subprocess.Popen(
-        cmd,
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        bufsize=1,
-    ) as proc:
-        sample_vals = []
-        for line in proc.stdout:
-            if not line:
-                continue
-            line_ = line.strip()
-            fields = line_.split("\t")
-            chrom = fields[0]
-            start = int(fields[1])
-            end = int(fields[2])
-            cperlen = np.zeros(len(bam_files_))
-            for j, bam_file in enumerate(bam_files_):
-                with pysam.AlignmentFile(
-                    bam_file, "rb"
-                ) as aln_sample:
-                    cperlen[j] = (
-                        aln_sample.count(
-                            chrom,
-                            start,
-                            end,
-                            read_callback=_check_read,
-                        )
-                        * sample_scaling_constants[
-                            bam_files_.index(bam_file)
-                        ]
+    random_intervals = _random_intervals(
+        chrom_sizes_file,
+        length=int(length),
+        nsamples=int(nsamples),
+        seed=seed,
+    )
+    aln_handles = [
+        pysam.AlignmentFile(bam_file, "rb")
+        for bam_file in bam_files_
+    ]
+    try:
+        for chrom, start, end in random_intervals:
+            cperlen = np.zeros(len(bam_files_), dtype=np.float64)
+            for j, aln_sample in enumerate(aln_handles):
+                cperlen[j] = (
+                    aln_sample.count(
+                        chrom,
+                        start,
+                        end,
+                        read_callback=_check_read,
                     )
+                    * sample_scaling_constants_[j]
+                )
             transformed = np.log2(
                 np.maximum(
                     np.asarray(cperlen, dtype=np.float64)
@@ -657,6 +693,9 @@ def get_ecdf(
                 )
             )
             len_avgs.append(null_stat(transformed))
+    finally:
+        for aln_sample in aln_handles:
+            aln_sample.close()
     len_avgs = np.array(len_avgs)
     if trim_proportion > 0:
         len_avgs = stats.trim1(

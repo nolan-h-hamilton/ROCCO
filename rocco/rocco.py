@@ -23,7 +23,6 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
-import pybedtools
 import scipy.stats as stats
 
 from rocco.constants import GENOME_DICT
@@ -53,6 +52,66 @@ logger = logging.getLogger(__name__)
 _CHROM_SOLVE_PROCESS_STATE: dict | None = None
 
 
+def _read_bed_records(
+    bed_file: str,
+) -> tuple[list[tuple[str, int, int]], bool]:
+    records: list[tuple[str, int, int]] = []
+    saw_extra_columns = False
+    with open(bed_file, "r", encoding="utf-8") as handle:
+        for line_num, line in enumerate(handle, start=1):
+            line_ = line.strip()
+            if line_ == "":
+                continue
+            fields = line_.split("\t")
+            if len(fields) < 3:
+                raise ValueError(
+                    f"BED row {line_num} in {bed_file} has fewer than 3 columns."
+                )
+            if len(fields) > 3:
+                saw_extra_columns = True
+            records.append((str(fields[0]), int(fields[1]), int(fields[2])))
+    return records, saw_extra_columns
+
+
+def _merge_bed_records(
+    records: list[tuple[str, int, int]],
+    min_length_bp: int | None = None,
+) -> list[tuple[str, int, int]]:
+    if len(records) == 0:
+        return []
+    merged: list[list[str | int]] = []
+    for chrom, start, end in sorted(records, key=lambda x: (x[0], x[1], x[2])):
+        if len(merged) == 0:
+            merged.append([chrom, int(start), int(end)])
+            continue
+        prev = merged[-1]
+        if chrom == prev[0] and int(start) <= int(prev[2]):
+            prev[2] = max(int(prev[2]), int(end))
+            continue
+        merged.append([chrom, int(start), int(end)])
+    merged_records = [
+        (str(chrom), int(start), int(end))
+        for chrom, start, end in merged
+        if min_length_bp is None or (int(end) - int(start)) >= int(min_length_bp)
+    ]
+    return merged_records
+
+
+def _write_bed_records(
+    records: list[tuple[str, int, int]],
+    output_file: str,
+    name_features: bool = False,
+) -> str:
+    with open(output_file, "w", encoding="utf-8") as handle:
+        for chrom, start, end in records:
+            if name_features:
+                feature_name = f"{chrom}_{start}_{end}"
+                handle.write(f"{chrom}\t{start}\t{end}\t{feature_name}\n")
+            else:
+                handle.write(f"{chrom}\t{start}\t{end}\n")
+    return output_file
+
+
 def _get_input_type(input_file: str) -> str:
     r"""Determine if `input_file` is a BAM file
 
@@ -65,9 +124,7 @@ def _get_input_type(input_file: str) -> str:
 
     """
     file_type = None
-    file_ext = str(
-        os.path.splitext(input_file.lower())[1][1:]
-    ).lower()
+    file_ext = str(os.path.splitext(input_file.lower())[1][1:]).lower()
 
     if file_ext in ["bam"]:
         file_type = "bam"
@@ -112,33 +169,26 @@ def chrom_solution_to_bed(
 
     if check_gaps_intervals:
         if len(set(np.diff(intervals))) > 1:
-            raise ValueError(
-                f"Intervals must be contiguous: {set(np.diff(intervals))}"
-            )
+            raise ValueError(f"Intervals must be contiguous: {set(np.diff(intervals))}")
     step_ = intervals[1] - intervals[0]
     if ID is None:
         output_file = f"rocco_{chromosome}.bed"
     else:
         output_file = f"rocco_{ID}_{chromosome}.bed"
 
-    with open(output_file, "w") as f:
-        for i in range(len(intervals) - 1):
-            # At this point, solutions in the default implementation
-            # should be binary, but for potential future applications
-            # just use a threshold of 0.50
-            if solution[i] > 0.50:
-                f.write(
-                    f"{chromosome}\t{intervals[i]}\t{intervals[i + 1]}\n"
-                )
-    chrom_pbt = pybedtools.BedTool(output_file).sort().merge()
-    # filter out regions less than min_length_bp if specified
-    if min_length_bp is not None:
-        chrom_pbt = chrom_pbt.filter(
-            lambda x: int(x[2]) - int(x[1]) >= min_length_bp
-        )
-    chrom_pbt.saveas(output_file)
-    if os.path.exists(output_file):
-        return output_file
+    selected_records: list[tuple[str, int, int]] = []
+    for i in range(len(intervals) - 1):
+        # At this point, solutions should be binary. Keep a 0.50 cutoff
+        # here so tied or float-valued solutions still behave sensibly.
+        if solution[i] > 0.50:
+            selected_records.append(
+                (str(chromosome), int(intervals[i]), int(intervals[i + 1]))
+            )
+    merged_records = _merge_bed_records(
+        selected_records,
+        min_length_bp=min_length_bp,
+    )
+    return _write_bed_records(merged_records, output_file)
 
 
 def combine_chrom_results(
@@ -166,42 +216,28 @@ def combine_chrom_results(
         try:
             os.remove(output_file)
         except:
+            logger.info(f"Could not remove existing output file: {output_file}.")
+    combined_records: list[tuple[str, int, int]] = []
+    for chrom_bed_file in chrom_bed_files:
+        if not os.path.exists(chrom_bed_file):
+            raise FileNotFoundError(f"File does not exist: {chrom_bed_file}")
+        try:
+            chrom_records, saw_extra_columns = _read_bed_records(chrom_bed_file)
+        except Exception as e:
+            logger.info(f"Could not read BED file: {chrom_bed_file}\n{e}\n")
+            raise
+        if saw_extra_columns and not printed_colct_msg:
             logger.info(
-                f"Could not remove existing output file: {output_file}."
+                "More than 3 columns detected in the input BED files. Extra columns will be ignored."
             )
-    with open(output_file, "w") as f:
-        for chrom_bed_file in chrom_bed_files:
-            if not os.path.exists(chrom_bed_file):
-                raise FileNotFoundError(
-                    f"File does not exist: {chrom_bed_file}"
-                )
-            try:
-                chrom_pbt = (
-                    pybedtools.BedTool(chrom_bed_file).sort().merge()
-                )
-            except Exception as e:
-                logger.info(
-                    f"Could not read or merge BED file: {chrom_bed_file}\n{e}\n"
-                )
-                raise
-            if chrom_pbt.field_count() > 3:
-                if not printed_colct_msg:
-                    logger.info(
-                        "More than 3 columns detected in the input BED files. Extra columns will be ignored."
-                    )
-                    printed_colct_msg = True
-            for feature_ in chrom_pbt:
-                if name_features:
-                    feature_name = f"{feature_.chrom}_{feature_.start}_{feature_.stop}"
-
-                    f.write(
-                        f"{feature_.chrom}\t{feature_.start}\t{feature_.stop}\t{feature_name}\n"
-                    )
-                else:
-                    f.write(
-                        f"{feature_.chrom}\t{feature_.start}\t{feature_.stop}\n"
-                    )
-    return output_file
+            printed_colct_msg = True
+        combined_records.extend(chrom_records)
+    merged_records = _merge_bed_records(combined_records)
+    return _write_bed_records(
+        merged_records,
+        output_file,
+        name_features=name_features,
+    )
 
 
 def score_central_tendency_chrom(
@@ -223,9 +259,7 @@ def score_central_tendency_chrom(
 
     if method_ == "quantile":
         if not 0.0 <= quantile <= 1.0:
-            logger.warning(
-                "`quantile` must be in [0, 1]. Using the median instead."
-            )
+            logger.warning("`quantile` must be in [0, 1]. Using the median instead.")
             quantile = 0.50
         if quantile == 0.50:
             central_tendency = np.median(chrom_matrix, axis=0)
@@ -352,9 +386,7 @@ def cscores_quantiles(
         )
     formatted_string = pformat(
         {
-            f"Quantile={q}": round(
-                np.quantile(chrom_scores, q=q, method="higher"), 4
-            )
+            f"Quantile={q}": round(np.quantile(chrom_scores, q=q, method="higher"), 4)
             for q in quantiles
         }
     )
@@ -577,7 +609,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--score_prior_df",
         type=float,
-        default=5.0,
+        default=6.0,
         help="Prior degrees of freedom for WLS variance shrinkage.",
     )
 
@@ -667,10 +699,9 @@ def _prepare_args(parser: argparse.ArgumentParser) -> dict:
         if int(args["threads"]) <= 0:
             total_cores = max(1, os.cpu_count() or 1)
             args["threads"] = int(min(4, max(1, total_cores // 4)))
-        if (
-            "--budget_null_draws" not in sys.argv
-            and int(args["budget_null_draws"]) == int(parser.get_default("budget_null_draws"))
-        ):
+        if "--budget_null_draws" not in sys.argv and int(
+            args["budget_null_draws"]
+        ) == int(parser.get_default("budget_null_draws")):
             args["budget_null_draws"] = 16
 
     if args["genome"] is not None:
@@ -684,9 +715,7 @@ def _prepare_args(parser: argparse.ArgumentParser) -> dict:
                 "effective_genome_size"
             ]
         if args["chrom_sizes_file"] is None:
-            args["chrom_sizes_file"] = GENOME_DICT[args["genome"]][
-                "sizes_file"
-            ]
+            args["chrom_sizes_file"] = GENOME_DICT[args["genome"]]["sizes_file"]
         if args["params"] is None:
             args["params"] = GENOME_DICT[args["genome"]]["params"]
 
@@ -694,10 +723,7 @@ def _prepare_args(parser: argparse.ArgumentParser) -> dict:
         raise ValueError(
             "A chromosome sizes file must be supplied with `-s/--chrom_sizes_file` when genome defaults are unavailable."
         )
-    if (
-        args["effective_genome_size"] is None
-        and args["norm_method"] == "RPGC"
-    ):
+    if args["effective_genome_size"] is None and args["norm_method"] == "RPGC":
         raise ValueError(
             "`--effective_genome_size` is required when using `--norm_method RPGC` without genome defaults."
         )
@@ -721,18 +747,14 @@ def _prepare_inputs(args: dict) -> tuple[list, list]:
 
 
 def _resolve_chromosomes(args: dict) -> list:
-    chroms_to_process = list(
-        get_chroms_and_sizes(args["chrom_sizes_file"]).keys()
-    )
+    chroms_to_process = list(get_chroms_and_sizes(args["chrom_sizes_file"]).keys())
     if args["chroms"]:
         chroms_to_process = [
             chrom for chrom in chroms_to_process if chrom in args["chroms"]
         ]
     if args["skip_chroms"]:
         chroms_to_process = [
-            chrom
-            for chrom in chroms_to_process
-            if chrom not in args["skip_chroms"]
+            chrom for chrom in chroms_to_process if chrom not in args["skip_chroms"]
         ]
     return chroms_to_process
 
@@ -806,11 +828,15 @@ def _solve_cached_chromosome(chrom_: str) -> tuple[str, float, dict, str]:
     try:
         chrom_budget = float(chrom_budget)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"{chrom_} budget could not be read as a finite number") from exc
+        raise ValueError(
+            f"{chrom_} budget could not be read as a finite number"
+        ) from exc
     try:
         chrom_gamma = float(chrom_gamma)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"{chrom_} gamma could not be read as a finite number") from exc
+        raise ValueError(
+            f"{chrom_} gamma could not be read as a finite number"
+        ) from exc
     if not np.isfinite(chrom_budget) or chrom_budget < 0.0:
         raise ValueError(f"{chrom_} budget must be finite and non-negative")
     if not np.isfinite(chrom_gamma) or chrom_gamma < 0.0:
@@ -849,9 +875,13 @@ def _build_chrom_cache(
     shared_context_size = None
     shared_context_meta = None
     low_memory = bool(args.get("low_memory", False))
-    budget_null_processes = 1 if low_memory else _resolve_parallel_process_count(
-        int(args["budget_null_draws"]),
-        int(args["threads"]),
+    budget_null_processes = (
+        1
+        if low_memory
+        else _resolve_parallel_process_count(
+            int(args["budget_null_draws"]),
+            int(args["threads"]),
+        )
     )
     for chrom_ in chroms_to_process:
         logger.info("Generating chromosome matrix: %s", chrom_)
@@ -897,22 +927,24 @@ def _build_chrom_cache(
         )
         if not np.all(np.isfinite(centered_matrix)):
             raise ValueError(f"{chrom_} centered matrix contains non-finite values")
-        budget_fraction_hat, budget_rate_meta = estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
-            centered_matrix,
-            observed_scores=chrom_scores,
-            lower_bound_z=args["score_lower_bound_z"],
-            prior_df=args["score_prior_df"],
-            dependence_lag_hint=max(
-                25,
-                int(score_details.get("local_baseline_window", 101)),
-            ),
-            num_null_draws=args["budget_null_draws"],
-            progress_label=f"Budget null {chrom_}",
-            num_processes=min(
-                int(args["budget_null_draws"]),
-                int(budget_null_processes),
-            ),
-            return_details=True,
+        budget_fraction_hat, budget_rate_meta = (
+            estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
+                centered_matrix,
+                observed_scores=chrom_scores,
+                lower_bound_z=args["score_lower_bound_z"],
+                prior_df=args["score_prior_df"],
+                dependence_lag_hint=max(
+                    25,
+                    int(score_details.get("local_baseline_window", 101)),
+                ),
+                num_null_draws=args["budget_null_draws"],
+                progress_label=f"Budget null {chrom_}",
+                num_processes=min(
+                    int(args["budget_null_draws"]),
+                    int(budget_null_processes),
+                ),
+                return_details=True,
+            )
         )
         del centered_matrix
         if not np.isfinite(budget_fraction_hat):
@@ -972,7 +1004,9 @@ def _build_chrom_cache(
             key=lambda chrom: int(chrom_cache[chrom]["num_loci"]),
         )
         source_scores = np.clip(
-            np.asarray(chrom_cache[peak_width_context_source]["scores"], dtype=np.float64),
+            np.asarray(
+                chrom_cache[peak_width_context_source]["scores"], dtype=np.float64
+            ),
             0.0,
             None,
         )
@@ -1105,32 +1139,23 @@ def _resolve_budgets(
 ) -> tuple[dict, dict]:
     if args["budget_strategy"] == "empirical_bayes":
         chrom_budget_counts = {
-            chrom: chrom_cache[chrom]["budget_count_hat"]
-            for chrom in chrom_cache
+            chrom: chrom_cache[chrom]["budget_count_hat"] for chrom in chrom_cache
         }
         chrom_total_counts = {
-            chrom: chrom_cache[chrom]["total_count"]
-            for chrom in chrom_cache
+            chrom: chrom_cache[chrom]["total_count"] for chrom in chrom_cache
         }
         chrom_budgets, budget_meta = estimate_empirical_bayes_budgets(
             chrom_budget_counts,
             chrom_total_counts,
         )
-        if (
-            args["budget"] is not None
-            and budget_meta["genome_wide_budget"] > 0
-        ):
-            rescale = (
-                float(args["budget"]) / budget_meta["genome_wide_budget"]
-            )
+        if args["budget"] is not None and budget_meta["genome_wide_budget"] > 0:
+            rescale = float(args["budget"]) / budget_meta["genome_wide_budget"]
         else:
             rescale = 1.0
         chrom_budgets = {
             chrom: min(
                 max(
-                    chrom_budgets[chrom]
-                    * rescale
-                    * float(args["scale_chrom_budgets"]),
+                    chrom_budgets[chrom] * rescale * float(args["scale_chrom_budgets"]),
                     1.0e-4,
                 ),
                 0.5,
@@ -1153,14 +1178,8 @@ def _resolve_budgets(
                 params_df.loc[params_df["chrom"] == chrom]["budget"].values[0]
             )
         if chrom_budget is None or args["budget"] is not None:
-            chrom_budget = (
-                float(args["budget"])
-                if args["budget"] is not None
-                else 0.03
-            )
-        chrom_budgets[chrom] = (
-            float(chrom_budget) * float(args["scale_chrom_budgets"])
-        )
+            chrom_budget = float(args["budget"]) if args["budget"] is not None else 0.03
+        chrom_budgets[chrom] = float(chrom_budget) * float(args["scale_chrom_budgets"])
     return chrom_budgets, {
         "genome_wide_budget": float(np.mean(list(chrom_budgets.values()))),
         "prior_strength": 0.0,

@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import pybedtools as pbt
 import pysam
 import pytest
 
@@ -132,6 +131,56 @@ def _write_single_end_fragment_bam(
     pysam.index(str(bam_path))
 
 
+def _load_bed_records(bed_file: str) -> list[tuple[str, int, int]]:
+    records = []
+    with open(bed_file, "r", encoding="utf-8") as handle:
+        for line in handle:
+            line_ = line.strip()
+            if line_ == "":
+                continue
+            chrom, start, end = line_.split("\t")[0:3]
+            records.append((str(chrom), int(start), int(end)))
+    return records
+
+
+def _interval_jaccard(
+    left_records: list[tuple[str, int, int]],
+    right_records: list[tuple[str, int, int]],
+) -> float:
+    chroms = sorted(
+        set(chrom for chrom, _, _ in left_records)
+        | set(chrom for chrom, _, _ in right_records)
+    )
+    overlap_total = 0
+    union_total = 0
+    for chrom in chroms:
+        left = sorted(
+            [(start, end) for chrom_, start, end in left_records if chrom_ == chrom]
+        )
+        right = sorted(
+            [(start, end) for chrom_, start, end in right_records if chrom_ == chrom]
+        )
+        i = 0
+        j = 0
+        while i < len(left) and j < len(right):
+            start = max(left[i][0], right[j][0])
+            end = min(left[i][1], right[j][1])
+            if end > start:
+                overlap_total += end - start
+            if left[i][1] <= right[j][1]:
+                i += 1
+            else:
+                j += 1
+        chrom_union = sum(end - start for start, end in left) + sum(
+            end - start for start, end in right
+        )
+        union_total += chrom_union
+    union_total -= overlap_total
+    if union_total <= 0:
+        return 0.0
+    return float(overlap_total) / float(union_total)
+
+
 @pytest.mark.correctness
 def test_combine_chrom_results_no_names(test_setup):
     combined_outfile = combine_chrom_results(
@@ -139,10 +188,12 @@ def test_combine_chrom_results_no_names(test_setup):
         output_file="test_combined.bed",
     )
     assert os.path.exists(combined_outfile)
-    combined_pbt = pbt.BedTool(combined_outfile)
-    combined_ref_pbt = pbt.BedTool(test_setup["combined_ref_file"])
     combined_jaccard = round(
-        combined_pbt.jaccard(combined_ref_pbt)["jaccard"], 5
+        _interval_jaccard(
+            _load_bed_records(combined_outfile),
+            _load_bed_records(test_setup["combined_ref_file"]),
+        ),
+        5,
     )
     assert combined_jaccard > 0.99
     os.remove(combined_outfile)

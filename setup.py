@@ -388,7 +388,6 @@ setup(
         "numpy",
         "scipy",
         "pandas",
-        "pybedtools",
         "pysam",
     ],
     extras_require={"pytest": ["pytest>=6.0.1"]},
