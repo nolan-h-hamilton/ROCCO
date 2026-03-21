@@ -10,6 +10,7 @@ from setuptools.command.build_ext import build_ext
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 VENDORED_HTSLIB_DIR = os.path.join(ROOT_DIR, "vendor", "htslib")
+VERSION_PY_PATH = os.path.join(ROOT_DIR, "rocco", "_version.py")
 PREFIX_INCLUDE_DIR = os.path.join(sys.prefix, "include")
 PREFIX_LIB_DIR = os.path.join(sys.prefix, "lib")
 HTSLIB_CONFIG_MK_PATH = os.path.join(VENDORED_HTSLIB_DIR, "config.mk")
@@ -42,6 +43,16 @@ class get_numpy_include:
 
 def has_vendored_htslib() -> bool:
     return os.path.exists(os.path.join(VENDORED_HTSLIB_DIR, "Makefile"))
+
+
+def get_rocco_version() -> str:
+    with open(VERSION_PY_PATH, "r", encoding="utf-8") as handle:
+        for line in handle:
+            line_ = line.strip()
+            if line_.startswith("__version__"):
+                _, value = line_.split("=", 1)
+                return value.strip().strip('"').strip("'")
+    raise RuntimeError("Could not determine ROCCO version.")
 
 
 def get_htslib_include_dirs() -> list[str]:
@@ -334,7 +345,7 @@ extensions = [
 
 setup(
     name="rocco",
-    version="1.10",
+    version=get_rocco_version(),
     author="Nolan Holt Hamilton",
     author_email="nolan.hamilton@unc.edu",
     description="Multisample Consensus Peak Calling via Convex Optimization",
@@ -348,6 +359,12 @@ setup(
         "Development Status :: 4 - Beta",
         "Intended Audience :: Science/Research",
         "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
         "Topic :: Scientific/Engineering :: Bio-Informatics",
     ],
     keywords=[

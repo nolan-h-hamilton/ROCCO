@@ -21,6 +21,7 @@ ROCCO_IMPL = importlib.import_module("rocco.rocco")
 ROCCO_INFERENCE = importlib.import_module("rocco.inference")
 ROCCO_READTRACKS = importlib.import_module("rocco.readtracks")
 ROCCO_SCORES = importlib.import_module("rocco.scores")
+ROCCO_VERSION = importlib.import_module("rocco._version").__version__
 
 
 @pytest.fixture
@@ -813,6 +814,17 @@ def test_no_input_no_args():
     result = subprocess.run(["rocco"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     assert result.returncode == 0
     assert "usage:" in result.stdout.decode()
+
+
+@pytest.mark.correctness
+def test_version_flag():
+    result = subprocess.run(
+        [sys.executable, "-m", "rocco.rocco", "--version"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert result.returncode == 0
+    assert result.stdout.decode().strip() == f"rocco {ROCCO_VERSION}"
 
 
 @pytest.mark.correctness

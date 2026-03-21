@@ -36,6 +36,7 @@ from rocco.inference import (
     shrink_gamma_estimates,
     score_loci_wls,
 )
+from rocco._version import __version__
 from rocco.readtracks import *
 import rocco.scores as posthoc_scores
 
@@ -425,6 +426,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "-i",
         nargs="+",
         help="BAM alignment files corresponding to samples",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"rocco {__version__}",
     )
     parser.add_argument(
         "--output",
