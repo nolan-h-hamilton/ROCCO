@@ -3,7 +3,6 @@ ROCCO: Scores
 ==================================================================================
 
 (Experimental) Compute *post hoc* peak statistics given samples' BAM files and ROCCO peak output.
-
 """
 
 import logging
@@ -19,6 +18,11 @@ import pandas as pd
 import pysam
 from scipy import ndimage, signal, stats
 
+try:
+    from . import _hts_counts
+except ImportError:  # pragma: no cover - exercised in source-only environments
+    _hts_counts = None
+
 from rocco.readtracks import (
     get_chroms_and_sizes,
     check_type_bam_files,
@@ -32,8 +36,80 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _require_native_counter():
+    if _hts_counts is None:
+        raise ImportError(
+            "The HTSlib counting code is unavailable. "
+            "Reinstall ROCCO so the `rocco._hts_counts` extension is built."
+        )
+    return _hts_counts
+
+
+def _read_peak_intervals(
+    peak_file: str,
+    min_columns: int = 3,
+) -> tuple[list[str], list[str], list[int], list[int], list[str]]:
+    chroms: list[str] = []
+    starts: list[int] = []
+    ends: list[int] = []
+    bed_strings: list[str] = []
+    names: list[str] = []
+
+    with open(peak_file, encoding="utf-8") as handle:
+        for line_num, line in enumerate(handle, start=1):
+            line_ = line.strip()
+            if line_ == "":
+                continue
+            fields = line_.split("\t")
+            if len(fields) < int(max(3, min_columns)):
+                raise ValueError(
+                    f"Peak file row {line_num} has fewer than {max(3, min_columns)} columns."
+                )
+            chrom = str(fields[0])
+            start = int(fields[1])
+            end = int(fields[2])
+            chroms.append(chrom)
+            starts.append(start)
+            ends.append(end)
+            bed_strings.append("\t".join(fields[0:3]))
+            names.append("_".join(fields[0:3]))
+    return chroms, starts, ends, bed_strings, names
+
+
+class EmpiricalNull:
+    r"""Tiny helper for a finite-sample empirical null.
+
+    We keep the implementation simple on purpose. The right-tail survival gets a
+    plus-one correction so the largest observed statistic never receives a zero
+    p-value just because we drew a finite number of background regions.
+    """
+
+    def __init__(self, values: np.ndarray):
+        values_ = np.sort(np.asarray(values, dtype=np.float64))
+        if values_.ndim != 1 or values_.size == 0:
+            raise ValueError("`values` must be a non-empty one-dimensional array.")
+        self.values = values_
+        self.size = int(values_.size)
+
+    def survival(self, x):
+        x_ = np.asarray(x, dtype=np.float64)
+        idx = np.searchsorted(self.values, x_, side="left")
+        survival = (self.size - idx + 1.0) / (self.size + 1.0)
+        if x_.ndim == 0:
+            return float(survival)
+        return survival
+
+    def evaluate(self, x):
+        x_ = np.asarray(x, dtype=np.float64)
+        idx = np.searchsorted(self.values, x_, side="right")
+        cdf = idx / float(self.size)
+        if x_.ndim == 0:
+            return float(cdf)
+        return cdf
+
+
 def _check_read(
-    read: pysam.AlignedSegment, min_mapping_quality: int = 30
+    read: pysam.AlignedSegment, min_mapping_quality: int = 10
 ):
     r"""Called by `pysam.AlignmentFile.count()` to determine if a read is suitable for counting
     :param read: A `pysam` read from a BAM file.
@@ -54,6 +130,80 @@ def _null_stat(vals: np.ndarray, percentile: float = 75.0):
     :rtype: float
     """
     return np.percentile(vals, percentile)
+
+
+def _peak_signal_stat(
+    vals: np.ndarray,
+    length: int,
+    row_scale: float = 1000.0,
+    pc: float = 1.0,
+    percentile: float = 75.0,
+):
+    r"""Use the same transformed statistic for signal and empirical-null scoring."""
+    length_ = max(int(length), 1)
+    vals_ = np.asarray(vals, dtype=np.float64)
+    transformed = np.log2(
+        np.maximum(
+            vals_ * (float(row_scale) / float(length_)) + float(pc),
+            float(pc),
+        )
+    )
+    return float(np.percentile(transformed, percentile))
+
+
+def _assign_length_bins(
+    lengths: np.ndarray,
+    max_bins: int = 24,
+    min_bin_width_bp: int = 100,
+) -> tuple[np.ndarray, np.ndarray]:
+    lengths_ = np.maximum(np.asarray(lengths, dtype=np.int64), 1)
+    if lengths_.ndim != 1 or lengths_.size == 0:
+        raise ValueError("`lengths` must be a non-empty one-dimensional array.")
+
+    uniq_lengths = np.unique(lengths_)
+    span_bp = int(uniq_lengths[-1] - uniq_lengths[0])
+    width_limited_max_bins = 1
+    if span_bp >= int(min_bin_width_bp):
+        width_limited_max_bins = max(1, span_bp // int(min_bin_width_bp))
+    effective_max_bins = max(
+        1,
+        min(int(max_bins), int(width_limited_max_bins)),
+    )
+    if uniq_lengths.size <= effective_max_bins:
+        return lengths_.astype(np.int64, copy=False), uniq_lengths.astype(
+            np.int64,
+            copy=False,
+        )
+
+    log_edges = np.linspace(
+        np.log(float(uniq_lengths[0])),
+        np.log(float(uniq_lengths[-1])),
+        num=int(effective_max_bins) + 1,
+    )
+    bin_ids = np.digitize(
+        np.log(uniq_lengths.astype(np.float64)),
+        log_edges[1:-1],
+        right=False,
+    )
+
+    length_to_bin: dict[int, int] = {}
+    bin_representatives: list[int] = []
+    for bin_id in np.unique(bin_ids):
+        members = uniq_lengths[bin_ids == bin_id]
+        representative = int(np.median(members))
+        representative = max(representative, 1)
+        bin_representatives.append(representative)
+        for length in members:
+            length_to_bin[int(length)] = representative
+
+    binned_lengths = np.asarray(
+        [length_to_bin[int(length)] for length in lengths_],
+        dtype=np.int64,
+    )
+    return binned_lengths, np.asarray(
+        sorted(set(bin_representatives)),
+        dtype=np.int64,
+    )
 
 
 def raw_count_matrix(
@@ -88,8 +238,16 @@ def raw_count_matrix(
 
     """
     bam_files = check_type_bam_files(bam_files)
-    samples = []
+    native = _require_native_counter()
+    chroms, starts, ends, _, peak_names = _read_peak_intervals(
+        peak_file,
+        min_columns=bed_columns,
+    )
+    num_peaks = len(peak_names)
+    if num_peaks == 0:
+        raise ValueError("Peak file does not contain any intervals.")
 
+    samples = []
     for bam in bam_files:
         name = os.path.basename(bam)
         if name.endswith(".bam"):
@@ -97,39 +255,48 @@ def raw_count_matrix(
         samples.append(name)
     header = "peak_name\t" + "\t".join(samples)
     logger.info(f"\n\nCount matrix header: {header}\n\n")
-
-    cmd = f"bedtools multicov -bams {' '.join(bam_files)} -bed {peak_file}"
-    linecount = sum(1 for _ in open(peak_file))
-    linecount_tenpct = int(linecount * 0.10) - 1
     logger.info(
-        f"Running `bedtools multicov` on {len(bam_files)} alignments and {linecount} peak regions."
+        "Counting %s peak regions across %s alignments.",
+        int(num_peaks),
+        int(len(bam_files)),
     )
+
+    count_matrix = np.zeros((num_peaks, len(bam_files)), dtype=np.int64)
+    thread_count = max(multiprocessing.cpu_count() // 2 - 1, 1)
+    for sample_idx, bam_file in enumerate(bam_files):
+        logger.info(
+            "Counting sample %s of %s: %s",
+            sample_idx + 1,
+            len(bam_files),
+            bam_file,
+        )
+        counts = native.count_alignment_intervals(
+            bam_file,
+            chroms,
+            starts,
+            ends,
+            one_read_per_bin=1,
+            thread_count=thread_count,
+            flag_exclude=0,
+            min_mapping_quality=10,
+            count_mode="coverage",
+        )
+        count_matrix[:, sample_idx] = np.rint(
+            np.asarray(counts, dtype=np.float64)
+        ).astype(np.int64, copy=False)
+
     if output_file is not None and os.path.exists(output_file):
         logger.warning(f"{output_file} already exists...overwriting.")
         os.remove(output_file)
 
-    with open(output_file, "a", encoding="utf-8") as f:
-        f.write(header + "\n")
-        with subprocess.Popen(
-            cmd,
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            bufsize=1,
-        ) as proc:
-            i = 0
-            for line in proc.stdout:
-                line = line.strip()
-                fields = line.split("\t")
-                peak_name = "_".join(fields[0:3])
-                counts = fields[bed_columns:]
-                f.write(f"{peak_name}\t" + "\t".join(counts) + "\n")
-                if i % linecount_tenpct == 0:
-                    print(f"Processed {i} of {linecount} peaks.")
-                i += 1
-    logger.info(f"Count matrix written to {output_file}")
+    with open(output_file, "w", encoding="utf-8") as handle:
+        handle.write(header + "\n")
+        for peak_idx, peak_name in enumerate(peak_names):
+            counts = "\t".join(
+                str(int(value)) for value in count_matrix[peak_idx]
+            )
+            handle.write(f"{peak_name}\t{counts}\n")
+    logger.info("Count matrix written to %s", output_file)
     return output_file
 
 
@@ -182,12 +349,18 @@ def score_peaks(
     threads: int = None,
     pc=1,
     ecdf_nsamples=500,
+    ecdf_max_length_bins: int = 24,
     output_file="scored_peaks.bed",
     seed: int = None,
     proc: int = None,
     null_stat: Callable[[np.ndarray], float] = _null_stat,
 ):
-    r"""Compute peak scores based on arcsinh-transformed, 1x-normalized counts, scaled by length. p-values based on ECDFs of read counts in each peak length.
+    r"""Score ROCCO peaks and write narrowPeak-like output.
+
+    The signal column is a robust high quantile of log2-transformed,
+    length-scaled counts. The p-values come from an empirical null built on
+    that exact same statistic. Lengths are grouped into nearby bins first, so
+    we do not waste time fitting a separate ECDF for every exact width.
 
     :param bam_files: List of paths to the BAM files OR a single filepath to a text file containing a list of BAM files (one filepath per line).
     :type bam_files: list or str
@@ -197,6 +370,10 @@ def score_peaks(
     :type peak_file: str
     :param uscc_base: Base value for UCSC score column. Default is 250 such that no peaks are indiscernible.
     :type uscc_base: int
+    :param pc: Pseudocount used inside the log2 transform applied to length-scaled counts.
+    :type pc: float
+    :param ecdf_max_length_bins: Maximum number of length bins used for empirical-null fitting.
+    :type ecdf_max_length_bins: int
     """
 
     threads_ = 1
@@ -245,14 +422,14 @@ def score_peaks(
     bed_strings = []
     names = []
     try:
-        with open(peak_file) as f:
-            for i, line in enumerate(f):
-                fields = line.strip().split("\t")
-                lengths[i] = int(fields[2]) - int(fields[1])
-                bed_string = "\t".join(fields[0:3])
-                name = "_".join(fields[0:3])
-                bed_strings.append(bed_string)
-                names.append(name)
+        chroms, starts, ends, bed_strings, names = _read_peak_intervals(
+            peak_file,
+            min_columns=3,
+        )
+        lengths = np.asarray(
+            [end - start for start, end in zip(starts, ends)],
+            dtype=np.float64,
+        )
     except Exception as e:
         if matrix_df is None:
             raise e
@@ -310,28 +487,40 @@ def score_peaks(
             * sample_scaling_constants[sample_idx]
         )
 
-    # Get empirical cdf for each unique peak length
+    binned_lengths, ecdf_lengths = _assign_length_bins(
+        lengths,
+        max_bins=ecdf_max_length_bins,
+    )
+    logger.info(
+        "Using %s ECDF length bins for %s unique peak lengths.",
+        int(ecdf_lengths.size),
+        int(np.unique(lengths).size),
+    )
+
+    # Get empirical cdf for each length bin
     # Generate a random seed if None
     if seed is None:
         seed = np.random.randint(1, 10000)
         logger.info(
-            f"Using random seed: {seed} to sample length-matched regions for ECDFs."
+            f"Using random seed: {seed} to sample length-binned regions for ECDFs."
         )
     ecdf_dict = multi_ecdf(
         bam_files,
-        lengths,
+        ecdf_lengths,
         chrom_sizes_file,
         nsamples_per_length=ecdf_nsamples,
         sample_scaling_constants=sample_scaling_constants,
         seed=seed,
         proc=proc_,
+        row_scale=row_scale,
+        pc=pc,
     )
 
-    # (i) Signal value for a peak is the ~75th percentile~ of 1x-normalized, arcsinh'd, length-scaled counts
+    # (i) Signal value for a peak is the ~75th percentile~ of 1x-normalized, log2-transformed, length-scaled counts
     # ...observed in each sample over the peak
     sig_vals = np.zeros(matrix_.shape[0])
 
-    # p-value for a peak is the proportion of randomly selected, length-matched regions
+    # p-value for a peak is the proportion of randomly selected, length-binned regions
     # ...with greater values than the null statistic from random regions
     pvals = np.zeros(matrix_.shape[0])
 
@@ -341,17 +530,15 @@ def score_peaks(
                 f"Processing peak {feature_idx} of {len(lengths)}"
             )
         # (i)
-        sig_vals[feature_idx] = np.percentile(
-            np.arcsinh(
-                matrix_[feature_idx, :]
-                * (row_scale / lengths[feature_idx])
-            ),
-            75,
+        sig_vals[feature_idx] = _peak_signal_stat(
+            matrix_[feature_idx, :],
+            lengths[feature_idx],
+            row_scale=row_scale,
+            pc=pc,
         )
-        # (ii)
-        pvals[feature_idx] = 1 - ecdf_dict[
-            lengths[feature_idx]
-        ].evaluate(null_stat(np.array(matrix_[feature_idx, :])))
+        pvals[feature_idx] = ecdf_dict[binned_lengths[feature_idx]].survival(
+            sig_vals[feature_idx]
+        )
     scores = sig_vals
 
     # We will use BH FDR correction to compute q-values
@@ -392,28 +579,29 @@ def get_ecdf(
     sample_scaling_constants: list = None,
     seed: int = None,
     null_stat: Callable[[np.ndarray], np.float64] = _null_stat,
-    trim_proportion: float = 0.005,
+    trim_proportion: float = 0.0,
+    row_scale: float = 1000.0,
+    pc: float = 1.0,
 ):
-    r"""Approximate null distribution of `null_stat` for a specific peak length
-    by sampling genomic regions matched in length.
+    r"""Approximate a null distribution for one representative length bin.
 
-    This function uses `bedtools random` to sample regions of a given length. Future implementations
-    should account for other genomic features (e.g., mappability, GC content, etc.) when sampling background regions.
+    This uses `bedtools random` to sample regions of a representative bin
+    length. Future versions could condition on more than just width.
 
     :param bam_files: List of paths to the BAM files OR a single filepath to a text file containing a list of BAM files (one filepath per line).
     :type bam_files: list or str
-    :param length: Defines length of regions that will be randomly sampled to estimate the background distribution
+    :param length: Representative length for the bin that will be sampled.
     :type length: int
     :param chrom_sizes_file: Filepath to chromosome sizes file.
     :type chrom_sizes_file: str
     :param nsamples: Number of random 'background' regions to sample.
     :type nsamples: int
-    :param sample_scaling_constants: List of scaling constants (floats) for each sample (provided by `score_peaks()` in current implementation).
+    :param sample_scaling_constants: List of scaling constants (floats) for each sample, typically provided by `score_peaks()`.
     :type sample_scaling_constants: list
     :param seed: Random seed supplied to `bedtools random`
     :type seed: int
-    :return: ECDF object with an `evaluate()` method.
-    :rtype: scipy.stats._distn_infrastructure.rv_frozen
+    :return: Empirical null object with `survival()` and `evaluate()` methods.
+    :rtype: EmpiricalNull
 
     :seealso: `score_peaks()`, `multi_ecdf()`
     """
@@ -424,7 +612,7 @@ def get_ecdf(
     if seed is not None:
         cmd = cmd + f" -seed {seed}"
     logger.info(
-        f"Computing ECDF for length: {length} with {nsamples} samples."
+        f"Computing ECDF for representative length bin: {length} with {nsamples} samples."
     )
     with subprocess.Popen(
         cmd,
@@ -460,13 +648,23 @@ def get_ecdf(
                             bam_files_.index(bam_file)
                         ]
                     )
-            len_avgs.append(null_stat(np.array(cperlen)))
+            transformed = np.log2(
+                np.maximum(
+                    np.asarray(cperlen, dtype=np.float64)
+                    * (float(row_scale) / float(max(int(length), 1)))
+                    + float(pc),
+                    float(pc),
+                )
+            )
+            len_avgs.append(null_stat(transformed))
     len_avgs = np.array(len_avgs)
-    # trim `len_avgs` right tail by `trim_proportion` (default is half a percent)
-    len_avgs = stats.trim1(
-        len_avgs, proportiontocut=trim_proportion, tail="right"
-    )
-    return stats.ecdf(len_avgs).cdf
+    if trim_proportion > 0:
+        len_avgs = stats.trim1(
+            len_avgs,
+            proportiontocut=trim_proportion,
+            tail="right",
+        )
+    return EmpiricalNull(len_avgs)
 
 
 def wrap_run_ecdf(*args):
@@ -483,8 +681,10 @@ def multi_ecdf(
     seed=None,
     proc: int = None,
     null_stat: Callable[[np.ndarray], float] = _null_stat,
+    row_scale: float = 1000.0,
+    pc: float = 1.0,
 ):
-    r"""Compute ECDFs in parallel for each unique peak length
+    r"""Compute ECDFs in parallel for each unique representative length bin.
 
     See `get_ecdf()` for details.
     """
@@ -506,6 +706,9 @@ def multi_ecdf(
                 sample_scaling_constants,
                 seed,
                 null_stat,
+                0.0,
+                row_scale,
+                pc,
             )
             for len_ in ecdf_len_dict
         ]

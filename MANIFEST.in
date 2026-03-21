@@ -1,5 +1,21 @@
-include *.md
-include *.rst
-recursive-include docs *.png
+include LICENSE
+include README.md
+include THIRD_PARTY_LICENSES.md
+include HTSLIB_LICENSE.txt
+include HTSCODECS_LICENSE.md
 recursive-include rocco *.sizes
 recursive-include rocco *.csv
+recursive-include rocco/native *.c
+recursive-include rocco/native *.h
+include vendor/htslib/LICENSE
+include vendor/htslib/htscodecs/LICENSE.md
+graft vendor/htslib
+prune vendor/htslib/.github
+prune vendor/htslib/htscodecs/.github
+prune vendor/htslib/ref_cache
+prune vendor/htslib/test
+prune vendor/htslib/samples
+prune vendor/htslib/htscodecs/tests
+prune vendor/htslib/htscodecs/javascript
+recursive-exclude vendor/htslib *.o *.a
+global-exclude .gitignore .gitattributes .gitmodules .cirrus.yml
