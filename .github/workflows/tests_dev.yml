@@ -25,8 +25,8 @@ jobs:
         pip install pylint
         pip install pytest
         pip install build
-        sudo apt-get install -y bedtools
-        sudo apt-get install -y samtools
+        sudo apt-get update
+        sudo apt-get install -y bedtools samtools zlib1g-dev libbz2-dev liblzma-dev
         python -m build --sdist --wheel
         pip install -e .
 
