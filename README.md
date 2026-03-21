@@ -14,15 +14,15 @@ ROCCO is an efficient algorithm for detection of "consensus peaks" in large data
 
 ## How
 
-ROCCO models consensus peak calling as a constrained optimization problem with an upper-bound on the total proportion of the genome selected as open/accessible and a fragmentation penalty to promote spatial consistency in active regions and sparsity elsewhere.
+ROCCO models consensus peak calling as a constrained optimization problem with an upper-bound on the total proportion of the genome selected as enriched and a fragmentation penalty (TV) to promote spatial consistency in active regions and sparsity elsewhere.
 
 ## Why
 
 1. **Consideration of enrichment and spatial characteristics** of open chromatin signals
 2. **Scaling to large sample sizes (100+)**
 3. **Unsupervised** Does not require training data or a heuristically determined set of initial candidate peak regions
-4. **No rigid thresholds + less manual tuning** with respect to the minimum number/width of supporting samples/replicates. (A polytime 2-state DP now solves the constrained optimization problem, and budget $b$, fragmentation/TV penalty $\gamma$ are data-driven by default.)
-5. **Mathematically tractable model** permitting worst-case analysis of runtime and performance
+4. **No rigid thresholds + less manual tuning** with respect to the minimum number/width of supporting samples/replicates.
+5. **Mathematically tractable model** permitting worst-case analysis of runtime and performance (polytime-solvable optimization)
 
 ## Usage
 
