@@ -8,9 +8,6 @@ import textwrap
 from setuptools import Extension, find_packages, setup
 from setuptools.command.build_ext import build_ext
 
-import numpy
-
-
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 VENDORED_HTSLIB_DIR = os.path.join(ROOT_DIR, "vendor", "htslib")
 PREFIX_INCLUDE_DIR = os.path.join(sys.prefix, "include")
@@ -34,6 +31,13 @@ BASE_COMPILE_ARGS = [
     "-fno-math-errno",
     "-mtune=generic",
 ]
+
+
+class get_numpy_include:
+    def __str__(self) -> str:
+        import numpy
+
+        return numpy.get_include()
 
 
 def has_vendored_htslib() -> bool:
@@ -295,13 +299,13 @@ extensions = [
             "rocco/_baseline.c",
             "rocco/native/baseline_backend.c",
         ],
-        include_dirs=[numpy.get_include(), "rocco"],
+        include_dirs=[get_numpy_include(), "rocco"],
         extra_compile_args=BASE_COMPILE_ARGS,
     ),
     Extension(
         "rocco._chain_dp",
         sources=["rocco/_chain_dp.c"],
-        include_dirs=[numpy.get_include()],
+        include_dirs=[get_numpy_include()],
         extra_compile_args=BASE_COMPILE_ARGS,
     ),
     Extension(
@@ -310,7 +314,7 @@ extensions = [
             "rocco/_wls.c",
             "rocco/native/wls_backend.c",
         ],
-        include_dirs=[numpy.get_include(), "rocco"],
+        include_dirs=[get_numpy_include(), "rocco"],
         extra_compile_args=BASE_COMPILE_ARGS,
     ),
     Extension(
@@ -319,7 +323,7 @@ extensions = [
             "rocco/_hts_counts.c",
             "rocco/native/ccounts_backend.c",
         ],
-        include_dirs=[numpy.get_include(), "rocco"] + get_htslib_include_dirs(),
+        include_dirs=[get_numpy_include(), "rocco"] + get_htslib_include_dirs(),
         libraries=get_bundled_htslib_libraries(),
         library_dirs=get_library_dirs(),
         extra_objects=get_bundled_htslib_extra_objects(),
@@ -360,6 +364,7 @@ setup(
         "ChIP-seq",
     ],
     python_requires=">=3.10, <4",
+    setup_requires=["numpy"],
     ext_modules=extensions,
     cmdclass={"build_ext": build_rocco_ext},
     install_requires=[
