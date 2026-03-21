@@ -5,157 +5,17 @@ r"""
 ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
 ==========================================================================
 
-.. image:: ../docs/logo.png
-   :alt: logo
-   :width: 400
-   :align: center
-
-What
-====
-
-ROCCO is an efficient algorithm for detection of "consensus peaks" in large datasets with multiple HTS data samples (namely, ATAC-seq), where an enrichment in read counts/densities is observed in a nontrivial subset of samples.
-
-Input/Output
-------------
-
-- *Input*: Samples' BAM alignments or BigWig tracks
-- *Output*: BED (or narrowPeak) file of consensus peak regions
-
-*Note, if BigWig input is used, no preprocessing options can be applied at the alignment level.*
-
-How
-===
-
-ROCCO models consensus peak calling as a constrained optimization problem with an upper-bound on the total proportion of the genome selected as open/accessible and a fragmentation penalty to promote spatial consistency in active regions and sparsity elsewhere.
-
-Why
-===
-
-ROCCO offers several attractive features:
-
-#. **Consideration of enrichment and spatial characteristics** of open chromatin signals
-#. **Scaling to large sample sizes (100+)** with an asymptotic time complexity independent of sample size
-#. **Unsupervised** Does not require training data or a heuristically determined set of initial candidate peak regions
-#. **No rigid thresholds** on the minimum number/width of supporting samples/replicates
-#. **Mathematically tractable model** permitting worst-case analysis of runtime and performance
-
-Example Behavior
-================
-
-Input
------
-
-- ENCODE lymphoblastoid data (BEST5, WORST5): 10 real ATAC-seq alignments of varying TSS enrichment (SNR-like)
-- Synthetic noisy data (NOISY5)
-
-We run twice under two conditions -- once *with* noisy samples and once *without* to compare results (blue).
-
-Ideally, the resulting consensus peaks should be largely unaffected by the Noisy5 input samples. Likewise, both broad and narrow peaks should be captured.
-
-.. code-block:: shell
-
-   rocco -i *.BEST5.bam *.WORST5.bam -g hg38 -o rocco_output_without_noise.bed
-   rocco -i *.BEST5.bam *.WORST5.bam *.NOISY5.bam -g hg38 -o rocco_output_with_noise.bed
-
-Note, users may run ROCCO with flag `--narrowPeak <https://genome.ucsc.edu/FAQ/FAQformat.html#format12>`_ to generate 10-column output with various statistics for comparison.
-
-Output
-------
-
-
-.. image:: ../docs/example_behavior.png
-   :alt: example
-   :width: 800
-   :height: 400
-   :align: center
-
-
-Paper/Citation
-==============
-
-If using ROCCO in your research, please cite the `original paper <https://doi.org/10.1093/bioinformatics/btad725>`_ in *Bioinformatics* (DOI: ``btad725``)
-
-::
-
-   Nolan H Hamilton, Terrence S Furey, ROCCO: a robust method for detection of open chromatin via convex optimization,
-   Bioinformatics, Volume 39, Issue 12, December 2023
-
-Documentation
-=============
-
-For additional details, usage examples, etc. please see ROCCO's documentation: `<https://nolan-h-hamilton.github.io/ROCCO/>`_
-
-Installation
-============
-
-PyPI (``pip``)
---------------
-
-.. code-block:: shell
-
-   python -m pip install rocco --upgrade
-
-If lacking administrative control, you may need to append `--user` to the above.
-
-
-Build from Source
------------------
-
-If preferred, ROCCO can easily be built from source:
-
-- Clone or download this repository
-
-  .. code-block:: shell
-
-     git clone https://github.com/nolan-h-hamilton/ROCCO.git
-     cd ROCCO
-     python setup.py sdist bdist_wheel
-     pip install -e .
-
-
-System-Level Dependencies:
-----------------------------
-
-ROCCO utilizes the popular bioinformatics software Samtools (http://www.htslib.org) and bedtools (https://bedtools.readthedocs.io/en/latest/).
-
-If these are not already available, you can install system-wide dependencies with a package manager e.g.,
-
-For Homebrew (MacOS):
-
-.. code-block:: bash
-
-    brew install samtools
-    brew install bedtools
-
-
-For Ubuntu/Debian:
-
-.. code-block:: bash
-
-    sudo apt-get install samtools
-    sudo apt-get install bedtools
-
-Conda:
-
-.. code-block:: bash
-
-    conda install bioconda::bedtools
-    conda install bioconda::samtools
-
-
-or built from source (See  Samtools (http://www.htslib.org) and bedtools (https://bedtools.readthedocs.io/en/latest/)).
-
-As a supplementary resource, see `docs/environments <https://github.com/nolan-h-hamilton/ROCCO/tree/main/docs/environments>`_ in the GitHub repository for environment files with detailed package version information.
-
+Run ROCCO on BAM files.
 """
+
+from __future__ import annotations
 
 import argparse
 import copy
 import json
 import logging
-import multiprocessing
+import multiprocessing as mp
 import os
-import random
 import sys
 import uuid
 from pprint import pformat
@@ -164,18 +24,18 @@ from typing import Tuple
 import numpy as np
 import pandas as pd
 import pybedtools
-import pysam
-import pyBigWig as pbw
-
-import scipy.signal as signal
 import scipy.stats as stats
 
-from google.protobuf import text_format
-from ortools.linear_solver import pywraplp
-import ortools.glop.parameters_pb2 as parameters_pb2
-from ortools.pdlp import solvers_pb2
-
 from rocco.constants import GENOME_DICT
+from rocco.dp import solve_chrom_exact
+from rocco.inference import (
+    estimate_empirical_bayes_budgets,
+    estimate_budget_nonnull_fraction_from_wild_bootstrap_null,
+    estimate_context_size,
+    estimate_gamma_from_scores,
+    shrink_gamma_estimates,
+    score_loci_wls,
+)
 from rocco.readtracks import *
 import rocco.scores as posthoc_scores
 
@@ -189,25 +49,13 @@ logging.basicConfig(
     format="%(asctime)s - %(module)s.%(funcName)s -  %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-
-def _objective_function(
-    sol: np.ndarray, scores: np.ndarray, gamma: float
-) -> float:
-    return -scores @ sol + gamma * np.sum(np.abs(np.diff(sol, 1)))
-
-
-def _check_integrality(
-    sol: np.ndarray, int_tol: float = 1e-6
-) -> bool:
-    sol = np.asarray(sol)
-    return np.all((sol <= int_tol) | (sol >= 1 - int_tol))
+_CHROM_SOLVE_PROCESS_STATE: dict | None = None
 
 
 def _get_input_type(input_file: str) -> str:
-    r"""Determine if `input_file` is a BAM or BigWig file
+    r"""Determine if `input_file` is a BAM file
 
-    The file type is determined by the file extension: '.bam', '.bw', etc. and is not robust
+    The file type is determined by the file extension: '.bam', etc. and is not robust
     to incorrectly labelled files.
 
     :raises ValueError: If file extension is not supported
@@ -222,889 +70,12 @@ def _get_input_type(input_file: str) -> str:
 
     if file_ext in ["bam"]:
         file_type = "bam"
-    elif file_ext in ["bw", "bigwig"]:
-        file_type = "bw"
     elif file_ext in ["bed", "bedgraph", "bg", "wig", "wiggle"]:
-        bedgraph_notice = """\nBedGraph (or other general, non-binary, wiggle-like) input is not supported: Input file must be a BAM alignment file or BigWig file. Please convert to BigWig or use the original BAM files as input. BedGraph/Wiggle files can be converted to BigWig files using UCSC's binary utilities `bedGraphToBigWig`, `wigToBigWig`, respectively, available at <http://hgdownload.soe.ucsc.edu/admin/exe/> or Conda/Mamba <https://anaconda.org/bioconda/ucsc-wigtobigwig>, <https://anaconda.org/bioconda/ucsc-bedgraphtobigwig>.\n"""
+        bedgraph_notice = "\nBedGraph and wiggle-like inputs are not supported. Input files must be BAM alignments.\n"
         raise ValueError(bedgraph_notice)
     if file_type is None:
-        raise ValueError(
-            "Input file must be a BAM alignment file or BigWig file"
-        )
+        raise ValueError("Input file must be a BAM alignment file")
     return file_type
-
-def score_central_tendency_chrom(
-    chrom_matrix,
-    method="quantile",
-    quantile=0.50,
-    tprop=0.05,
-    power=1.0,
-) -> np.ndarray:
-    r"""Calculate the central tendency of read measures across samples (rows) at each genomic position (column) in a given chrom.
-
-    :param chrom_matrix: Matrix of values for a given chromosome
-    :type chrom_matrix: np.ndarray
-    :param method: Method to calculate central tendency. Options are 'quantile', 'tmean' (trimmed-mean), and 'mean'. Default is quantile, q=.50 (median)
-    :type method: str
-    :param quantile: Quantile to use if `method` is 'quantile'
-    :type quantile: float
-    :param tprop: Proportion of values to trim if `method` is 'tmean'
-    :type tprop: float
-    :param power: Power to raise the central tendency value to
-    :type power: float
-    :return: Central tendency score
-    :rtype: np.ndarray
-
-    """
-    if get_shape(chrom_matrix)[0] == 1:
-        return chrom_matrix[0, :] ** power
-
-    method_ = clean_string(method)
-    central_tendency_stats = None
-
-    if method_ == "quantile":
-        if quantile < 0 or quantile > 1:
-            logger.warning(
-                "`quantile` must be in the range (0,1). Setting to 0.50 (median)"
-            )
-            quantile = 0.50
-        if quantile == 0.50:
-            central_tendency_stats = np.median(
-                chrom_matrix, axis=0
-            )  # faster
-        else:
-            central_tendency_stats = np.quantile(
-                chrom_matrix, quantile, axis=0, method="nearest"
-            )
-
-    if method_ == "tmean":
-        # Calculate lower and upper limits for trimming
-        llim = np.quantile(
-            chrom_matrix, tprop, axis=0, method="nearest"
-        )
-        ulim = np.quantile(
-            chrom_matrix, 1 - tprop, axis=0, method="nearest"
-        )
-
-        # Apply trimmed mean column-wise
-        central_tendency_stats = np.array(
-            [
-                stats.tmean(
-                    chrom_matrix[:, i],
-                    limits=(llim[i], ulim[i]),
-                    inclusive=(True, True),
-                )
-                for i in range(chrom_matrix.shape[1])
-            ]
-        )
-
-    if method_ == "mean":
-        central_tendency_stats = np.mean(chrom_matrix, axis=0)
-
-    if central_tendency_stats is None:
-        raise ValueError(
-            f"Central tendency method not recognized: {method}"
-        )
-
-    return central_tendency_stats**power
-
-
-def score_dispersion_chrom(
-    chrom_matrix: np.ndarray,
-    method: str = "mad",
-    rng=(25, 75),
-    tprop=0.05,
-    power: float = 1.0,
-) -> np.ndarray:
-    r"""Calculate the dispersion of read measures across samples (rows) at each genomic position (column) in a given chrom.
-
-    :param chrom_matrix: Matrix of values for a given chromosome
-    :type chrom_matrix: np.ndarray
-    :param method: Method to calculate dispersion. Options are 'mad', 'iqr', 'tstd' (trimmed std.), and 'std'. Default is 'mad'
-    :type method: str
-    :param tprop: Proportion of values to trim if `method` is 'tstd'
-    :type tprop: float
-    :param rng: Range of quantiles to use if `method` is 'iqr'
-    :type rng: Tuple[int,int]
-    :param power: Power to raise the dispersion value to
-    :type power: float
-    :return: Dispersion scores
-    :rtype: np.ndarray
-
-    """
-
-    if get_shape(chrom_matrix)[0] == 1:
-        return np.zeros_like(chrom_matrix)[0, :] ** power
-
-    method_ = clean_string(method)
-    dispersion_stats = None
-
-    if method_ == "mad":
-        dispersion_stats = stats.median_abs_deviation(
-            chrom_matrix, axis=0
-        )
-    if method_ == "iqr":
-        dispersion_stats = stats.iqr(chrom_matrix, rng=rng, axis=0)
-    if method_ == "std":
-        dispersion_stats = np.std(chrom_matrix, axis=0)
-    if method_ == "tstd":
-        llim = np.quantile(
-            chrom_matrix, tprop, method="nearest", axis=0
-        )
-        ulim = np.quantile(
-            chrom_matrix, 1 - tprop, method="nearest", axis=0
-        )
-        dispersion_stats = stats.tstd(
-            chrom_matrix,
-            limits=(llim, ulim),
-            inclusive=(True, True),
-            axis=0,
-        )
-
-    if dispersion_stats is None:
-        raise ValueError(
-            f"Dispersion method not recognized or could not successfully execute: {method}"
-        )
-
-    return dispersion_stats**power
-
-
-def score_boundary_chrom(
-    signal_vector: np.ndarray, denom: float = 1.0, power: float = 1.0,
-    smooth_window: int = -1, smooth_degree: int = 3,
-) -> np.ndarray:
-    r"""Calculate the boundary stats for the chromosome score (maximum absolute difference in either direction)
-
-    :param signal_vector: (Assumed: central tendency stats) vector for a given chromosome
-    :type signal_vector: np.ndarray
-    :param denom: Denominator for boundary stats
-    :type denom: float
-    :param power: Power to raise the boundary stats to
-    :type power: float
-    :param smooth_window: If > 1, smooth as a polynomial function fit to local windows of this length (Savitzky-golay filter)
-    :param smooth_degree: Polynomial degree for SG filter.
-    :return: Boundary scores
-    :rtype: np.ndarray
-
-    """
-
-    signal_copy = np.array(signal_vector)
-    if smooth_window > 1:
-        if smooth_window % 2 == 0:
-            smooth_window += 1  # window length must be odd
-        if smooth_window >= len(signal_vector):
-            smooth_window = len(signal_vector) - 1
-            if smooth_window % 2 == 0:
-                smooth_window -= 1
-        if smooth_window < smooth_degree + 2:
-            logger.warning(f"The given `smooth_window`: {smooth_window} is too small for the given `smooth_degree`: {smooth_degree}. Setting `smooth_window` to {smooth_degree + 2}.")
-            smooth_window = smooth_degree + 2
-            if smooth_window % 2 == 0:
-                smooth_window += 1
-        logger.info(
-            f"Applying SG filter to compute  boundary stat: window={smooth_window}, degree={smooth_degree}"
-        )
-        signal_copy = signal.savgol_filter(
-            signal_copy, smooth_window, smooth_degree,
-        )
-    boundary_stats = np.zeros_like(signal_vector, dtype=float)
-    for i in range(len(signal_vector)):
-        if i == 0:
-            boundary_stats[i] = abs(
-                signal_copy[i] - signal_copy[i + 1]
-            ) / (denom + abs(signal_copy[i]))
-        elif i == len(signal_vector) - 1:
-            boundary_stats[i] = abs(
-                signal_copy[i] - signal_copy[i - 1]
-            ) / (denom + abs(signal_copy[i]))
-        else:
-            boundary_stats[i] = max(
-                abs(signal_copy[i] - (signal_copy[i - 1])),
-                abs(signal_copy[i] - signal_copy[i + 1]),
-            ) / (denom + abs(signal_copy[i]))
-
-    return boundary_stats**power
-
-
-def score_chrom_linear(
-    central_tendency_vec: np.ndarray,
-    dispersion_vec: np.ndarray,
-    boundary_vec: np.ndarray,
-    gamma=None,
-    c_1=1.0,
-    c_2=-1.0,
-    c_3=1.0,
-    eps_neg=-1.0e-3,
-    transform_parsig=False,
-    parsig_B=None,
-    parsig_M=None,
-    parsig_R=None,
-) -> np.ndarray:
-    r"""Compute array of default scores :math:`(\mathbf{G}\boldsymbol{\alpha})^{\top}` where :math:`\mathbf{G}` is the :math:`n \times 3` matrix of central tendency scores, dispersion scores, and boundary scores for a given chromosome and :math:`\boldsymbol{\alpha}` is the 3D vector of coefficients for each.
-
-    :param central_tendency_vec: Central tendency scores for a given chromosome
-    :type central_tendency_vec: np.ndarray
-    :param dispersion_vec: Dispersion scores for a given chromosome
-    :type dispersion_vec: np.ndarray
-    :param boundary_vec: Boundary scores for a given chromosome
-    :type boundary_vec: np.ndarray
-    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere. The ideal value of `gamma` is for a given dataset is dependent on the user's preference. Increase to encourage solutions that are 'block-like'.
-    :type  gamma: float
-    :param c_1: Coefficient for central tendency scores (:math:`c_1 g_1(i),~i=1,\ldots,n` in the paper)
-    :type c_1: float
-    :param c_2: Coefficient for dispersion scores (:math:`c_2 g_2(i),~i=1,\ldots,n` in the paper)
-    :type c_2: float
-    :param c_3: Coefficient for boundary scores (:math:`c_3 g_3(i),~i=1,\ldots,n` in the paper)
-    :type c_3: float
-    :param parsig_M: Upper bound (sup.) of scores under the transformation
-    :type parsig_M: float
-    :param parsig_B: An inflection point occurs in the transformation at `quantile(scores, parsig_B)/2`. For a given `parsig_R`, larger `parsig_B` value will result in more scores being pushed toward the minimum value of the transformed scores.
-    :type parsig_B: float
-    :param parsig_R: Scales the rate of change around the inflection point at `quantile(scores, parsig_B)/2`. Higher values of `parsig_R` will result in a steeper sigmoid curve, approaching a step function in the limit with two distinct values.
-    :type parsig_R: float
-    :param eps_neg: Negative epsilon value to add to the scores
-    :type eps_neg: float
-    :return: chromosome scores
-    :rtype: np.ndarray
-
-    """
-    if c_1 < 0:
-        logger.warning(
-            "Central tendency score coefficient is negative. In the default implementation, this may reward weak signals."
-        )
-    if c_2 > 0:
-        logger.warning(
-            "Dispersion score coefficient is positive. In the default implementation, this may reward regions with inconsistent signals among samples."
-        )
-
-    chrom_scores = (
-        c_1 * central_tendency_vec
-        + c_2 * dispersion_vec
-        + c_3 * boundary_vec
-    )
-
-    if (
-        transform_parsig
-        or parsig_B is not None
-        or parsig_R is not None
-        or parsig_M is not None
-    ):
-        chrom_scores = parsig(
-            chrom_scores,
-            gamma,
-            parsig_B=parsig_B,
-            parsig_M=parsig_M,
-            parsig_R=parsig_R,
-        )
-    if eps_neg > 0:
-        logger.warning(
-            f"`eps_neg`: {eps_neg} > 0, should be negative...using eps_neg={-1.0 * eps_neg} instead."
-        )
-        eps_neg = -1.0 * eps_neg
-
-    chrom_scores += eps_neg
-    return chrom_scores
-
-
-def parsig(
-    scores,
-    gamma=None,
-    parsig_B=None,
-    parsig_M=None,
-    parsig_R=None,
-    scale_quantile: float = 0.50,
-    remove_min=True,
-) -> np.ndarray:
-    r"""Applies a 'parametric sigmoid' (smooth step) function mapping input `scores` to `[0,M)`
-
-    :param parsig_M: Upper bound (sup.) of the transformed score. If `None`, determined by `scale_quantile` and `gamma`
-    :type parsig_M: float
-    :param parsig_B: Determines the inflection past which values are mapped closer to `M`. An inflection point occurs in the transformation at `quantile(scores, parsig_B)/2`. For a given `parsig_R`, larger `parsig_B` value will result in more scores being pushed toward the minimum value of the transformed scores.
-    :type parsig_B: float
-    :param parsig_R: Scales the rate of change around the step.
-    :type parsig_R: float
-    :rtype: np.ndarray
-
-    """
-
-    if gamma is None:
-        gamma = 1.0
-
-    if parsig_B is None:
-        parsig_B = 0.95
-    elif parsig_B < 0 or parsig_B > 1:
-        raise ValueError("`parsig_B` must be in the range (0,1)")
-
-    if parsig_R is None:
-        parsig_R = 2.0
-    elif parsig_R < 0:
-        raise ValueError("`parsig_R` must be greater than zero")
-
-    scores_ = np.array(scores)
-    scale_ = max(0, np.quantile(scores, q=0.99, method="nearest") / 2)
-    M_ = (2 * gamma + 1) + scale_ if parsig_M is None else parsig_M
-    if M_ < 0:
-        raise ValueError("`parsig_M` must be greater than zero")
-    # The point at which the smooth step begins depends on parsig_B via B_, defined below
-    B_ = np.quantile(scores_, parsig_B, method="nearest")
-    parsig_values = M_ / (
-        1 + np.exp(-(parsig_R * (scores - (B_ / 2))))
-    )
-    if remove_min:
-        parsig_values = parsig_values - np.min(parsig_values)
-
-    logger.info(
-        f"Parsig transformation applied with M={M_}, B={B_}, R={parsig_R}"
-    )
-    return parsig_values
-
-
-def solve_relaxation_chrom_pdlp(
-    scores,
-    budget: float = 0.035,
-    gamma: float = 1.0,
-    beta: float = None,
-    denom_const: float = None,
-    pdlp_proto=None,
-    pdlp_presolve_options_use_glop: bool = True,
-    pdlp_termination_criteria_eps_optimal_absolute: float = 1.0e-8,
-    pdlp_termination_criteria_eps_optimal_relative: float = 1.0e-8,
-    pdlp_use_low_precision: bool = False,
-    scale_gamma: bool = False,
-    hint=None,
-    threads: int = 0,
-    verbose: bool = False,
-    save_model: str = None,
-) -> Tuple[np.ndarray, float]:
-    r"""Solve the relaxation for a specific chromosome using the *first-order* PDHG method, PDLP
-
-    See the `full paper for PDLP <https://arxiv.org/abs/2106.04756>`_ (Applegate et al., 2021)
-
-    :param scores: Scores for each genomic position within a given chromosome
-    :type scores: np.ndarray
-    :param budget: :math:`b` upper bounds the proportion of the chromosome that can be selected as open/accessible.
-    :type budget: float
-    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere. The ideal value of `gamma` is for a given dataset is dependent on the user's preference. Increase to encourage solutions that are 'block-like'.
-    :type  gamma: float
-    :param beta: Exponent for the denominator in the fragmentation penalty. If None, defaults to 1/2 when `scale_gamma` is True.
-    :type beta: float
-    :param denom_const: Constant to add to the denominator in the fragmentation penalty. If None, defaults to 1.0 when `scale_gamma` is True.
-    :type denom_const: float
-    :param scale_gamma: If `True`, Scale the fragmentation penalty (γ) positionally based on the difference between adjacent scores. This will yield a more nuanced fragmentation penalty that does not discourage differences in adjacent decision variables if their corresponding scores are dissimilar and thus reflect a true change in state that should affect the solution: `γ/(|Score_i - Score_i+1| + ε)^β` See `beta` and `denom_const` for more details.
-    :type scale_gamma: bool
-    :param pdlp_proto: pdlp-specific protocol buffer. If this is not None, the explicit solver arguments in this function definition are ignored. See `<https://protobuf.dev>`_ for more information on protocol buffers and `solvers.proto <https://github.com/google/or-tools/blob/2c333f58a37d7c75d29a58fd772c9b3f94e2ca1c/ortools/pdlp/solvers.proto>`_ for Google's pdlp-specific protocol buffer.
-    :type pdlp_proto: solvers_pb2.PrimalDualHybridGradientParams
-    :param pdlp_presolve_options_use_glop: Use glop's presolve routines but solve with pdlp. Recommended for most cases unless computational resources are limited or the user has specified the problem already to exploit context-specific structure.
-    :type pdlp_presolve_options_use_glop: bool
-    :param pdlp_termination_criteria_eps_optimal_absolute: Appealing to strong duality for LPs, the duality gap (difference between the primal objective function and the dual objective function at a given iteration) must be less than this value *plus a scaling of the primal/dual objective values* (See `solvers.proto` linked above for exact details).  If computational resources are limited, consider using `1.0e-4` per the `ortools <https://developers.google.com/optimization/lp/lp_advanced>`_ documentation.
-    :type pdlp_termination_criteria_eps_optimal_absolute: float
-    :param pdlp_termination_criteria_eps_optimal_relative: Relative termination criterion for the pdlp solver. If computational resources are limited, consider using `1.0e-4` per the `ortools <https://developers.google.com/optimization/lp/lp_advanced>`_ documentation.
-    :type pdlp_termination_criteria_eps_optimal_relative: float
-    :param pdlp_use_low_precision: Use "loose solve"/low precision mode. This will override the termination arguments to weakened criteria (1.0e-4).
-    :type pdlp_use_low_precision: bool
-    :param threads: Number of threads to use for optimization. Default is 0 (use default number of threads defined in `solvers.proto`). If threads is negative, the number of threads used will be the maximum of the number of available CPUs minus 1, or 1 in the case of a single-core machine.
-    :type threads: int
-    :param verbose: Enable verbose output
-    :type verbose: bool
-    :param save_model: Save the model as an MPS file
-    :type save_model: str
-    :return: Solution vector and optimal value
-    :rtype: Tuple[np.ndarray, float]
-    """
-
-    solver = pywraplp.Solver.CreateSolver("PDLP")
-    pdlp_parameters = solvers_pb2.PrimalDualHybridGradientParams()
-    pdlp_parameters.presolve_options.use_glop = (
-        pdlp_presolve_options_use_glop
-    )
-    pdlp_parameters.termination_criteria.simple_optimality_criteria.eps_optimal_absolute = pdlp_termination_criteria_eps_optimal_absolute
-    pdlp_parameters.termination_criteria.simple_optimality_criteria.eps_optimal_relative = pdlp_termination_criteria_eps_optimal_relative
-    if pdlp_use_low_precision:
-        logger.info(
-            f'Using "loose solve"/low precision mode: {pdlp_use_low_precision}'
-        )
-        logger.info(
-            "Overriding termination arguments to weakened criteria (1.0e-4)"
-        )
-        pdlp_parameters.termination_criteria.simple_optimality_criteria.eps_optimal_absolute = 1.0e-4
-        pdlp_parameters.termination_criteria.simple_optimality_criteria.eps_optimal_relative = 1.0e-4
-    if pdlp_proto is None:
-        proto = text_format.MessageToString(pdlp_parameters)
-    else:
-        proto = text_format.MessageToString(pdlp_proto)
-    solver.SetSolverSpecificParametersAsString(proto)
-
-    if threads >= 1:
-        solver.SetNumThreads(threads)
-    elif threads < 0:
-        solver.SetNumThreads(
-            max(multiprocessing.cpu_count() // 2 - 1, 1)
-        )
-
-    if verbose:
-        solver.EnableOutput()
-
-    n = len(scores)
-    logger.info(f"Building problem with {n} variables")
-    ell = [solver.NumVar(0, 1, f"ell_{i}") for i in range(n)]
-    ell_aux = [
-        solver.NumVar(0, 1, f"ell_aux_{j}") for j in range(n - 1)
-    ]
-    logger.info(f"Setting constraints")
-    solver.Add(sum(ell) <= np.floor(budget * n) * 1.0, name="budget")
-    for i in range(n - 1):
-        # log every 10% of the way
-        if i % (n // 10) == 0:
-            logger.info(f"Constraint ({i}/{n})")
-        solver.Add(ell_aux[i] >= ell[i] - ell[i + 1])
-        solver.Add(ell_aux[i] >= -(ell[i] - ell[i + 1]))
-    objective = solver.Objective()
-    logger.info(f"Setting coefficients in the objective")
-    for i in range(n):
-        # log every 10% of the way
-        if i % (n // 10) == 0:
-            logger.info(f"Coefficient ({i}/{n})")
-        objective.SetCoefficient(ell[i], -1.0 * scores[i])
-    denom = None
-    if scale_gamma:
-        if denom_const is None:
-            denom_const = 1.0
-        if beta is None:
-            beta = 1.0 / 2.0
-        logger.info(
-            f"Scaling γ positionally: `γ/(|Score_i - Score_i+1| + ε)^β`, with β={beta} and ε={denom_const}"
-        )
-        denom = (np.abs(np.diff(scores, 1)) + denom_const) ** beta
-
-    for j in range(n - 1):
-        # log every 10% of the way
-        if j % (n // 10) == 0:
-            logger.info(f"Coefficient (aux.) ({j}/{n})")
-        if scale_gamma:
-            objective.SetCoefficient(
-                ell_aux[j], (1.0 * gamma) / denom[j]
-            )
-        elif denom is None:
-            objective.SetCoefficient(ell_aux[j], (1.0 * gamma))
-    objective.SetMinimization()
-
-    if hint is not None:
-        try:
-            solver.SetHint(ell, hint)
-        except Exception as e:
-            logger.info(f"Could not apply hint solution:\n{e}")
-
-    # threads = 0: use default number of threads
-    if threads > 0:
-        solver.SetNumThreads(threads)
-    elif threads < 0:
-        solver.SetNumThreads(
-            max(multiprocessing.cpu_count() // 2 - 1, 1)
-        )
-
-    if not verbose:
-        logger.info(
-            "Solving...Rerun with `--verbose` to see solver progress output."
-        )
-
-    solver.Solve()
-    ell_arr = np.zeros(n)
-    for i in range(n):
-        ell_arr[i] = ell[i].solution_value()
-    optimal_value = solver.Objective().Value()
-
-    summary = {
-        "iterations": solver.iterations(),
-        "time": solver.wall_time(),
-    }
-
-    if verbose:
-        logger.info(f"Solver summary:\n{summary}")
-
-    if save_model is not None:
-        try:
-            save_model = save_model.replace(".mps", "")
-            save_model = f"{save_model}_numloci_{n}_budget_{budget}_gamma_{gamma}.pdlp.mps"
-            logger.info(f"Saving model to {save_model}")
-            with open(save_model, "w") as f:
-                f.write(
-                    solver.ExportModelAsMpsFormat(
-                        fixed_format=True, obfuscated=False
-                    )
-                )
-            logger.info(
-                f"Model saved to {save_model}: {os.path.getsize(save_model) / 1e6:.2f} MB"
-            )
-        except Exception as e:
-            logger.info(f"Could not save model:\n{e}")
-    return ell_arr, optimal_value
-
-
-def solve_relaxation_chrom_glop(
-    scores,
-    budget: float = 0.035,
-    gamma: float = 1.0,
-    beta: float = None,
-    denom_const: float = None,
-    glop_parameters=None,
-    glop_dual_feasibility_tolerance: float = 1.0e-6,
-    glop_primal_feasibility_tolerance: float = 1.0e-6,
-    glop_use_scaling: bool = True,
-    glop_initial_basis: str = "TRIANGULAR",
-    glop_push_to_vertex: bool = True,
-    glop_use_dual_simplex=None,
-    glop_allow_simplex_algorithm_change: bool = True,
-    scale_gamma: bool = False,
-    hint=None,
-    threads: int = 0,
-    verbose: bool = False,
-    save_model: str = None,
-) -> Tuple[np.ndarray, float]:
-    r"""Solve the relaxation for a specific chromosome using the *simplex-based* method, glop
-
-    `OR-tools linear programming resources and documentation <https://developers.google.com/optimization/lp>`_
-
-    A simplex-based method that yields *corner-point feasible* (CPF, vertex) solutions. May become deprecated in future releases of ROCCO in favor of the pdlp solver.
-
-    :param scores: Scores for each genomic position within a given chromosome
-    :type scores: np.ndarray
-    :param budget: :math:`b` upper bounds the proportion of the chromosome that can be selected as open/accessible
-    :type budget: float
-    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere. The ideal value of `gamma` is for a given dataset is dependent on the user's preference. Increase to encourage solutions that are 'block-like'.
-    :type  gamma: float
-    :param beta: Exponent for the denominator in the fragmentation penalty. If None, defaults to 1/2 when `scale_gamma` is True.
-    :type beta: float
-    :param denom_const: Constant to add to the denominator in the fragmentation penalty. If None, defaults to 0.5 when `scale_gamma` is True.
-    :type denom_const: float
-    :param scale_gamma: If `True`, Scale the fragmentation penalty (γ) positionally based on the difference between adjacent scores. This will yield a more nuanced fragmentation penalty that does not discourage differences in adjacent decision variables if their corresponding scores are dissimilar and thus reflect a true change in state that should affect the solution: `γ/(|Score_i - Score_i+1| + ε)^β` See `beta` and `denom_const` for more details.
-    :type scale_gamma: bool
-    :param glop_parameters: glop-specific protocol buffer. If this is not None, the explicit solver arguments in this function definition are ignored. See `<https://protobuf.dev>`_ for more information on protocol buffers and `parameters.proto <https://github.com/google/or-tools/blob/stable/ortools/glop/parameters.proto>`_ for Google's glop-specific protocol buffer.
-    :type glop_parameters: parameters_pb2.GlopParameters
-    :param glop_dual_feasibility_tolerance: Dual feasibility tolerance for glop.
-    :type glop_dual_feasibility_tolerance: float
-    :param glop_primal_feasibility_tolerance: Primal feasibility tolerance for glop.
-    :type glop_primal_feasibility_tolerance: float
-    :param glop_use_scaling: Use scaling for glop. If `True`, the scaling method is set to `EQUILIBRATION` and the cost scaling is set to `CONTAIN_ONE_COST_SCALING`. Recommended for most cases unless the user is confident the problem is not poorly-scaled. Future releases of ROCCO should support additional options.
-    :type glop_use_scaling: bool
-    :param glop_initial_basis: Determines which of the glop-supported heuristics to identify an initial basis is executed. Options are `'NONE'`, `'TRIANGULAR'`, and `'MAROS'`. `'TRIANGULAR'` is the default and recommended option.
-    :type glop_initial_basis: str
-    :param threads: Number of threads to use for optimization. Default is 0 (use default number of threads defined in `solvers.proto`). If threads is negative, the number of threads used will be the maximum of the number of available CPUs minus 1, or 1 in the case of a single-core machine.
-    :type threads: int
-    :param verbose: Enable verbose output
-    :type verbose: bool
-    :param save_model: Save the model as an MPS file
-    :type save_model: str
-    :return: Solution vector and optimal value
-    :rtype: Tuple[np.ndarray, float]
-
-    """
-    solver = pywraplp.Solver.CreateSolver("GLOP")
-    if glop_parameters is None:
-        glop_parameters = parameters_pb2.GlopParameters()
-        glop_parameters.dual_feasibility_tolerance = (
-            glop_dual_feasibility_tolerance
-        )
-        glop_parameters.primal_feasibility_tolerance = (
-            glop_primal_feasibility_tolerance
-        )
-        glop_parameters.push_to_vertex = glop_push_to_vertex
-        if glop_initial_basis is not None:
-            if glop_initial_basis.upper() == "NONE":
-                glop_parameters.initial_basis = (
-                    parameters_pb2.GlopParameters.NONE
-                )
-            if glop_initial_basis.upper() == "TRIANGULAR":
-                glop_parameters.initial_basis = (
-                    parameters_pb2.GlopParameters.TRIANGULAR
-                )
-            elif glop_initial_basis.upper() == "MAROS":
-                glop_parameters.initial_basis = (
-                    parameters_pb2.GlopParameters.MAROS
-                )
-        glop_parameters.use_scaling = glop_use_scaling
-
-        if glop_use_scaling:
-            glop_parameters.scaling_method = (
-                parameters_pb2.GlopParameters.EQUILIBRATION
-            )
-            glop_parameters.cost_scaling = (
-                parameters_pb2.GlopParameters.CONTAIN_ONE_COST_SCALING
-            )
-        if glop_use_dual_simplex is not None:
-            glop_parameters.use_dual_simplex = glop_use_dual_simplex
-        glop_parameters.allow_simplex_algorithm_change = (
-            glop_allow_simplex_algorithm_change
-        )
-
-    proto = text_format.MessageToString(glop_parameters)
-    solver.SetSolverSpecificParametersAsString(proto)
-
-    if verbose:
-        logger.info(
-            f"Solver parameters:\n{pformat(glop_parameters)}\n"
-        )
-        solver.EnableOutput()
-
-    n = len(scores)
-    logger.info(f"Building problem with {n} variables")
-    ell = [solver.NumVar(0, 1, f"ell_{i}") for i in range(n)]
-    ell_aux = [
-        solver.NumVar(0, 1, f"ell_aux_{j}") for j in range(n - 1)
-    ]
-    logger.info(f"Setting constraints")
-    solver.Add(sum(ell) <= np.floor(budget * n) * 1.0, name="budget")
-    for i in range(n - 1):
-        # log every 10% of the way
-        if i % (n // 10) == 0:
-            logger.info(f"Constraint ({i}/{n})")
-        solver.Add(ell_aux[i] >= ell[i] - ell[i + 1])
-        solver.Add(ell_aux[i] >= -(ell[i] - ell[i + 1]))
-    objective = solver.Objective()
-    logger.info(f"Setting coefficients in the objective")
-    for i in range(n):
-        # log every 10% of the way
-        if i % (n // 10) == 0:
-            logger.info(f"Coefficient ({i}/{n})")
-        objective.SetCoefficient(ell[i], -1.0 * scores[i])
-    denom = None
-    if scale_gamma:
-        if denom_const is None:
-            denom_const = 1.0
-        if beta is None:
-            beta = 1.0 / 2.0
-        logger.info(
-            f"Scaling γ positionally: `γ/(|Score_i - Score_i+1| + ε)^β`, with β={beta} and ε={denom_const}"
-        )
-        denom = (np.abs(np.diff(scores, 1)) + denom_const) ** beta
-
-    for j in range(n - 1):
-        # log every 10% of the way
-        if j % (n // 10) == 0:
-            logger.info(f"Coefficient (aux.) ({j}/{n})")
-        if scale_gamma:
-            objective.SetCoefficient(
-                ell_aux[j], (1.0 * gamma) / denom[j]
-            )
-        elif denom is None:
-            objective.SetCoefficient(ell_aux[j], (1.0 * gamma))
-    objective.SetMinimization()
-
-    if hint is not None:
-        try:
-            solver.SetHint(ell, hint)
-        except Exception as e:
-            logger.info(f"Could not apply hint solution:\n{e}")
-
-    # threads = 0: use default number of threads
-    if threads > 0:
-        solver.SetNumThreads(threads)
-    elif threads < 0:
-        solver.SetNumThreads(
-            max(multiprocessing.cpu_count() // 2 - 1, 1)
-        )
-
-    if not verbose:
-        logger.info(
-            "Solving...Rerun with `--verbose` to see solver progress output."
-        )
-
-    solver.Solve()
-    ell_arr = np.zeros(n)
-    for i in range(n):
-        ell_arr[i] = ell[i].solution_value()
-    optimal_value = solver.Objective().Value()
-
-    summary = {
-        "iterations": solver.iterations(),
-        "time": solver.wall_time(),
-    }
-
-    if verbose:
-        logger.info("Solver summary:")
-        logger.info(summary)
-
-    if save_model is not None:
-        try:
-            save_model = save_model.replace(".mps", "")
-            save_model = f"{save_model}_numloci_{n}_budget_{budget}_gamma_{gamma}.glop.mps"
-            with open(save_model, "w") as f:
-                f.write(
-                    solver.ExportModelAsMpsFormat(
-                        fixed_format=True, obfuscated=False
-                    )
-                )
-            logger.info(
-                f"Model saved to {save_model}: {os.path.getsize(save_model) / 1e6:.2f} MB"
-            )
-        except Exception as e:
-            logger.info(f"Could not save model:\n{e}")
-
-    return ell_arr, optimal_value
-
-
-def get_floor_eps_sol(
-    chrom_lp_sol: np.ndarray,
-    budget: float,
-    int_tol: float = 1e-6,
-    eps_mult: float = 1.01,
-) -> np.ndarray:
-    r"""Compute the integral `floor_eps` solution from the relaxation
-
-    Adds a small :math:`\epsilon` to each decision variable before applying the floor function. Addresses solutions in the interior of the feasible region near integer corner point solutions.  The `floor_eps` approach is a crude heuristic to obtain an initial integer-feasible solution from the LP relaxation, but is
-    well-suited as an initial reference point for randomization (`ROCCO-RR`). In many cases, the relaxed LP solution is
-    nearly integral and the `floor_eps` heuristic and randomized `ROCCO-RR` procedure has little effect.
-
-    :param chrom_lp_sol: Solution vector from the LP relaxation
-    :type chrom_lp_sol: np.ndarray
-    :param budget: :math:`b` upper bounds the proportion of the chromosome that can be selected as open/accessible
-    :type budget: float
-    :param int_tol: If a decision variable is within `int_tol` of 0 or 1, it is considered integral
-    :type int_tol: float
-    :param eps_mult: Value by which to divide the initial epsilon value
-    :type eps_mult: float
-    :return: Initial integer-feasible solution
-    :rtype: np.ndarray
-
-    """
-
-    # check if LP solution is already integral
-    if _check_integrality(chrom_lp_sol, int_tol):
-        return np.round(chrom_lp_sol)
-
-    # Round the others where possible (within int_tol)
-    for i in range(len(chrom_lp_sol)):
-        if chrom_lp_sol[i] < int_tol:
-            chrom_lp_sol[i] = 0
-        elif chrom_lp_sol[i] > 1 - int_tol:
-            chrom_lp_sol[i] = 1
-
-    if eps_mult <= 1:
-        logger.warning(
-            "`eps_mult` must be greater than 1...setting to 1.001"
-        )
-        eps_mult = 1.001
-
-    n = len(chrom_lp_sol)
-    plus_half = np.array([x for x in chrom_lp_sol if x > 0 and x < 1])
-    if plus_half is None or len(plus_half) == 0:
-        eps_cpy = 0
-    else:
-        eps_cpy = (1 / 2) + 1.0e-4
-    init_sol = np.floor(chrom_lp_sol + eps_cpy)
-    floor_eps_iter_ct = 0
-    while np.sum(init_sol) > np.floor(n * budget):
-        eps_cpy = eps_cpy / eps_mult
-        init_sol = np.array(
-            [
-                np.floor(chrom_lp_sol[i] + eps_cpy)
-                for i in range(len(chrom_lp_sol))
-            ]
-        )
-        floor_eps_iter_ct += 1
-    return init_sol
-
-
-def get_rround_sol(
-    chrom_lp_sol,
-    scores,
-    budget,
-    gamma,
-    rand_iter=1000,
-    int_tol=1.0e-6,
-    eps_mult: float = 1.01,
-) -> Tuple[np.ndarray, float]:
-    r"""Get the ROCCO-RR solution from the solution to the relaxation
-
-    :param chrom_lp_sol: Solution vector from the LP relaxation
-    :type chrom_lp_sol: np.ndarray
-    :param scores: Scores for each genomic position within a given chromosome
-    :type scores: np.ndarray
-    :param budget: :math:`b` upper bounds the proportion of the chromosome that can be selected as open/accessible
-    :type budget: float
-    :param gamma: :math:`\gamma` is the coefficient for the fragmentation penalty used to promote spatial consistency in distinct open genomic regions and sparsity elsewhere.
-    :type  gamma: float
-    :param rand_iter: Number of randomizations to obtain the ROCCO-RR solution
-    :type rand_iter: int
-    :param int_tol: If a decision variable is within `int_tol` of 0 or 1, it is considered integral and ignored in the randomization step
-    :type int_tol: float
-    :param eps_mult: Value by which to divide the initial :func:`get_floor_eps_sol` epsilon value
-    :type eps_mult: float
-    :return: ROCCO-RR solution and optimal value
-
-    """
-    n = len(scores)
-    floor_sol = np.floor(chrom_lp_sol)
-    floor_score = _objective_function(
-        sol=floor_sol, scores=scores, gamma=gamma
-    )
-
-    floor_eps_sol = get_floor_eps_sol(
-        chrom_lp_sol, budget, int_tol=int_tol, eps_mult=eps_mult
-    )
-    floor_eps_score = _objective_function(
-        sol=floor_eps_sol, scores=scores, gamma=gamma
-    )
-    init_sol = None
-    init_score = None
-    if floor_eps_score < floor_score and np.sum(
-        floor_eps_sol
-    ) <= np.floor(n * budget):
-        init_sol = floor_eps_sol
-        init_score = floor_eps_score
-    else:
-        init_sol = floor_sol
-        init_score = floor_score
-
-    if rand_iter <= 0:
-        logger.info(
-            "`rand_iter < 0`, returning floor-based solution."
-        )
-        return init_sol, init_score
-
-    nonint_loci = np.array(
-        [
-            i
-            for i in range(len(chrom_lp_sol))
-            if chrom_lp_sol[i] > int_tol
-            and chrom_lp_sol[i] < 1 - int_tol
-        ],
-        dtype=int,
-    )
-    logger.info(
-        f"Number of fractional decision variables in LP (tol={int_tol}): {len(nonint_loci)}"
-    )
-    if len(nonint_loci) > 0:
-        logger.info(f"{nonint_loci}, {chrom_lp_sol[nonint_loci]}\n")
-    if len(nonint_loci) == 0:
-        logger.info("LP solution is integral. Returning.\n")
-        return init_sol, init_score
-
-    rround_sol = copy.copy(init_sol)
-    rround_sum = np.sum(init_sol)
-    best_score = init_score
-    for j in range(rand_iter):
-        ell_rand_n = copy.copy(chrom_lp_sol)
-        # for efficiency, only round `nonint_loci`
-        for idx in nonint_loci:
-            if random.random() <= chrom_lp_sol[idx]:
-                ell_rand_n[idx] = 1
-            else:
-                ell_rand_n[idx] = 0
-
-        score = _objective_function(
-            sol=ell_rand_n, scores=scores, gamma=gamma
-        )
-        sol_sum = np.sum(ell_rand_n)
-        is_feas = sol_sum <= np.floor(n * budget)
-        # if two solutions are equal in the objective, choose the sparser of the two
-        if (is_feas and score < best_score) or (
-            is_feas and score == best_score and sol_sum < rround_sum
-        ):
-            rround_sol = ell_rand_n
-            rround_sum = sol_sum
-            best_score = score
-
-    return rround_sol, best_score
 
 
 def chrom_solution_to_bed(
@@ -1232,48 +203,121 @@ def combine_chrom_results(
     return output_file
 
 
-def resolve_transformations(args: dict):
-    """Check if both savgol and medfilt transformations are invoked by CLI, resolve to medfilt if so.
+def score_central_tendency_chrom(
+    chrom_matrix,
+    method="quantile",
+    quantile=0.50,
+    tprop=0.05,
+    power=1.0,
+) -> np.ndarray:
+    r"""Return a column-wise location summary across samples."""
+    chrom_matrix = np.asarray(chrom_matrix, dtype=float)
+    if chrom_matrix.ndim != 2:
+        raise ValueError("`chrom_matrix` must be a 2D array.")
+    if chrom_matrix.shape[0] == 1:
+        return np.power(chrom_matrix[0, :], power)
 
-    :param args: Command-line arguments
-    :type args: dict
-    :return: Resolved command-line arguments
-    :rtype: dict
-    """
+    method_ = str(method).strip().lower().replace("-", "").replace("_", "")
+    central_tendency = None
 
-    savgol_params = {
-        "transform_savgol": args["transform_savgol"],
-        "transform_savgol_window_bp": args[
-            "transform_savgol_window_bp"
-        ],
-        "transform_savgol_order": args["transform_savgol_order"],
-    }
-
-    medfilt_params = {
-        "transform_medfilt": args["transform_medfilt"],
-        "transform_medfilt_kernel": args["transform_medfilt_kernel"],
-    }
-
-    savgol_on = (
-        savgol_params["transform_savgol"]
-        or args["transform_savgol_window_bp"] is not None
-        or args["transform_savgol_order"] is not None
-    )
-    medfilt_on = (
-        medfilt_params["transform_medfilt"]
-        or args["transform_medfilt_kernel"] is not None
-    )
-
-    if savgol_on and medfilt_on:
-        logger.warning(
-            f"savgol and medfilt transformations (`--transform_savgol` and `--transform_medfilt`) are mutually exclusive but are both indicated:\nsavgol:\n{savgol_params}\n\nmedfilt:\n{medfilt_params}.\n\nOnly one transformation can be applied at a time.\nUsing medfilt transformation..."
+    if method_ == "quantile":
+        if not 0.0 <= quantile <= 1.0:
+            logger.warning(
+                "`quantile` must be in [0, 1]. Using the median instead."
+            )
+            quantile = 0.50
+        if quantile == 0.50:
+            central_tendency = np.median(chrom_matrix, axis=0)
+        else:
+            central_tendency = np.quantile(
+                chrom_matrix,
+                quantile,
+                axis=0,
+                method="nearest",
+            )
+    elif method_ == "tmean":
+        # Trim each column to :math:`[q_{\alpha}, q_{1-\alpha}]` before averaging.
+        lower_limit = np.quantile(
+            chrom_matrix,
+            tprop,
+            axis=0,
+            method="nearest",
         )
-        savgol_on = False
-        args["transform_savgol"] = False
-        args["transform_savgol_window_bp"] = None
-        args["transform_savgol_order"] = None
-        args["transform_medfilt"] = True
-    return args
+        upper_limit = np.quantile(
+            chrom_matrix,
+            1.0 - tprop,
+            axis=0,
+            method="nearest",
+        )
+        central_tendency = np.array(
+            [
+                stats.tmean(
+                    chrom_matrix[:, idx],
+                    limits=(lower_limit[idx], upper_limit[idx]),
+                    inclusive=(True, True),
+                )
+                for idx in range(chrom_matrix.shape[1])
+            ],
+            dtype=float,
+        )
+    elif method_ == "mean":
+        central_tendency = np.mean(chrom_matrix, axis=0)
+
+    if central_tendency is None:
+        raise ValueError(f"Central tendency method not recognized: {method}")
+
+    return np.power(central_tendency, power)
+
+
+def score_dispersion_chrom(
+    chrom_matrix: np.ndarray,
+    method: str = "mad",
+    rng: Tuple[int, int] = (25, 75),
+    tprop: float = 0.05,
+    power: float = 1.0,
+) -> np.ndarray:
+    r"""Return a column-wise dispersion summary across samples."""
+    chrom_matrix = np.asarray(chrom_matrix, dtype=float)
+    if chrom_matrix.ndim != 2:
+        raise ValueError("`chrom_matrix` must be a 2D array.")
+    if chrom_matrix.shape[0] == 1:
+        return np.power(np.zeros_like(chrom_matrix[0, :]), power)
+
+    method_ = str(method).strip().lower().replace("-", "").replace("_", "")
+    dispersion = None
+
+    if method_ == "mad":
+        dispersion = stats.median_abs_deviation(chrom_matrix, axis=0)
+    elif method_ == "iqr":
+        dispersion = stats.iqr(chrom_matrix, rng=rng, axis=0)
+    elif method_ == "std":
+        dispersion = np.std(chrom_matrix, axis=0)
+    elif method_ == "tstd":
+        lower_limit = np.quantile(
+            chrom_matrix,
+            tprop,
+            axis=0,
+            method="nearest",
+        )
+        upper_limit = np.quantile(
+            chrom_matrix,
+            1.0 - tprop,
+            axis=0,
+            method="nearest",
+        )
+        dispersion = stats.tstd(
+            chrom_matrix,
+            limits=(lower_limit, upper_limit),
+            inclusive=(True, True),
+            axis=0,
+        )
+
+    if dispersion is None:
+        raise ValueError(
+            f"Dispersion method not recognized or could not execute: {method}"
+        )
+
+    return np.power(dispersion, power)
 
 
 def cscores_quantiles(
@@ -1281,7 +325,7 @@ def cscores_quantiles(
     quantiles: np.ndarray = None,
     add_newlines=True,
 ) -> str:
-    """Returns a formatted string of quantiles for a given array of 'locus scores' (:func:`score_chrom_linear()`)
+    """Return a formatted string of quantiles for a locus-score array.
 
     :param chrom_scores: locus scores (float) for a given chromosome
     :type chrom_scores: np.ndarray
@@ -1289,8 +333,6 @@ def cscores_quantiles(
     :type quantiles: np.ndarray, optional
     :return: pformatted string of quantiles
     :rtype: str
-
-    :seealso: :func:`score_chrom_linear()`
     """
     if quantiles is None:
         quantiles = np.array(
@@ -1348,8 +390,7 @@ def resolve_config(args):
             "genome": "hg38",
             "chroms": ["chr21", "chr22"],
             "int_tol": 0.01,
-            "verbose": true,
-            "solver": "pdlp"
+            "verbose": true
         }
 
     Can then run `rocco --config config.json [...]`.
@@ -1368,12 +409,9 @@ def resolve_config(args):
     return args_
 
 
-def main():
-    ID = str(int(uuid.uuid4().hex[:5], base=16))
-    logger.info(f"\nID: {ID}")
+def _build_parser() -> argparse.ArgumentParser:
     epilog_cli_help = (
         "\nGitHub (Homepage): <https://github.com/nolan-h-hamilton/ROCCO/>\n"
-        "Documentation: <https://nolan-h-hamilton.github.io/ROCCO/>\n"
         "Paper: <https://doi.org/10.1093/bioinformatics/btad725>\n"
     )
     parser = argparse.ArgumentParser(
@@ -1386,14 +424,14 @@ def main():
         "--input_files",
         "-i",
         nargs="+",
-        help="BAM alignment files or BigWig files corresponding to samples",
+        help="BAM alignment files corresponding to samples",
     )
     parser.add_argument(
         "--output",
         "--outfile",
         "-o",
         type=str,
-        default=f"rocco_peaks_output_{ID}.bed",
+        default=f"rocco_peaks_output_{str(int(uuid.uuid4().hex[:5], base=16))}.bed",
     )
     parser.add_argument(
         "--genome",
@@ -1435,454 +473,181 @@ def main():
         help="Invoke for verbose output",
     )
 
-    # optimization-related arguments
-    parser.add_argument(
-        "--solver",
-        default="pdlp",
-        choices=["glop", "pdlp", "GLOP", "PDLP"],
-        help="Solver to use for optimization. Default is pdlp (first-order pdhg method) but glop (simplex-based method) is also supported. See module documentation for more information.",
-    )
-    parser.add_argument(
-        "--int_tol",
-        type=float,
-        default=1.0e-6,
-        help="If a decision variable is within `int_tol` of 0 or 1, it is considered integral.",
-    )
-    parser.add_argument(
-        "--eps_mult",
-        type=float,
-        default=1.01,
-        help="Successively divides the floor_eps solution epsilon value until the floor_eps solution, floor(lp_solution + ε) is feasible.",
-    )
-    parser.add_argument(
-        "--rand_iter",
-        type=int,
-        default=1000,
-        help="Number of random iterations for the ROCCO-RR randomization procedure. If less than or equal to zero, ROCCO-RR is not applied and one of the floor-based heuristics is used to obtain an integer feasible solution.",
-    )
     parser.add_argument(
         "--budget",
         type=float,
         default=None,
-        help="Upper bounds the proportion of the genome that can be selected as open chromatin. NOTE: if invoked, this argument value will override the chromosome-specific budget values in (`--params`), assuming they were provided.",
+        help="Upper bounds the proportion of the genome that can be selected as open chromatin.",
+    )
+    parser.add_argument(
+        "--budget_strategy",
+        choices=["fixed", "empirical_bayes"],
+        default="empirical_bayes",
+        help="How chromosome-specific budget values are set. Default is empirical_bayes.",
+    )
+    parser.add_argument(
+        "--budget_null_draws",
+        type=int,
+        default=25,
+        help="Maximum number of null draws used when initializing chromosome budgets. Default is 25.",
     )
     parser.add_argument(
         "--scale_chrom_budgets",
         type=float,
         default=1.0,
-        help="This constant will scale each chromosome-specific budget if they are provided via `--params` or `--genome`.",
+        help="This constant scales each chromosome-specific budget.",
+    )
+    parser.add_argument("--gamma", type=float, default=None)
+    parser.add_argument(
+        "--gamma_strategy",
+        choices=["peak_width", "fixed"],
+        default="peak_width",
+        help="How chromosome-specific gamma values are set when `--gamma` is not supplied.",
     )
     parser.add_argument(
-        "--gamma",
+        "--gamma_scale",
         type=float,
-        default=None,
-        help='Gamma penalty in the optimization problem. Controls weight of the "fragmentation penalty" to promote spatial consistency over enriched regions and sparsity elsewhere.  NOTE: if invoked, this value will override the chromosome-specific gamma values (`--params`), assuming they were provided.',
+        default=0.5,
+        help="Scale factor used with the automatic gamma estimate.",
+    )
+    parser.add_argument(
+        "--gamma_context_min_span",
+        type=int,
+        default=3,
+        help="Minimum smoothing span used during width-based gamma estimation.",
+    )
+    parser.add_argument(
+        "--gamma_context_max_span",
+        type=int,
+        default=64,
+        help="Maximum candidate span, in loci, used during width-based gamma estimation.",
+    )
+    parser.add_argument(
+        "--gamma_context_band_z",
+        type=float,
+        default=1.0,
+        help="Controls the lower width bound used during gamma estimation.",
+    )
+    parser.add_argument(
+        "--gamma_context_max_order",
+        type=int,
+        default=5,
+        help="Maximum peak-separation order searched during width-based gamma estimation.",
     )
     parser.add_argument(
         "--params",
         type=str,
         default=None,
-        help="CSV file containing chromosome-specific optimization parameters. Each supported genome has a custom `--params` file packaged with ROCCO, but a custom file can be easily be created manually and passed to ROCCO with this argument. Consider using this argument to set chromosome-specific budget and gamma values custom to your data and preferences.",
+        help="CSV file containing chromosome-specific optimization parameters.",
     )
     parser.add_argument(
         "--threads",
         type=int,
         default=-1,
-        help="Number of threads to use for optimization. Default is -1 (use all available threads)",
+        help="Number of threads to use. Default is -1 (use available cores)",
     )
     parser.add_argument(
-        "--eps_optimal_absolute",
-        "--atol",
-        type=float,
-        default=1.0e-8,
-        help="pdlp solver only. One component of the bound on the duality gap used to check for convergence. If computational resources are limited, consider using `1.0e-4` per the `ortools` documentation",
-    )
-    parser.add_argument(
-        "--eps_optimal_relative",
-        "--rtol",
-        type=float,
-        default=1.0e-8,
-        help="pdlp solver only. One component of the bound on the duality gap used to check for convergence. If computational resources are limited, consider using `1.0e-4` per the `ortools` documentation",
-    )
-    parser.add_argument(
-        "--primal_feasibility_tolerance",
-        type=float,
-        default=1.0e-6,
-        help="glop solver only.",
-    )
-    parser.add_argument(
-        "--dual_feasibility_tolerance",
-        type=float,
-        default=1.0e-6,
-        help="glop solver only.",
-    )
-    parser.add_argument(
-        "--pdlp_presolve_use_glop",
-        default=True,
-        help="pdlp solver only. Use glop's presolve routines but solve with pdlp. Recommended for most cases.",
-    )
-    parser.add_argument(
-        "--loose_solve",
+        "--low_memory",
         action="store_true",
-        help="This will run pdlp (not glop) with weakened termination criteria. Consider using if computational resources are limited.",
+        default=False,
+        help="Use less memory by keeping large temporary matrices in single precision and using fewer processes automatically.",
     )
     parser.add_argument(
-        "--save_model",
-        type=str,
-        default=None,
-        help="Save the optimization model as an MPS file. If specified, the model will be saved to the provided path.",
-    )
-    parser.add_argument(
-        "--scale_gamma",
-        action="store_true",
-        help="If True, the fragmentation penalty (TV) is scaled by the difference in scores at the same position so that the penalty is inversely related to the score difference. Avoids penalizing fragmentation over intervals where the score change is large, and a shift in state is expected. Default is False.",
-    )
-    parser.add_argument(
-        "--scale_gamma_eps",
-        "--denom_const",
+        "--selection_penalty",
         type=float,
         default=None,
-        help="If `scale_gamma` is True, this value is added to the denominator in the fragmentation penalty to avoid division by zero. Only relevant if `--scale_gamma` is invoked.",
+        help="Direct penalty on selected loci. If supplied, `--budget` is ignored.",
     )
-    parser.add_argument(
-        "--scale_gamma_beta",
-        "--beta",
-        type=float,
-        default=None,
-        help="If `scale_gamma` is True, this value is used to exponentiate the denominator of the (dynamically-scaled) fragmentation penalty. Only relevant if `--scale_gamma` is also invoked.",
-    )
+    parser.add_argument("--scale_gamma", action="store_true")
+    parser.add_argument("--scale_gamma_eps", "--denom_const", type=float, default=None)
+    parser.add_argument("--scale_gamma_beta", "--beta", type=float, default=None)
 
-    # Scoring-related arguments
-    ## central tendency
     parser.add_argument(
-        "--c_1",
+        "--score_lower_bound_z",
         type=float,
         default=1.0,
-        help="Score parameter: coefficient for central tendency measure. Assumed positive in the default implementation",
+        help="Z-multiplier used to convert the WLS fit into a lower confidence bound score.",
     )
     parser.add_argument(
-        "--method_central_tendency",
-        "--score_central_tendency",
-        "--central_tendency",
-        dest="method_central_tendency",
-        default="quantile",
-        choices=["quantile", "tmean", "mean"],
-        help="Central tendency measure. Default is `quantile` with `quantile_value` set to 0.50 (median)",
-    )
-    parser.add_argument(
-        "--quantile_value",
+        "--score_prior_df",
         type=float,
-        default=0.50,
-        help="Quantile value for central tendency measure--Only applies if `method_central_tendency` is set to `quantile`",
-    )
-    parser.add_argument(
-        "--tprop",
-        type=float,
-        default=0.05,
-        help="Trim proportion for  (`tmean`)--Only applies for trimmed mean central tendency measure or dispersion measure `tstd`",
+        default=5.0,
+        help="Prior degrees of freedom for WLS variance shrinkage.",
     )
 
-    ## dispersion
-    parser.add_argument(
-        "--c_2",
-        type=float,
-        default=-1.0,
-        help="Score parameter: coefficient for dispersion measure. Assumed negative in the default implementation",
-    )
-    parser.add_argument(
-        "--method_dispersion",
-        "--score_dispersion",
-        "--dispersion",
-        dest="method_dispersion",
-        default="mad",
-        choices=["mad", "std", "iqr", "tstd"],
-        help="Dispersion measure.",
-    )
-
-    ## boundary
-    parser.add_argument(
-        "--c_3",
-        type=float,
-        default=1.0,
-        help="Score parameter: coefficient for boundary measure. Assumed positive in the default implementation",
-    )
-
-    ## Rescale scores
-    parser.add_argument(
-        "--rescale_parsig",
-        "--use_parsig",
-        default=True,
-        action="store_true",
-        dest="rescale_parsig",
-        help="Apply `rocco.parsig()` function to scores.",
-    )
-    parser.add_argument(
-        "--disable_parsig",
-        "--no_parsig",
-        action="store_false",
-        dest="rescale_parsig",
-        help="Disable `rocco.parsig()` function.",
-    )
-    parser.add_argument(
-        "--rescale_parsig_B",
-        "--parsig_B",
-        dest="rescale_parsig_B",
-        type=float,
-        default=None,
-        help="parsig function `B` parameter. Equivalent to the `--parsig_B` argument (location of inflection pt. in `rocco.parsig()` func.) Equivalent to the `--parsig_B` argument.",
-    )
-    parser.add_argument(
-        "--rescale_parsig_M",
-        "--parsig_M",
-        type=float,
-        dest="rescale_parsig_M",
-        default=None,
-        help="parsig function `M` parameter (supremum of `rocco.parsig()` func.) Equivalent to the `--parsig_M` argument.",
-    )
-    parser.add_argument(
-        "--rescale_parsig_R",
-        "--parsig_R",
-        dest="rescale_parsig_R",
-        type=float,
-        default=None,
-        help="parsig function `R` parameter (steepness of `rocco.parsig()` func).",
-    )
-    ## Neg. const added to final scores prior to optimization
-    parser.add_argument(
-        "--eps_neg",
-        type=float,
-        default=-1.0e-3,
-        help="Negative constant added to scores prior to optimization avoid selection of low-scoring regions only to exhaust the budget. Default is -1.0e-3. Not relevant if scores are already distributed over positive and negative values.",
-    )
-
-    # Count track/matrix generation and processing arguments
-    parser.add_argument(
-        "--step",
-        "-w",
-        type=int,
-        default=50,
-        help='Size of contiguous, fixed-width genomic intervals over which reads are counted (referred to as "loci" in the paper). Larger `--step` values will capture less substructure within peak regions, but this may be desired for some analyses and reduces runtime/memory use, as well. Default is 50 bp. If using BigWig files as input, this value is inferred from data and ignored. For BigWig input, the step must be consistent across all input files.',
-    )
+    parser.add_argument("--step", "-w", type=int, default=50)
     parser.add_argument(
         "--norm_method",
         default="RPGC",
-        choices=[
-            "RPGC",
-            "CPM",
-            "RPKM",
-            "BPM",
-            "rpgc",
-            "cpm",
-            "rpkm",
-            "bpm",
-        ],
-        help="Normalization method. Default is RPGC (Reads Per Genomic Content), for which the `--effective_genome_size` argument is required (default EGS values supplied automatically for supported genomes). If using BigWig files as input, this value has no effect.",
+        choices=["RPGC", "CPM", "RPKM", "BPM", "rpgc", "cpm", "rpkm", "bpm"],
+        help="Normalization method. Default is RPGC (Reads Per Genomic Content), for which the `--effective_genome_size` argument is required (default EGS values supplied automatically for supported genomes).",
     )
     parser.add_argument(
         "--min_mapping_score",
         type=int,
-        default=-1,
-        help="Equivalent to samtools view -q. If < 0 or using BigWig files as input, this value has no effect.",
+        default=10,
+        help="Equivalent to samtools view -q.",
     )
     parser.add_argument(
         "--flag_include",
         type=int,
         default=-1,
-        help="Equivalent to samtools view -f.  If < 0 or using BigWig files as input, this value has no effect.",
+        help="Equivalent to samtools view -f.",
     )
     parser.add_argument(
         "--flag_exclude",
         type=int,
         default=3844,
-        help="Equivalent to samtools view -F.  If using BigWig files as input, this value has no effect.",
+        help="Equivalent to samtools view -F.",
     )
     parser.add_argument(
         "--extend_reads",
         type=int,
         default=-1,
-        help="See `deeptools bamCoverage --extendReads`. If using BigWig files as input, this value has no effect.",
+        help="If < 0, reads are not extended. If 0, fragment length is estimated from the alignments. If > 0, reads are extended by that number of base pairs.",
     )
     parser.add_argument(
         "--center_reads",
         action="store_true",
-        help="See `deeptools bamCoverage --centerReads`.  If using BigWig files as input, this value has no effect.",
+        help="Center reads at the midpoint of the fragment length.",
     )
     parser.add_argument(
         "--ignore_for_norm",
         nargs="+",
         default=[],
-        help="Chromosomes to ignore for normalization.  If using BigWig files as input, this value has no effect.",
+        help="Chromosomes to ignore for normalization.",
     )
     parser.add_argument(
         "--scale_factor",
         type=float,
         default=1.0,
-        help="bamCoverage scale factor argument. See `deeptools bamCoverage --scaleFactor`.  If using BigWig files as input, this value has no effect.",
+        help="Scale factor applied after normalization.",
     )
-    parser.add_argument(
-        "--use_existing_bigwigs",
-        action="store_true",
-        help="If True, use existing BigWig files that were generated previously for the same BAM files instead of generating new ones.",
-    )
-    parser.add_argument(
-        "--round_digits",
-        type=int,
-        default=5,
-        help="Number of digits to round values to where applicable",
-    )
+    parser.add_argument("--round_digits", type=int, default=5)
 
-    # Count-matrix-transformation-related args
-
-    ## Savitzky-Golay filter
-    parser.add_argument(
-        "--transform_savgol",
-        "--use_savgol",
-        action="store_true",
-        dest="transform_savgol",
-        help="Use Savitzky-Golay filter (local least squares on k-degree polynomial coeffecients) on count tracks after normalization",
-    )
-    parser.add_argument(
-        "--transform_savgol_window_bp",
-        "--savgol_window_bp",
-        dest="transform_savgol_window_bp",
-        type=int,
-        default=None,
-        help="Window size for Savitzky-Golay filter in base pairs.",
-    )
-    parser.add_argument(
-        "--transform_savgol_order",
-        "--savgol_order",
-        dest="transform_savgol_order",
-        type=int,
-        default=None,
-        help="Polynomial degree for the least-squares approximation at each step. If None, the degree is set to roughly window_size//step - 3.",
-    )
-    ## Median filter
-    parser.add_argument(
-        "--transform_medfilt",
-        "--use_median_filter",
-        dest="transform_medfilt",
-        action="store_true",
-        help="Apply median filter to count tracks after normalization.",
-    )
-    parser.add_argument(
-        "--transform_medfilt_kernel",
-        "--median_filter_kernel",
-        dest="transform_medfilt_kernel",
-        type=int,
-        default=None,
-        help="Kernel (window) size for median filter in units of base pairs.",
-    )
-    ## Log (plus const) transformation
-    parser.add_argument(
-        "--transform_logpc",
-        "--transform_log_pc",
-        action="store_true",
-        dest="transform_logpc",
-        help="If invoked, count matrices will have their elements transformed as `log(x + 1)`.",
-    )
-    parser.add_argument(
-        "--transform_logpc_const",
-        "--log_const",
-        dest="transform_logpc_const",
-        type=float,
-        default=None,
-        help="Deprecated. No effect.",
-    )
-    ## Local ratio transformation
-    parser.add_argument(
-        "--transform_locratio",
-        "--transform_local_ratio",
-        dest="transform_locratio",
-        default=True,
-        action="store_true",
-        help="Apply local ratio transformation to count tracks after normalization.",
-    )
-    parser.add_argument(
-        "--disable_locratio",
-        "--no_locratio",
-        action="store_false",
-        dest="transform_locratio",
-        help="Disable local ratio transformation.",
-    )
-    parser.add_argument(
-        "--transform_locratio_window_bp",
-        "--local_ratio_window_bp",
-        dest="transform_locratio_window_bp",
-        type=int,
-        default=None,
-        help="Window size for local ratio transformation in base pairs.",
-    )
-    parser.add_argument(
-        "--transform_locratio_window_steps",
-        "--local_ratio_window_steps",
-        dest="transform_locratio_window_steps",
-        type=int,
-        default=None,
-        help="Window size for local ratio transformation in steps.",
-    )
-    parser.add_argument(
-        "--transform_locratio_eps",
-        "--local_ratio_pc",
-        dest="transform_locratio_eps",
-        type=float,
-        default=None,
-        help='Add to local_ref when computing local ratio "background" with median/savgol filter.',
-    )
-
-    # post-processing-related arguments
-    parser.add_argument(
-        "--min_length_bp",
-        type=int,
-        default=None,
-        help="Minimum length of regions to output in the final BED file",
-    )
-    parser.add_argument(
-        "--name_features",
-        action="store_true",
-        help="Deprecated: no effect.",
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Supply arguments with a JSON file. May override command-line arguments.",
-    )
-    parser.add_argument(
-        "--narrowPeak",
-        action="store_true",
-        default=False,
-        help="If True, an additional output narrowPeak file with statistics for each ROCCO-identified peak computed --agnostically-- with respect to the optimization problem addressed by ROCCO. Requires BAM input.",
-    )
+    parser.add_argument("--min_length_bp", type=int, default=None)
+    parser.add_argument("--config", type=str, default=None)
+    parser.add_argument("--narrowPeak", action="store_true", default=False)
     parser.add_argument(
         "--ecdf_samples",
         type=int,
         default=250,
-        help='Number of "null" genomic regions used to estimate the background CDF for each unique peak length. Only relevant if `--narrowPeak` is invoked.',
+        help="Number of background regions sampled for each representative length bin in the empirical null.",
     )
-    parser.add_argument(
-        "--ecdf_seed",
-        type=int,
-        default=42,
-        help='Random seed for selecting matched-length "background" regions for CDF estimation. Only relevant if `--narrowPeak` is invoked.',
-    )
-    parser.add_argument(
-        "--bamlist_txt",
-        type=str,
-        default=None,
-        help="File containing list of samples' BAM filepaths (absolute paths,one per line). Use if supplying related BigWig input to ROCCO for peak calling (e.g., Consenrich output) but still desire `--narrowPeak` output based on sequence alignment data. Only relevant if `--narrowPeak` is invoked.",
-    )
+    parser.add_argument("--ecdf_seed", type=int, default=42)
     parser.add_argument(
         "--ecdf_proc",
         type=int,
         default=None,
         dest="ecdf_proc",
-        help="Number of processors to use for estimating the background CDF for each unique peak length. Only relevant if `--narrowPeak` is invoked. If left None, one-half of the number of available CPUs will be used.",
+        help="Number of processes used to fit the binned empirical null for `--narrowPeak`.",
     )
+    return parser
 
+
+def _prepare_args(parser: argparse.ArgumentParser) -> dict:
     args = vars(parser.parse_args())
     args = resolve_config(args)
-
     if (
         len(sys.argv) == 1
         or args["input_files"] is None
@@ -1891,99 +656,71 @@ def main():
         parser.print_help(sys.stdout)
         sys.exit(0)
 
-    if any(
-        [
-            _get_input_type(args["input_files"][i]) == "bw"
-            for i in range(len(args["input_files"]))
-        ]
-    ):
-        bigwig_notice = """\nNote, some read counting/filtering/etc. options cannot be applied to
-        BigWig files, even if corresponding CLI arguments have been invoked. Ensure
-        that the read counts in the BigWig files are sufficient to represent the
-        experiments' data/sample alignments. Alternatively, you can directly supply
-        BAM files as input to ROCCO and use the appropriate command-line arguments
-        (e.g., `--step`, `--norm_method`, `--flag_include`, etc.) to ensure that the
-        read counts are computed according to your preferences.\n"""
-        logger.info(bigwig_notice)
-
-    args["solver"] = clean_string(args["solver"])
     args["norm_method"] = clean_string(args["norm_method"]).upper()
+    if args["low_memory"]:
+        if int(args["threads"]) <= 0:
+            total_cores = max(1, os.cpu_count() or 1)
+            args["threads"] = int(min(4, max(1, total_cores // 4)))
+        if (
+            "--budget_null_draws" not in sys.argv
+            and int(args["budget_null_draws"]) == int(parser.get_default("budget_null_draws"))
+        ):
+            args["budget_null_draws"] = 16
+
     if args["genome"] is not None:
         args["genome"] = clean_string(args["genome"])
-        if args["genome"] in GENOME_DICT:
-            if args["effective_genome_size"] is None:
-                args["effective_genome_size"] = GENOME_DICT[
-                    args["genome"]
-                ]["effective_genome_size"]
-            if args["chrom_sizes_file"] is None:
-                args["chrom_sizes_file"] = GENOME_DICT[
-                    args["genome"]
-                ]["sizes_file"]
-            if args["params"] is None:
-                args["params"] = GENOME_DICT[args["genome"]]["params"]
-        else:
+        if args["genome"] not in GENOME_DICT:
             raise ValueError(
-                f"Genome not found: {args['genome']}.\nAvailable genomes: {list(GENOME_DICT.keys())}.\nYou can also provide genome resources manually (e.g.,`-s/--chrom_sizes_file`, `--effective genome size`"
+                f"Genome not found: {args['genome']}. Available genomes: {list(GENOME_DICT.keys())}"
             )
+        if args["effective_genome_size"] is None:
+            args["effective_genome_size"] = GENOME_DICT[args["genome"]][
+                "effective_genome_size"
+            ]
+        if args["chrom_sizes_file"] is None:
+            args["chrom_sizes_file"] = GENOME_DICT[args["genome"]][
+                "sizes_file"
+            ]
+        if args["params"] is None:
+            args["params"] = GENOME_DICT[args["genome"]]["params"]
 
     if args["chrom_sizes_file"] is None:
         raise ValueError(
-            "A genome with default resources available was not specified with `-g/--genome`, and so a chromosome sizes file must be supplied with `-s/--chrom_sizes_file`"
+            "A chromosome sizes file must be supplied with `-s/--chrom_sizes_file` when genome defaults are unavailable."
         )
-
     if (
         args["effective_genome_size"] is None
         and args["norm_method"] == "RPGC"
     ):
         raise ValueError(
-            "A genome with default resources available was not specified with `-g/--genome`, and so `--norm_method RPGC` normalization, which requires an effective genome size, must be specified along with use of the `--effective_genome_size` argument."
+            "`--effective_genome_size` is required when using `--norm_method RPGC` without genome defaults."
         )
+    return args
 
+
+def _prepare_inputs(args: dict) -> tuple[list, list]:
     bam_files = []
-    bigwig_files = []
+    signal_inputs = []
     for file_ in args["input_files"]:
         if not os.path.exists(file_):
             raise FileNotFoundError(f"File not found: {file_}")
-        if _get_input_type(file_) == "bam":
-            logger.info(f"Input file: {file_}")
-            if (
-                args["ignore_for_norm"] is None
-                or len(args["ignore_for_norm"]) == 0
-            ):
-                args["ignore_for_norm"] = ["chrX", "chrY", "chrM"]
-            bw_file_ = generate_bigwig(
-                file_,
-                step=args["step"],
-                effective_genome_size=args["effective_genome_size"],
-                norm_method=args["norm_method"],
-                min_mapping_score=args["min_mapping_score"],
-                flag_include=args["flag_include"],
-                flag_exclude=args["flag_exclude"],
-                extend_reads=args["extend_reads"],
-                center_reads=args["center_reads"],
-                ignore_for_norm=args["ignore_for_norm"],
-                scale_factor=args["scale_factor"],
-                num_processors=args["threads"],
-                overwrite=args["use_existing_bigwigs"],
-            )
-            bigwig_files.append(bw_file_)
-            bam_files.append(file_)
-        elif _get_input_type(file_) == "bw":
-            bigwig_files.append(file_)
-        else:
-            raise ValueError(
-                "Input file must be a BAM alignment file or BigWig file"
-            )
-    logger.info(f"BigWig files: {bigwig_files}")
+        _get_input_type(file_)
+        bam_files.append(file_)
+        signal_inputs.append(file_)
 
-    chroms_to_process = get_chroms_and_sizes(
-        args["chrom_sizes_file"]
-    ).keys()
+    if args["ignore_for_norm"] is None or len(args["ignore_for_norm"]) == 0:
+        args["ignore_for_norm"] = ["chrX", "chrY", "chrM"]
+
+    return bam_files, signal_inputs
+
+
+def _resolve_chromosomes(args: dict) -> list:
+    chroms_to_process = list(
+        get_chroms_and_sizes(args["chrom_sizes_file"]).keys()
+    )
     if args["chroms"]:
         chroms_to_process = [
-            chrom
-            for chrom in chroms_to_process
-            if chrom in args["chroms"]
+            chrom for chrom in chroms_to_process if chrom in args["chroms"]
         ]
     if args["skip_chroms"]:
         chroms_to_process = [
@@ -1991,322 +728,565 @@ def main():
             for chrom in chroms_to_process
             if chrom not in args["skip_chroms"]
         ]
+    return chroms_to_process
 
-    logger.info(f"Chromosomes: {chroms_to_process}")
-    tmp_chrom_bed_files = []
+
+def _resolve_params_df(args: dict) -> pd.DataFrame | None:
+    if args["params"] is None:
+        return None
+    logger.info("Attempting to use custom parameters file: %s", args["params"])
+    return pd.read_csv(args["params"], sep=",")
+
+
+def _resolve_chrom_gamma(
+    chrom: str,
+    params_df: pd.DataFrame | None,
+    args: dict,
+    intervals: np.ndarray,
+) -> float:
+    params_gamma = None
+    if (
+        params_df is not None
+        and "chrom" in params_df.columns
+        and "gamma" in params_df.columns
+        and chrom in params_df["chrom"].values
+    ):
+        params_gamma = float(
+            params_df.loc[params_df["chrom"] == chrom]["gamma"].values[0]
+        )
+
+    if args["gamma"] is not None:
+        chrom_gamma = float(args["gamma"])
+        gamma_source = "user"
+    else:
+        chrom_gamma = float(params_gamma if params_gamma is not None else 1.0)
+        gamma_source = "params" if params_gamma is not None else "default"
+
+    try:
+        step = float(intervals[1] - intervals[0])
+        chrom_gamma = (float(chrom_gamma) / step) * 50.0
+    except Exception as exc:
+        logger.info("Could not scale gamma based on step size: %s", exc)
+    logger.info("%s fixed gamma source=%s value=%.6f", chrom, gamma_source, chrom_gamma)
+    return float(chrom_gamma)
+
+
+def _resolve_parallel_process_count(
+    item_count: int,
+    thread_limit: int,
+) -> int:
+    total_cores = (
+        max(1, os.cpu_count() or 1)
+        if int(thread_limit) <= 0
+        else max(1, int(thread_limit))
+    )
+    if int(item_count) <= 1 or int(total_cores) <= 1:
+        return 1
+    if "fork" not in mp.get_all_start_methods():
+        return 1
+    # Keep this conservative. The arrays are bigger than the solve.
+    return int(min(int(item_count), int(total_cores), 4))
+
+
+def _solve_cached_chromosome(chrom_: str) -> tuple[str, float, dict, str]:
+    state = _CHROM_SOLVE_PROCESS_STATE
+    if state is None:
+        raise RuntimeError("Chromosome solve state is not initialized")
+    chrom_data = state["chrom_cache"][chrom_]
+    chrom_budget = state["chrom_budgets"][chrom_]
+    chrom_gamma = chrom_data["gamma"]
+    if not np.all(np.isfinite(chrom_data["scores"])):
+        raise ValueError(f"{chrom_} scores contain non-finite values")
+    try:
+        chrom_budget = float(chrom_budget)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{chrom_} budget could not be read as a finite number") from exc
+    try:
+        chrom_gamma = float(chrom_gamma)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{chrom_} gamma could not be read as a finite number") from exc
+    if not np.isfinite(chrom_budget) or chrom_budget < 0.0:
+        raise ValueError(f"{chrom_} budget must be finite and non-negative")
+    if not np.isfinite(chrom_gamma) or chrom_gamma < 0.0:
+        raise ValueError(f"{chrom_} gamma must be finite and non-negative")
+    chrom_sol, chrom_obj, chrom_meta = solve_chrom_exact(
+        chrom_data["scores"],
+        budget=chrom_budget,
+        gamma=chrom_gamma,
+        beta=state["scale_gamma_beta"],
+        denom_const=state["scale_gamma_eps"],
+        scale_gamma=state["scale_gamma"],
+        selection_penalty=state["selection_penalty"],
+        return_details=True,
+    )
+    chrom_outfile = chrom_solution_to_bed(
+        chrom_,
+        chrom_data["intervals"],
+        chrom_sol,
+        state["run_id"],
+        check_gaps_intervals=True,
+        min_length_bp=state["min_length_bp"],
+    )
+    return chrom_, float(chrom_obj), chrom_meta, chrom_outfile
+
+
+def _build_chrom_cache(
+    chroms_to_process: list,
+    signal_inputs: list,
+    args: dict,
+    params_df: pd.DataFrame | None,
+) -> dict:
+    chrom_cache = {}
+    raw_peak_width_gamma = {}
+    raw_peak_width_gamma_var = {}
+    peak_width_context_source = None
+    shared_context_size = None
+    shared_context_meta = None
+    low_memory = bool(args.get("low_memory", False))
+    budget_null_processes = 1 if low_memory else _resolve_parallel_process_count(
+        int(args["budget_null_draws"]),
+        int(args["threads"]),
+    )
     for chrom_ in chroms_to_process:
-        chrom_budget = None
-        chrom_gamma = None
-        # check if chrom in params_df
-        if args["params"] is not None:
-            logger.info(
-                f"Attempting to use custom parameters file: {args['params']}"
-            )
-            params_df = pd.read_csv(args["params"], sep=",")
-            if chrom_ in params_df["chrom"].values:
-                # assign float values
-                chrom_budget = (
-                    params_df.loc[params_df["chrom"] == chrom_][
-                        "budget"
-                    ].values[0]
-                    * args["scale_chrom_budgets"]
-                )
-                chrom_gamma = params_df.loc[
-                    params_df["chrom"] == chrom_
-                ]["gamma"].values[0]
+        logger.info("Generating chromosome matrix: %s", chrom_)
+        chrom_intervals, chrom_matrix = generate_chrom_matrix(
+            chrom_,
+            signal_inputs,
+            args["chrom_sizes_file"],
+            args["step"],
+            round_digits=args["round_digits"],
+            effective_genome_size=args["effective_genome_size"],
+            norm_method=args["norm_method"],
+            min_mapping_score=args["min_mapping_score"],
+            flag_include=args["flag_include"],
+            flag_exclude=args["flag_exclude"],
+            extend_reads=args["extend_reads"],
+            center_reads=args["center_reads"],
+            ignore_for_norm=args["ignore_for_norm"],
+            scale_factor=args["scale_factor"],
+            num_processors=args["threads"],
+            low_memory=low_memory,
+        )
 
-        if chrom_budget is None or args["budget"] is not None:
-            chrom_budget = (
-                args["budget"] if args["budget"] is not None else 0.03
-            )
-
-        if chrom_gamma is None or args["gamma"] is not None:
-            chrom_gamma = (
-                args["gamma"] if args["gamma"] is not None else 1.0
-            )
-
-        # Computing chromosome-specific matrix of read counts/densities/enrichments...
-        logger.info(f"Generating chromosome matrix: {chrom_}")
-        chrom_intervals = None
-        chrom_matrix = None
-        args = resolve_transformations(args)
-        # logpc kwargs for rocco.readtracks.generate_chrom_matrix
-        logpc_kwargs = {
-            "transform_log_pc": args["transform_logpc"],
-            "log_const": args["transform_logpc_const"],
-        }
-        # logpc kwargs for rocco.readtracks.generate_chrom_matrix
-        locratio_kwargs = {
-            "transform_local_ratio": args["transform_locratio"],
-            "local_ratio_window_bp": args[
-                "transform_locratio_window_bp"
-            ],
-            "local_ratio_window_steps": args[
-                "transform_locratio_window_steps"
-            ],
-            "local_ratio_pc": args["transform_locratio_eps"],
-        }
-
-        if args["transform_savgol"]:
-            chrom_intervals, chrom_matrix = generate_chrom_matrix(
-                chrom_,
-                bigwig_files,
-                args["chrom_sizes_file"],
-                args["step"],
-                round_digits=args["round_digits"],
-                filter_type="savgol",
-                savgol_window_bp=args["transform_savgol_window_bp"],
-                savgol_order=args["transform_savgol_order"],
-                **logpc_kwargs,
-                **locratio_kwargs,
-            )
-        elif args["transform_medfilt"]:
-            chrom_intervals, chrom_matrix = generate_chrom_matrix(
-                chrom_,
-                bigwig_files,
-                args["chrom_sizes_file"],
-                args["step"],
-                round_digits=args["round_digits"],
-                filter_type="median",
-                medfilt_kernel_bp=args["transform_medfilt_kernel"],
-                **logpc_kwargs,
-                **locratio_kwargs,
-            )
-        else:
-            chrom_intervals, chrom_matrix = generate_chrom_matrix(
-                chrom_,
-                bigwig_files,
-                args["chrom_sizes_file"],
-                args["step"],
-                round_digits=args["round_digits"],
-                **logpc_kwargs,
-                **locratio_kwargs,
-            )
         if chrom_intervals is None or chrom_matrix is None:
-            logger.warning(
-                f"Skipping chromosome {chrom_}... no data found."
-            )
+            logger.warning("Skipping chromosome %s... no data found.", chrom_)
             continue
 
-        logger.info(
-            f"Chromosome {chrom_} Matrix: {chrom_matrix.shape}"
-        )
-
-        try:
-            step = float(chrom_intervals[1] - chrom_intervals[0])
-            chrom_gamma = (chrom_gamma / step) * 50.0
-        except Exception as e:
-            logger.info(
-                f"Could not scale gamma based on step size: {e}"
-            )
-
-        # Scoring phase
-        logger.info(f"Scoring regions: {chrom_}")
-
-        ct_scores = score_central_tendency_chrom(
+        logger.info("Chromosome %s matrix: %s", chrom_, chrom_matrix.shape)
+        if not np.all(np.isfinite(chrom_matrix)):
+            raise ValueError(f"{chrom_} matrix contains non-finite values")
+        chrom_scores, score_details = score_loci_wls(
             chrom_matrix,
-            method=args["method_central_tendency"],
-            quantile=args["quantile_value"],
-            tprop=args["tprop"],
+            lower_bound_z=args["score_lower_bound_z"],
+            prior_df=args["score_prior_df"],
+            low_memory=low_memory,
+            return_details=True,
         )
-        disp_scores = score_dispersion_chrom(
-            chrom_matrix,
-            method=args["method_dispersion"],
-            tprop=args["tprop"],
+        if not np.all(np.isfinite(chrom_scores)):
+            raise ValueError(f"{chrom_} scores contain non-finite values")
+        del chrom_matrix
+        centered_matrix = np.asarray(
+            score_details.pop("centered_matrix"),
+            dtype=np.float32 if low_memory else np.float64,
         )
-        boundary_scores = score_boundary_chrom(ct_scores)
-
-        if any(
-            [
-                x is not None
-                for x in [
-                    args["rescale_parsig_B"],
-                    args["rescale_parsig_R"],
-                    args["rescale_parsig_M"],
-                ]
-            ]
-        ):
-            args["rescale_parsig"] = True
-        if (
-            args["rescale_parsig"]
-            and args["rescale_parsig_B"] is None
-        ):
-            args["rescale_parsig_B"] = min(
-                (1 - chrom_budget) + 1.0e-03, 0.999
+        if not np.all(np.isfinite(centered_matrix)):
+            raise ValueError(f"{chrom_} centered matrix contains non-finite values")
+        budget_fraction_hat, budget_rate_meta = estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
+            centered_matrix,
+            observed_scores=chrom_scores,
+            lower_bound_z=args["score_lower_bound_z"],
+            prior_df=args["score_prior_df"],
+            dependence_lag_hint=max(
+                25,
+                int(score_details.get("local_baseline_window", 101)),
+            ),
+            num_null_draws=args["budget_null_draws"],
+            progress_label=f"Budget null {chrom_}",
+            num_processes=min(
+                int(args["budget_null_draws"]),
+                int(budget_null_processes),
+            ),
+            return_details=True,
+        )
+        del centered_matrix
+        if not np.isfinite(budget_fraction_hat):
+            raise ValueError(f"{chrom_} budget estimate is not finite")
+        budget_total_count_hat = float(
+            np.clip(
+                budget_rate_meta.get("effective_total_count", chrom_scores.shape[0]),
+                1.0,
+                chrom_scores.shape[0],
             )
-        if (
-            args["rescale_parsig"]
-            and args["rescale_parsig_R"] is None
-        ):
-            args["rescale_parsig_R"] = 2.0
-
-        chrom_scores = score_chrom_linear(
-            ct_scores,
-            disp_scores,
-            boundary_scores,
-            gamma=chrom_gamma,
-            c_1=args["c_1"],
-            c_2=args["c_2"],
-            c_3=args["c_3"],
-            eps_neg=args["eps_neg"],
-            parsig_B=args["rescale_parsig_B"],
-            parsig_R=args["rescale_parsig_R"],
-            parsig_M=args["rescale_parsig_M"],
         )
-        score_distr_str = cscores_quantiles(chrom_scores)
-        logger.info(f"\nChromosome {chrom_} scores:{score_distr_str}")
-
-        # Optimization phase
-        logger.info(f"Solving LP relaxation using {args['solver']}")
-        logger.info(
-            f"{chrom_}: budget: {chrom_budget}\tgamma: {chrom_gamma}"
-        )
-        if args["solver"] == "glop":
-            chrom_lp_sol, chrom_lp_score = (
-                solve_relaxation_chrom_glop(
-                    chrom_scores,
-                    budget=chrom_budget,
-                    gamma=chrom_gamma,
-                    threads=args["threads"],
-                    verbose=args["verbose"],
-                    glop_dual_feasibility_tolerance=args[
-                        "dual_feasibility_tolerance"
-                    ],
-                    glop_primal_feasibility_tolerance=args[
-                        "primal_feasibility_tolerance"
-                    ],
-                    save_model=args["save_model"],
-                    scale_gamma=args["scale_gamma"],
-                    denom_const=args["scale_gamma_eps"],
-                    beta=args["scale_gamma_beta"],
-                )
+        budget_count_hat = float(
+            np.clip(
+                budget_fraction_hat * budget_total_count_hat,
+                0.0,
+                budget_total_count_hat,
             )
-        elif args["solver"] == "pdlp":
-            chrom_lp_sol, chrom_lp_score = (
-                solve_relaxation_chrom_pdlp(
-                    chrom_scores,
-                    budget=chrom_budget,
-                    gamma=chrom_gamma,
-                    threads=args["threads"],
-                    verbose=args["verbose"],
-                    pdlp_presolve_options_use_glop=args[
-                        "pdlp_presolve_use_glop"
-                    ],
-                    pdlp_termination_criteria_eps_optimal_absolute=args[
-                        "eps_optimal_absolute"
-                    ],
-                    pdlp_termination_criteria_eps_optimal_relative=args[
-                        "eps_optimal_relative"
-                    ],
-                    pdlp_use_low_precision=args["loose_solve"],
-                    save_model=args["save_model"],
-                    scale_gamma=args["scale_gamma"],
-                    denom_const=args["scale_gamma_eps"],
-                    beta=args["scale_gamma_beta"],
-                )
-            )
-
-        logger.info(f"Refining relaxed solution for integrality")
-        chrom_rround_sol, chrom_rround_score = get_rround_sol(
-            chrom_lp_sol,
-            chrom_scores,
-            chrom_budget,
-            chrom_gamma,
-            rand_iter=args["rand_iter"],
-            int_tol=args["int_tol"],
-            eps_mult=args["eps_mult"],
         )
         logger.info(
-            f"\n\nChromosome {chrom_} Optimization Results (Desired: Ratio ~ 1)\
-            \nLP-Bound Ideal: {round(chrom_lp_score, 4)}\
-            \nAttained ROCCO-RR Performance: {round(chrom_rround_score, 4)}\
-            \nROCCO-RR:LP-Ideal Ratio: {round(chrom_rround_score / chrom_lp_score, 8)}\n\n"
-        )
-
-        logger.info(f"Chromosome {chrom_}: Writing solution to BED")
-        chrom_outfile = chrom_solution_to_bed(
+            "%s WLS scores:%s",
             chrom_,
-            chrom_intervals,
-            chrom_rround_sol,
-            ID,
-            check_gaps_intervals=True,
-            min_length_bp=args["min_length_bp"],
+            cscores_quantiles(chrom_scores),
+        )
+        logger.info(
+            "%s raw budget estimate: %s",
+            chrom_,
+            budget_rate_meta,
+        )
+        chrom_gamma = None
+        gamma_meta = None
+        if not (args["gamma"] is None and args["gamma_strategy"] == "peak_width"):
+            chrom_gamma = _resolve_chrom_gamma(
+                chrom_,
+                params_df,
+                args,
+                chrom_intervals,
+            )
+        chrom_cache[chrom_] = {
+            "intervals": chrom_intervals,
+            "scores": chrom_scores,
+            "gamma": chrom_gamma,
+            "gamma_meta": gamma_meta,
+            "budget_count_hat": float(budget_count_hat),
+            "budget_fraction_hat": float(budget_fraction_hat),
+            "budget_rate_meta": budget_rate_meta,
+            "total_count": float(budget_total_count_hat),
+            "num_loci": int(chrom_scores.shape[0]),
+        }
+
+    if (
+        args["gamma"] is None
+        and args["gamma_strategy"] == "peak_width"
+        and len(chrom_cache) > 0
+    ):
+        peak_width_context_source = max(
+            chrom_cache,
+            key=lambda chrom: int(chrom_cache[chrom]["num_loci"]),
+        )
+        source_scores = np.clip(
+            np.asarray(chrom_cache[peak_width_context_source]["scores"], dtype=np.float64),
+            0.0,
+            None,
+        )
+        logger.info(
+            "Estimating shared context size from %s with %s loci.",
+            peak_width_context_source,
+            int(chrom_cache[peak_width_context_source]["num_loci"]),
+        )
+        try:
+            context_point, width_lower, width_upper, shared_context_meta = (
+                estimate_context_size(
+                    source_scores,
+                    min_span=args["gamma_context_min_span"],
+                    max_span=args["gamma_context_max_span"],
+                    band_z=args["gamma_context_band_z"],
+                    max_order=args["gamma_context_max_order"],
+                    return_details=True,
+                )
+            )
+            shared_context_size = (
+                int(context_point),
+                int(width_lower),
+                int(width_upper),
+            )
+            logger.info(
+                "%s shared context-size estimate: %s",
+                peak_width_context_source,
+                {
+                    "context_size_point": int(context_point),
+                    "context_size_lower": int(width_lower),
+                    "context_size_upper": int(width_upper),
+                    "num_features": int(shared_context_meta["num_features"]),
+                    "best_order": int(shared_context_meta["best_order"]),
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not estimate shared width-informed context from %s; falling back to fixed gamma. %s",
+                peak_width_context_source,
+                exc,
+            )
+            shared_context_size = None
+
+        for chrom_ in chrom_cache:
+            if shared_context_size is None:
+                chrom_cache[chrom_]["gamma"] = _resolve_chrom_gamma(
+                    chrom_,
+                    params_df,
+                    args,
+                    chrom_cache[chrom_]["intervals"],
+                )
+                chrom_cache[chrom_]["gamma_meta"] = {
+                    "context_source_chrom": peak_width_context_source,
+                    "shared_context_failed": 1,
+                }
+                continue
+            try:
+                chrom_gamma, gamma_meta = estimate_gamma_from_scores(
+                    chrom_cache[chrom_]["scores"],
+                    gamma_scale=args["gamma_scale"],
+                    min_span=args["gamma_context_min_span"],
+                    max_span=args["gamma_context_max_span"],
+                    band_z=args["gamma_context_band_z"],
+                    max_order=args["gamma_context_max_order"],
+                    context_size_summary=shared_context_size,
+                )
+                gamma_meta = {
+                    **gamma_meta,
+                    "context_source_chrom": peak_width_context_source,
+                    "context_source_num_loci": int(
+                        chrom_cache[peak_width_context_source]["num_loci"]
+                    ),
+                    "context_source_num_features": int(
+                        shared_context_meta["num_features"]
+                    ),
+                }
+                raw_peak_width_gamma[chrom_] = float(chrom_gamma)
+                raw_peak_width_gamma_var[chrom_] = float(
+                    gamma_meta.get("log_gamma_var", 1.0)
+                )
+                chrom_cache[chrom_]["gamma"] = float(chrom_gamma)
+                chrom_cache[chrom_]["gamma_meta"] = gamma_meta
+                logger.info(
+                    "%s raw width-informed gamma estimate: %s",
+                    chrom_,
+                    gamma_meta,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Could not estimate width-informed gamma for %s; falling back to fixed gamma. %s",
+                    chrom_,
+                    exc,
+                )
+                chrom_cache[chrom_]["gamma"] = _resolve_chrom_gamma(
+                    chrom_,
+                    params_df,
+                    args,
+                    chrom_cache[chrom_]["intervals"],
+                )
+                chrom_cache[chrom_]["gamma_meta"] = {
+                    "context_source_chrom": peak_width_context_source,
+                    "shared_context_failed": 0,
+                    "gamma_fallback_reason": str(exc),
+                }
+
+    if len(raw_peak_width_gamma) > 0:
+        shrunk_gamma, gamma_shrink_meta = shrink_gamma_estimates(
+            raw_peak_width_gamma,
+            raw_peak_width_gamma_var,
+        )
+        logger.info(
+            "Genome-wide gamma shrinkage summary: %s",
+            gamma_shrink_meta,
+        )
+        for chrom_, gamma_ in shrunk_gamma.items():
+            chrom_cache[chrom_]["gamma"] = float(gamma_)
+            chrom_cache[chrom_]["gamma_meta"] = {
+                **(chrom_cache[chrom_].get("gamma_meta") or {}),
+                "gamma_shrunk": float(gamma_),
+                "shrinkage_prior_mean": float(gamma_shrink_meta["prior_mean"]),
+                "shrinkage_prior_tau_sq": float(gamma_shrink_meta["prior_tau_sq"]),
+            }
+    return chrom_cache
+
+
+def _resolve_budgets(
+    chrom_cache: dict,
+    params_df: pd.DataFrame | None,
+    args: dict,
+) -> tuple[dict, dict]:
+    if args["budget_strategy"] == "empirical_bayes":
+        chrom_budget_counts = {
+            chrom: chrom_cache[chrom]["budget_count_hat"]
+            for chrom in chrom_cache
+        }
+        chrom_total_counts = {
+            chrom: chrom_cache[chrom]["total_count"]
+            for chrom in chrom_cache
+        }
+        chrom_budgets, budget_meta = estimate_empirical_bayes_budgets(
+            chrom_budget_counts,
+            chrom_total_counts,
+        )
+        if (
+            args["budget"] is not None
+            and budget_meta["genome_wide_budget"] > 0
+        ):
+            rescale = (
+                float(args["budget"]) / budget_meta["genome_wide_budget"]
+            )
+        else:
+            rescale = 1.0
+        chrom_budgets = {
+            chrom: min(
+                max(
+                    chrom_budgets[chrom]
+                    * rescale
+                    * float(args["scale_chrom_budgets"]),
+                    1.0e-4,
+                ),
+                0.5,
+            )
+            for chrom in chrom_budgets
+        }
+        logger.info("Empirical-Bayes budget prior: %s", budget_meta)
+        return chrom_budgets, budget_meta
+
+    chrom_budgets = {}
+    for chrom in chrom_cache:
+        chrom_budget = None
+        if (
+            params_df is not None
+            and "chrom" in params_df.columns
+            and "budget" in params_df.columns
+            and chrom in params_df["chrom"].values
+        ):
+            chrom_budget = float(
+                params_df.loc[params_df["chrom"] == chrom]["budget"].values[0]
+            )
+        if chrom_budget is None or args["budget"] is not None:
+            chrom_budget = (
+                float(args["budget"])
+                if args["budget"] is not None
+                else 0.03
+            )
+        chrom_budgets[chrom] = (
+            float(chrom_budget) * float(args["scale_chrom_budgets"])
+        )
+    return chrom_budgets, {
+        "genome_wide_budget": float(np.mean(list(chrom_budgets.values()))),
+        "prior_strength": 0.0,
+    }
+
+
+def _solve_cached_chromosomes(
+    chrom_cache: dict,
+    chrom_budgets: dict,
+    args: dict,
+    run_id: str,
+) -> list:
+    tmp_chrom_bed_files = []
+    solve_processes = _resolve_parallel_process_count(
+        len(chrom_cache),
+        int(args["threads"]),
+    )
+    for chrom_, chrom_data in chrom_cache.items():
+        chrom_budget = chrom_budgets[chrom_]
+        chrom_gamma = chrom_data["gamma"]
+        logger.info(
+            "%s: budget=%s gamma=%s",
+            chrom_,
+            round(chrom_budget, 6),
+            round(chrom_gamma, 6),
+        )
+    global _CHROM_SOLVE_PROCESS_STATE
+    _CHROM_SOLVE_PROCESS_STATE = {
+        "chrom_cache": chrom_cache,
+        "chrom_budgets": chrom_budgets,
+        "scale_gamma_beta": args["scale_gamma_beta"],
+        "scale_gamma_eps": args["scale_gamma_eps"],
+        "scale_gamma": args["scale_gamma"],
+        "selection_penalty": args["selection_penalty"],
+        "min_length_bp": args["min_length_bp"],
+        "run_id": run_id,
+    }
+
+    try:
+        if solve_processes > 1:
+            # Use fork here so the chromosome score arrays do not get copied up front.
+            ctx = mp.get_context("fork")
+            with ctx.Pool(processes=solve_processes) as pool:
+                solve_results = pool.map(_solve_cached_chromosome, list(chrom_cache))
+        else:
+            solve_results = [_solve_cached_chromosome(chrom_) for chrom_ in chrom_cache]
+    finally:
+        _CHROM_SOLVE_PROCESS_STATE = None
+
+    for chrom_, chrom_obj, chrom_meta, chrom_outfile in solve_results:
+        logger.info(
+            "%s solve: selected=%s (%.6f), selection_penalty=%.6f, objective=%.4f",
+            chrom_,
+            chrom_meta["selected_count"],
+            chrom_meta["selected_fraction"],
+            chrom_meta["selection_penalty"],
+            chrom_obj,
         )
         tmp_chrom_bed_files.append(chrom_outfile)
+    return tmp_chrom_bed_files
+
+
+def _generate_narrowpeak_if_requested(args: dict, final_output: str):
+    if not args["narrowPeak"]:
+        return
+    try:
+        narrowpeak_filepath = final_output.replace(".bed", ".narrowPeak")
+        posthoc_scores.score_peaks(
+            args["input_files"],
+            args["chrom_sizes_file"],
+            final_output,
+            count_matrix_file=final_output.replace(".bed", ".counts.tsv"),
+            output_file=narrowpeak_filepath,
+            ecdf_nsamples=args["ecdf_samples"],
+            seed=args["ecdf_seed"],
+            proc=args["ecdf_proc"],
+        )
+        logger.info("Final narrowPeak output: %s", narrowpeak_filepath)
+    except Exception as exc:
+        logger.info(
+            "\nCould not generate narrowPeak-formatted output\n%s",
+            exc,
+        )
+
+
+def main():
+    run_id = str(int(uuid.uuid4().hex[:5], base=16))
+    logger.info("\nID: %s", run_id)
+    parser = _build_parser()
+    args = _prepare_args(parser)
+
+    bam_files, signal_inputs = _prepare_inputs(args)
+    logger.info("Signal inputs: %s", signal_inputs)
+
+    chroms_to_process = _resolve_chromosomes(args)
+    logger.info("Chromosomes: %s", chroms_to_process)
+    params_df = _resolve_params_df(args)
+    chrom_cache = _build_chrom_cache(
+        chroms_to_process,
+        signal_inputs,
+        args,
+        params_df,
+    )
+    chrom_budgets, _ = _resolve_budgets(chrom_cache, params_df, args)
+    tmp_chrom_bed_files = _solve_cached_chromosomes(
+        chrom_cache,
+        chrom_budgets,
+        args,
+        run_id,
+    )
 
     logger.info("Combining chromosome solutions")
     final_output = combine_chrom_results(
-        tmp_chrom_bed_files, args["output"], name_features=False
-    )  # --name_features is deprecated
+        tmp_chrom_bed_files,
+        args["output"],
+        name_features=False,
+    )
     if os.path.exists(final_output):
-        logger.info(f"Final BED output: {final_output}")
+        logger.info("Final BED output: %s", final_output)
 
     logger.info("Cleaning up temporary files")
     for tmp_file in tmp_chrom_bed_files:
         try:
             os.remove(tmp_file)
-        except Exception as e:
+        except Exception as exc:
             logger.info(
-                f"\nCould not remove chromosome-specific temp. file: {tmp_file}\n{e}"
+                "Could not remove chromosome-specific temp. file %s\n%s",
+                tmp_file,
+                exc,
             )
-    try:
-        if args["narrowPeak"]:
-            narrowPeak_filepath = final_output.replace(
-                ".bed", ".narrowPeak"
-            )
-            logger.info(
-                f"Generating narrowPeak file: {narrowPeak_filepath}"
-            )
-            if (
-                all(
-                    [
-                        file_.endswith(".bam")
-                        for file_ in args["input_files"]
-                    ]
-                )
-                and args["bamlist_txt"] is None
-            ):
-                posthoc_scores.score_peaks(
-                    args["input_files"],
-                    args["chrom_sizes_file"],
-                    final_output,
-                    count_matrix_file=final_output.replace(
-                        ".bed", ".counts.tsv"
-                    ),
-                    output_file=narrowPeak_filepath,
-                    ecdf_nsamples=args["ecdf_samples"],
-                    seed=args["ecdf_seed"],
-                    proc=args["ecdf_proc"],
-                )
-                logger.info(
-                    f"Final narrowPeak output: {narrowPeak_filepath}"
-                )
-            elif args["bamlist_txt"] is not None and os.path.exists(
-                args["bamlist_txt"]
-            ):
-                posthoc_scores.score_peaks(
-                    args["bamlist_txt"],
-                    args["chrom_sizes_file"],
-                    final_output,
-                    count_matrix_file=final_output.replace(
-                        ".bed", ".counts.tsv"
-                    ),
-                    output_file=narrowPeak_filepath,
-                    ecdf_nsamples=args["ecdf_samples"],
-                    seed=args["ecdf_seed"],
-                    proc=args["ecdf_proc"],
-                )
-                logger.info(
-                    f"Final narrowPeak output: {narrowPeak_filepath}"
-                )
-            else:
-                logger.warning(
-                    "Ignoring `--narrowPeak`: requires BAM inputs or `--bamlist_txt`"
-                )
-    except Exception as e:
-        logger.info(
-            f"\nCould not generate narrowPeak-formatted output\n{e}"
-        )
+
+    _generate_narrowpeak_if_requested(args, final_output)
 
 
 if __name__ == "__main__":
