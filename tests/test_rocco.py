@@ -813,6 +813,31 @@ def test_prepare_args_low_memory_uses_conservative_defaults(monkeypatch):
 
 
 @pytest.mark.correctness
+def test_narrowpeak_sidecar_names_do_not_require_bed_suffix(monkeypatch):
+    captured = {}
+
+    def fake_score_peaks(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(ROCCO_IMPL.posthoc_scores, "score_peaks", fake_score_peaks)
+    ROCCO_IMPL._generate_narrowpeak_if_requested(
+        {
+            "narrowPeak": True,
+            "input_files": ["a.bam"],
+            "chrom_sizes_file": "ref.sizes",
+            "ecdf_samples": 250,
+            "ecdf_seed": 42,
+            "ecdf_proc": 1,
+        },
+        "testAtac",
+    )
+    assert captured["args"][2] == "testAtac"
+    assert captured["kwargs"]["count_matrix_file"] == "testAtac.counts.tsv"
+    assert captured["kwargs"]["output_file"] == "testAtac.narrowPeak"
+
+
+@pytest.mark.correctness
 def test_removed_scoring_api_deleted():
     assert not hasattr(rocco_module, "parsig")
     assert not hasattr(rocco_module, "score_chrom_linear")

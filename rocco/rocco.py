@@ -1246,12 +1246,17 @@ def _generate_narrowpeak_if_requested(args: dict, final_output: str):
     if not args["narrowPeak"]:
         return
     try:
-        narrowpeak_filepath = final_output.replace(".bed", ".narrowPeak")
+        output_root, output_ext = os.path.splitext(final_output)
+        if output_ext.lower() == ".bed":
+            sidecar_root = output_root
+        else:
+            sidecar_root = final_output
+        narrowpeak_filepath = f"{sidecar_root}.narrowPeak"
         posthoc_scores.score_peaks(
             args["input_files"],
             args["chrom_sizes_file"],
             final_output,
-            count_matrix_file=final_output.replace(".bed", ".counts.tsv"),
+            count_matrix_file=f"{sidecar_root}.counts.tsv",
             output_file=narrowpeak_filepath,
             ecdf_nsamples=args["ecdf_samples"],
             seed=args["ecdf_seed"],
