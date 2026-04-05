@@ -14,6 +14,7 @@ from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
+import pyBigWig
 
 try:
     from . import _hts_counts
@@ -71,7 +72,103 @@ def _get_track_type(track_file: str) -> str:
     ext = os.path.splitext(track_file)[1].lower().lstrip(".")
     if ext == "bam":
         return "bam"
-    raise ValueError(f"Unsupported input file type for `{track_file}`. Expected BAM.")
+    if ext in {"bw", "bigwig"}:
+        return "bigwig"
+    raise ValueError(
+        f"Unsupported input file type for `{track_file}`. Expected BAM or bigWig."
+    )
+
+
+def get_bigwig_chrom_scores(
+    bigwig_file: str,
+    chromosome: str,
+    chrom_sizes_file: str,
+    const_scale: float = 1.0,
+    round_digits: int = 5,
+):
+    r"""Read one chromosome score track directly from a bigWig file."""
+
+    if not os.path.exists(bigwig_file):
+        raise FileNotFoundError(f"bigWig file not found: {bigwig_file}")
+    if not os.path.exists(chrom_sizes_file):
+        raise FileNotFoundError(f"Chromosome sizes file not found: {chrom_sizes_file}")
+
+    chrom_sizes_dict = get_chroms_and_sizes(chrom_sizes_file)
+    if chromosome not in chrom_sizes_dict:
+        raise ValueError(
+            f"Chromosome {chromosome} not found in chromosome sizes file: {chrom_sizes_file}"
+        )
+
+    bw = pyBigWig.open(bigwig_file)
+    if bw is None:
+        raise RuntimeError(f"Could not open bigWig file: {bigwig_file}")
+    try:
+        chrom_sizes = bw.chroms()
+        if chromosome not in chrom_sizes:
+            logger.warning(
+                "Chromosome %s not found in bigWig file: %s. Returning (None,None).",
+                chromosome,
+                bigwig_file,
+            )
+            return None, None
+        intervals_raw = bw.intervals(chromosome)
+    finally:
+        bw.close()
+
+    if intervals_raw is None or len(intervals_raw) == 0:
+        logger.warning(
+            "No intervals found in bigWig file: %s for chromosome: %s. Returning (None,None).",
+            bigwig_file,
+            chromosome,
+        )
+        return None, None
+
+    starts = np.asarray([int(entry[0]) for entry in intervals_raw], dtype=np.int64)
+    ends = np.asarray([int(entry[1]) for entry in intervals_raw], dtype=np.int64)
+    vals = np.asarray([float(entry[2]) for entry in intervals_raw], dtype=np.float64)
+    if not np.all(np.isfinite(vals)):
+        raise ValueError(
+            f"bigWig values for {bigwig_file} {chromosome} contain non-finite entries"
+        )
+
+    widths = ends - starts
+    if np.any(widths <= 0):
+        raise ValueError(
+            f"bigWig intervals for {bigwig_file} {chromosome} contain non-positive widths"
+        )
+    step = int(widths[0])
+    if np.any(widths != step):
+        raise ValueError(
+            f"bigWig file {bigwig_file} uses variable-width bins on {chromosome}; ROCCO expects a fixed-width binning scheme"
+        )
+
+    offset = int(starts[0])
+    idx = starts - offset
+    if np.any(idx % step != 0):
+        raise ValueError(
+            f"bigWig starts for {bigwig_file} {chromosome} are not aligned to a single fixed binning scheme"
+        )
+    idx = (idx // step).astype(np.int64, copy=False)
+    if np.unique(idx).size != idx.size:
+        raise ValueError(
+            f"bigWig file {bigwig_file} has overlapping or duplicate bins on {chromosome}"
+        )
+
+    full_intervals = np.arange(
+        int(starts[0]),
+        int(starts[-1]) + step,
+        step,
+        dtype=np.int64,
+    )
+    full_vals = np.zeros(full_intervals.size, dtype=np.float64)
+    full_vals[idx] = vals
+
+    if const_scale >= 0:
+        if const_scale == 0:
+            logger.warning("You are scaling the values by 0.")
+        full_vals = full_vals * float(const_scale)
+
+    return full_intervals.astype(int), np.round(full_vals, round_digits)
 
 
 def _estimate_fragment_length(
@@ -426,45 +523,65 @@ def generate_chrom_matrix(
     num_processors: int = -1,
     low_memory: bool = False,
 ):
-    r"""Create a matrix of read counts for a given chromosome from BAM files."""
+    r"""Create a matrix of values for a given chromosome from BAM or bigWig files."""
 
     interval_matrix = []
     vals_matrix = []
+    track_types = {_get_track_type(input_file) for input_file in input_files}
+    if len(track_types) != 1:
+        raise ValueError("All input files must share the same type.")
+    track_type = next(iter(track_types))
     count_processes, bam_threads = _resolve_parallel_bam_counting(
         len(input_files),
         num_processors,
     )
     count_args = []
-    for input_file in input_files:
-        _get_track_type(input_file)
-        count_args.append(
-            (
-                input_file,
-                chromosome,
-                chrom_sizes_file,
-                step,
-                effective_genome_size,
-                norm_method,
-                min_mapping_score,
-                flag_include,
-                flag_exclude,
-                extend_reads,
-                center_reads,
-                ignore_for_norm,
-                scale_factor,
-                bam_threads,
-                const_scale,
-                round_digits,
-                scale_by_step,
+    if track_type == "bam":
+        for input_file in input_files:
+            count_args.append(
+                (
+                    input_file,
+                    chromosome,
+                    chrom_sizes_file,
+                    step,
+                    effective_genome_size,
+                    norm_method,
+                    min_mapping_score,
+                    flag_include,
+                    flag_exclude,
+                    extend_reads,
+                    center_reads,
+                    ignore_for_norm,
+                    scale_factor,
+                    bam_threads,
+                    const_scale,
+                    round_digits,
+                    scale_by_step,
+                )
             )
-        )
-
-    if count_processes > 1:
-        ctx = multiprocessing.get_context("fork")
-        with ctx.Pool(processes=count_processes) as pool:
-            count_results = pool.starmap(get_bam_chrom_reads, count_args)
+        if count_processes > 1:
+            ctx = multiprocessing.get_context("fork")
+            with ctx.Pool(processes=count_processes) as pool:
+                count_results = pool.starmap(get_bam_chrom_reads, count_args)
+        else:
+            count_results = [get_bam_chrom_reads(*args_) for args_ in count_args]
     else:
-        count_results = [get_bam_chrom_reads(*args_) for args_ in count_args]
+        for input_file in input_files:
+            count_args.append(
+                (
+                    input_file,
+                    chromosome,
+                    chrom_sizes_file,
+                    const_scale,
+                    round_digits,
+                )
+            )
+        if count_processes > 1:
+            ctx = multiprocessing.get_context("fork")
+            with ctx.Pool(processes=count_processes) as pool:
+                count_results = pool.starmap(get_bigwig_chrom_scores, count_args)
+        else:
+            count_results = [get_bigwig_chrom_scores(*args_) for args_ in count_args]
 
     for input_file, (intervals_, vals_) in zip(input_files, count_results):
         if intervals_ is None or vals_ is None:
@@ -480,6 +597,12 @@ def generate_chrom_matrix(
         )
         return None, None
     common_intervals = np.sort(np.unique(np.concatenate(interval_matrix, axis=0)))
+    if track_type == "bigwig" and common_intervals.size > 1:
+        interval_diffs = np.diff(common_intervals)
+        if np.unique(interval_diffs).size != 1:
+            raise ValueError(
+                f"bigWig inputs for {chromosome} do not share one fixed binning scheme"
+            )
     matrix_dtype = np.float32 if low_memory else np.float64
     count_matrix = np.zeros(
         (len(interval_matrix), len(common_intervals)),

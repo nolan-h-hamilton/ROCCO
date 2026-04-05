@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pyBigWig
 import pysam
 import pytest
 
@@ -129,6 +130,31 @@ def _write_single_end_fragment_bam(
     pysam.sort("-o", str(bam_path), str(unsorted_path))
     os.remove(unsorted_path)
     pysam.index(str(bam_path))
+
+
+def _write_toy_bigwig(
+    bigwig_path: Path,
+    chrom_size: int = 500,
+    entries: list[tuple[int, int, float]] | None = None,
+):
+    if entries is None:
+        entries = [
+            (0, 50, 0.0),
+            (50, 100, 1.5),
+            (100, 150, -0.5),
+            (150, 200, 2.0),
+        ]
+    bw = pyBigWig.open(str(bigwig_path), "w")
+    try:
+        bw.addHeader([("chr1", int(chrom_size))])
+        bw.addEntries(
+            ["chr1"] * len(entries),
+            [int(start) for start, _, _ in entries],
+            ends=[int(end) for _, end, _ in entries],
+            values=[float(value) for _, _, value in entries],
+        )
+    finally:
+        bw.close()
 
 
 def _load_bed_records(bed_file: str) -> list[tuple[str, int, int]]:
@@ -610,6 +636,7 @@ def test_build_chrom_cache_partially_pools_context_sizes(monkeypatch):
         "ignore_for_norm": [],
         "scale_factor": 1.0,
         "threads": 1,
+        "input_track_type": "bam",
         "score_lower_bound_z": 1.0,
         "score_prior_df": 5.0,
         "score_precision_floor_ratio": 0.01,
@@ -706,6 +733,26 @@ def test_generate_chrom_matrix_low_memory_uses_float32(tmp_path):
 
 
 @pytest.mark.correctness
+def test_generate_chrom_matrix_reads_bigwig_scores_directly(tmp_path):
+    bw_path = tmp_path / "toy.bw"
+    chrom_sizes_path = tmp_path / "toy_bw.sizes"
+    chrom_sizes_path.write_text("chr1\t500\n", encoding="utf-8")
+    _write_toy_bigwig(bw_path)
+
+    intervals, score_matrix = generate_chrom_matrix(
+        "chr1",
+        [str(bw_path)],
+        str(chrom_sizes_path),
+        step=999,
+        round_digits=6,
+    )
+
+    assert intervals.tolist() == [0, 50, 100, 150]
+    assert score_matrix.shape == (1, 4)
+    assert np.allclose(score_matrix[0], np.array([0.0, 1.5, -0.5, 2.0]))
+
+
+@pytest.mark.correctness
 def test_native_fragment_length_estimation_for_single_end_bam(tmp_path):
     bam_path = tmp_path / "single_end_frag.bam"
     _write_single_end_fragment_bam(bam_path, fragment_length=80, read_length=30)
@@ -766,6 +813,108 @@ def test_raw_count_matrix_uses_native_interval_counter(tmp_path):
     assert rows[1] == "chr1_90_110\t1"
     assert rows[2] == "chr1_100_150\t2"
     assert rows[3] == "chr1_150_210\t2"
+
+
+@pytest.mark.correctness
+def test_build_chrom_cache_uses_bigwig_scores_directly(monkeypatch):
+    direct_budget_calls = []
+
+    def fake_generate_chrom_matrix(chrom, *args, **kwargs):
+        return np.array([0, 50, 100, 150], dtype=int), np.array(
+            [
+                [0.0, 2.0, 1.0, 0.0],
+                [0.0, 3.0, 2.0, 0.0],
+            ],
+            dtype=float,
+        )
+
+    def fail_score_loci_wls(*args, **kwargs):
+        raise AssertionError("bigWig inputs should bypass WLS scoring")
+
+    def fake_budget_estimator(scores, **kwargs):
+        direct_budget_calls.append(np.asarray(scores, dtype=float))
+        return 0.05, {"effective_total_count": float(len(scores))}
+
+    def fake_estimate_context_size(vals, **kwargs):
+        return 6, 4, 8, {
+            "feature_indices": np.array([1, 2], dtype=np.int64),
+            "feature_scores_log": np.array([1.0, 0.8], dtype=float),
+            "num_features": 2,
+            "tau_sq_hat": 0.1,
+            "context_log_mean": float(np.log(6.0)),
+            "context_log_mean_var": 0.5,
+            "context_max_span": 64,
+            "best_order": 1,
+        }
+
+    def fake_estimate_gamma_from_scores(scores, **kwargs):
+        return 3.0, {
+            "gamma_scale": float(kwargs["gamma_scale"]),
+            "signal_scale": 1.0,
+            "context_size_point": int(kwargs["context_size_summary"][0]),
+            "context_size_lower": int(kwargs["context_size_summary"][1]),
+            "context_size_upper": int(kwargs["context_size_summary"][2]),
+            "num_features": 2,
+            "feature_detection_order": 1,
+        }
+
+    monkeypatch.setattr(ROCCO_IMPL, "generate_chrom_matrix", fake_generate_chrom_matrix)
+    monkeypatch.setattr(ROCCO_IMPL, "score_loci_wls", fail_score_loci_wls)
+    monkeypatch.setattr(
+        ROCCO_IMPL,
+        "estimate_budget_nonnull_fraction_from_score_track",
+        fake_budget_estimator,
+    )
+    monkeypatch.setattr(
+        ROCCO_IMPL,
+        "estimate_context_size",
+        fake_estimate_context_size,
+    )
+    monkeypatch.setattr(
+        ROCCO_IMPL,
+        "estimate_gamma_from_scores",
+        fake_estimate_gamma_from_scores,
+    )
+
+    args = {
+        "chrom_sizes_file": None,
+        "step": 50,
+        "round_digits": 5,
+        "effective_genome_size": None,
+        "norm_method": "RPGC",
+        "min_mapping_score": 0,
+        "flag_include": None,
+        "flag_exclude": None,
+        "extend_reads": 0,
+        "center_reads": False,
+        "ignore_for_norm": [],
+        "scale_factor": 1.0,
+        "threads": 1,
+        "input_track_type": "bigwig",
+        "score_lower_bound_z": 1.0,
+        "score_prior_df": 5.0,
+        "score_min_effect": None,
+        "score_precision_floor_ratio": 0.01,
+        "budget_null_draws": 4,
+        "gamma": None,
+        "gamma_scale": 0.5,
+        "gamma_context_min_span": 3,
+        "gamma_context_max_span": 64,
+        "gamma_context_band_z": 1.0,
+        "gamma_context_max_order": 5,
+    }
+
+    chrom_cache = ROCCO_IMPL._build_chrom_cache(
+        ["chr1"],
+        ["track1.bw", "track2.bw"],
+        args,
+        None,
+    )
+
+    assert len(direct_budget_calls) == 1
+    assert np.allclose(direct_budget_calls[0], np.array([0.0, 2.5, 1.5, 0.0]))
+    assert np.allclose(chrom_cache["chr1"]["scores"], np.array([0.0, 2.5, 1.5, 0.0]))
+    assert chrom_cache["chr1"]["gamma"] == 3.0
 
 
 @pytest.mark.correctness

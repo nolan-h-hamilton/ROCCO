@@ -5,7 +5,7 @@ r"""
 ROCCO: [R]obust [O]pen [C]hromatin Detection via [C]onvex [O]ptimization
 ==========================================================================
 
-Run ROCCO on BAM files.
+Run ROCCO on BAM or bigWig files.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from rocco.dp import solve_chrom_exact
 from rocco.inference import (
     estimate_empirical_bayes_budgets,
     estimate_budget_nonnull_fraction_from_wild_bootstrap_null,
+    estimate_budget_nonnull_fraction_from_score_track,
     estimate_context_size,
     estimate_gamma_from_scores,
     score_loci_wls,
@@ -112,13 +113,13 @@ def _write_bed_records(
 
 
 def _get_input_type(input_file: str) -> str:
-    r"""Determine if `input_file` is a BAM file
+    r"""Determine the supported ROCCO input type from the filename extension.
 
     The file type is determined by the file extension: '.bam', etc. and is not robust
     to incorrectly labelled files.
 
     :raises ValueError: If file extension is not supported
-    :return: a string (extension) representing the file type
+    :return: a string representing the file type
     :rtype: str
 
     """
@@ -127,11 +128,13 @@ def _get_input_type(input_file: str) -> str:
 
     if file_ext in ["bam"]:
         file_type = "bam"
+    elif file_ext in ["bw", "bigwig"]:
+        file_type = "bigwig"
     elif file_ext in ["bed", "bedgraph", "bg", "wig", "wiggle"]:
-        bedgraph_notice = "\nBedGraph and wiggle-like inputs are not supported. Input files must be BAM alignments.\n"
+        bedgraph_notice = "\nBedGraph and wiggle-like inputs are not supported. Input files must be BAM alignments or bigWig tracks.\n"
         raise ValueError(bedgraph_notice)
     if file_type is None:
-        raise ValueError("Input file must be a BAM alignment file")
+        raise ValueError("Input file must be a BAM alignment file or bigWig track")
     return file_type
 
 
@@ -456,7 +459,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--input_files",
         "-i",
         nargs="+",
-        help="BAM alignment files corresponding to samples",
+        help="BAM alignment files or pre-scored bigWig tracks corresponding to samples",
     )
     parser.add_argument(
         "--version",
@@ -615,12 +618,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Lower bound on moderated variance as a fraction of the prior variance before computing standard errors.",
     )
 
-    parser.add_argument("--step", "-w", type=int, default=50)
+    parser.add_argument(
+        "--step",
+        "-w",
+        type=int,
+        default=50,
+        help="Bin width used for BAM inputs. Ignored for bigWig inputs, which use their native binning scheme.",
+    )
     parser.add_argument(
         "--norm_method",
         default="RPGC",
         choices=["RPGC", "CPM", "RPKM", "BPM", "rpgc", "cpm", "rpkm", "bpm"],
-        help="Normalization method. Default is RPGC (Reads Per Genomic Content), for which the `--effective_genome_size` argument is required (default EGS values supplied automatically for supported genomes).",
+        help="Normalization method for BAM inputs. Default is RPGC (Reads Per Genomic Content), for which the `--effective_genome_size` argument is required (default EGS values supplied automatically for supported genomes).",
     )
     parser.add_argument(
         "--min_mapping_score",
@@ -721,11 +730,20 @@ def _prepare_args(parser: argparse.ArgumentParser) -> dict:
         if args["params"] is None:
             args["params"] = GENOME_DICT[args["genome"]]["params"]
 
+    input_types = {_get_input_type(file_) for file_ in args["input_files"]}
+    if len(input_types) != 1:
+        raise ValueError("All input files must share the same type.")
+    args["input_track_type"] = next(iter(input_types))
+
     if args["chrom_sizes_file"] is None:
         raise ValueError(
             "A chromosome sizes file must be supplied with `-s/--chrom_sizes_file` when genome defaults are unavailable."
         )
-    if args["effective_genome_size"] is None and args["norm_method"] == "RPGC":
+    if (
+        args["input_track_type"] == "bam"
+        and args["effective_genome_size"] is None
+        and args["norm_method"] == "RPGC"
+    ):
         raise ValueError(
             "`--effective_genome_size` is required when using `--norm_method RPGC` without genome defaults."
         )
@@ -735,11 +753,15 @@ def _prepare_args(parser: argparse.ArgumentParser) -> dict:
 def _prepare_inputs(args: dict) -> tuple[list, list]:
     bam_files = []
     signal_inputs = []
+    expected_input_type = str(args.get("input_track_type", "")).strip().lower()
     for file_ in args["input_files"]:
         if not os.path.exists(file_):
             raise FileNotFoundError(f"File not found: {file_}")
-        _get_input_type(file_)
-        bam_files.append(file_)
+        input_type = _get_input_type(file_)
+        if expected_input_type != "" and input_type != expected_input_type:
+            raise ValueError("All input files must share the same type.")
+        if input_type == "bam":
+            bam_files.append(file_)
         signal_inputs.append(file_)
 
     if args["ignore_for_norm"] is None or len(args["ignore_for_norm"]) == 0:
@@ -840,7 +862,9 @@ def _partially_pool_context_summaries(
     log_mean_vars = np.array(
         [
             max(
-                float(chrom_context_summaries[chrom][1].get("context_log_mean_var", 1.0)),
+                float(
+                    chrom_context_summaries[chrom][1].get("context_log_mean_var", 1.0)
+                ),
                 1.0e-6,
             )
             for chrom in chroms
@@ -988,46 +1012,80 @@ def _build_chrom_cache(
         logger.info("Chromosome %s matrix: %s", chrom_, chrom_matrix.shape)
         if not np.all(np.isfinite(chrom_matrix)):
             raise ValueError(f"{chrom_} matrix contains non-finite values")
-        chrom_scores, score_details = score_loci_wls(
-            chrom_matrix,
-            lower_bound_z=args["score_lower_bound_z"],
-            prior_df=args["score_prior_df"],
-            min_effect=args.get("score_min_effect"),
-            precision_floor_ratio=args["score_precision_floor_ratio"],
-            low_memory=low_memory,
-            return_details=True,
-        )
-        if not np.all(np.isfinite(chrom_scores)):
-            raise ValueError(f"{chrom_} scores contain non-finite values")
-        del chrom_matrix
-        centered_matrix = np.asarray(
-            score_details.pop("centered_matrix"),
-            dtype=np.float32 if low_memory else np.float64,
-        )
-        if not np.all(np.isfinite(centered_matrix)):
-            raise ValueError(f"{chrom_} centered matrix contains non-finite values")
-        budget_fraction_hat, budget_rate_meta = (
-            estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
-                centered_matrix,
-                observed_scores=chrom_scores,
+        # skip WLS, note that multiple bigwigs really should _not_ be supplied unless it makes sense to aggregate via central tendency
+        if args["input_track_type"] == "bigwig":
+            if chrom_matrix.shape[0] > 1:
+                logger.warning(
+                    "Multiple bigwig tracks detected for %s. ROCCO will aggregate these via column-wise central tendency rather than WLS. If this is not the intended behavior, please supply a single bigwig track per chromosome or use BAM inputs.",
+                    chrom_,
+                )
+            chrom_scores = np.asarray(
+                score_central_tendency_chrom(
+                    chrom_matrix,
+                    method="quantile",
+                    quantile=0.50,
+                    power=1.0,
+                ),
+                dtype=np.float64,
+            )
+            if not np.all(np.isfinite(chrom_scores)):
+                raise ValueError(f"{chrom_} direct scores contain non-finite values")
+            score_details = {
+                "mean": chrom_scores.astype(np.float64, copy=False),
+            }
+            budget_fraction_hat, budget_rate_meta = (
+                estimate_budget_nonnull_fraction_from_score_track(
+                    chrom_scores,
+                    num_null_draws=args["budget_null_draws"],
+                    progress_label=f"Budget null {chrom_}",
+                    num_processes=min(
+                        int(args["budget_null_draws"]),
+                        int(budget_null_processes),
+                    ),
+                    return_details=True,
+                )
+            )
+        else:
+            chrom_scores, score_details = score_loci_wls(
+                chrom_matrix,
                 lower_bound_z=args["score_lower_bound_z"],
                 prior_df=args["score_prior_df"],
                 min_effect=args.get("score_min_effect"),
                 precision_floor_ratio=args["score_precision_floor_ratio"],
-                dependence_lag_hint=max(
-                    25,
-                    int(score_details.get("local_baseline_window", 101)),
-                ),
-                num_null_draws=args["budget_null_draws"],
-                progress_label=f"Budget null {chrom_}",
-                num_processes=min(
-                    int(args["budget_null_draws"]),
-                    int(budget_null_processes),
-                ),
+                low_memory=low_memory,
                 return_details=True,
             )
-        )
-        del centered_matrix
+            if not np.all(np.isfinite(chrom_scores)):
+                raise ValueError(f"{chrom_} scores contain non-finite values")
+            centered_matrix = np.asarray(
+                score_details.pop("centered_matrix"),
+                dtype=np.float32 if low_memory else np.float64,
+            )
+            if not np.all(np.isfinite(centered_matrix)):
+                raise ValueError(f"{chrom_} centered matrix contains non-finite values")
+            budget_fraction_hat, budget_rate_meta = (
+                estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
+                    centered_matrix,
+                    observed_scores=chrom_scores,
+                    lower_bound_z=args["score_lower_bound_z"],
+                    prior_df=args["score_prior_df"],
+                    min_effect=args.get("score_min_effect"),
+                    precision_floor_ratio=args["score_precision_floor_ratio"],
+                    dependence_lag_hint=max(
+                        25,
+                        int(score_details.get("local_baseline_window", 101)),
+                    ),
+                    num_null_draws=args["budget_null_draws"],
+                    progress_label=f"Budget null {chrom_}",
+                    num_processes=min(
+                        int(args["budget_null_draws"]),
+                        int(budget_null_processes),
+                    ),
+                    return_details=True,
+                )
+            )
+            del centered_matrix
+        del chrom_matrix
         if not np.isfinite(budget_fraction_hat):
             raise ValueError(f"{chrom_} budget estimate is not finite")
         budget_total_count_hat = float(
@@ -1044,11 +1102,12 @@ def _build_chrom_cache(
                 budget_total_count_hat,
             )
         )
-        logger.info(
-            "%s WLS scores:%s",
-            chrom_,
-            cscores_quantiles(chrom_scores),
+        score_label = (
+            "direct input scores"
+            if args["input_track_type"] == "bigwig"
+            else "WLS scores"
         )
+        logger.info("%s %s:%s", chrom_, score_label, cscores_quantiles(chrom_scores))
         logger.info(
             "%s raw budget estimate: %s",
             chrom_,
@@ -1084,17 +1143,21 @@ def _build_chrom_cache(
         raw_context_summaries: dict[str, tuple[tuple[int, int, int], dict]] = {}
         for chrom_ in chrom_cache:
             try:
-                context_point, width_lower, width_upper, context_meta = estimate_context_size(
-                    np.clip(
-                        np.asarray(chrom_cache[chrom_]["effect_mean"], dtype=np.float64),
-                        0.0,
-                        None,
-                    ),
-                    min_span=args["gamma_context_min_span"],
-                    max_span=args["gamma_context_max_span"],
-                    band_z=args["gamma_context_band_z"],
-                    max_order=args["gamma_context_max_order"],
-                    return_details=True,
+                context_point, width_lower, width_upper, context_meta = (
+                    estimate_context_size(
+                        np.clip(
+                            np.asarray(
+                                chrom_cache[chrom_]["effect_mean"], dtype=np.float64
+                            ),
+                            0.0,
+                            None,
+                        ),
+                        min_span=args["gamma_context_min_span"],
+                        max_span=args["gamma_context_max_span"],
+                        band_z=args["gamma_context_band_z"],
+                        max_order=args["gamma_context_max_order"],
+                        return_details=True,
+                    )
                 )
                 raw_context_summaries[chrom_] = (
                     (
@@ -1258,6 +1321,11 @@ def _solve_cached_chromosomes(
 
 def _generate_narrowpeak_if_requested(args: dict, final_output: str):
     if not args["narrowPeak"]:
+        return
+    if args.get("input_track_type") != "bam":
+        logger.info(
+            "Skipping narrowPeak generation because posthoc peak scoring requires BAM inputs."
+        )
         return
     try:
         output_root, output_ext = os.path.splitext(final_output)

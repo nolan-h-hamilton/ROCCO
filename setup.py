@@ -389,6 +389,7 @@ setup(
         "scipy",
         "pandas",
         "pysam",
+        "pyBigWig",
     ],
     extras_require={"pytest": ["pytest>=6.0.1"]},
     entry_points={"console_scripts": ["rocco = rocco.rocco:main"]},
