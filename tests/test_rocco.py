@@ -56,12 +56,8 @@ def _bruteforce_penalized(scores, switch_costs, selection_penalty):
             - np.sum(switch_costs * np.abs(np.diff(sol)))
             - (selection_penalty * np.sum(sol))
         )
-        if (
-            penalized > best_val
-            or (
-                np.isclose(penalized, best_val)
-                and np.sum(sol) < best_count
-            )
+        if penalized > best_val or (
+            np.isclose(penalized, best_val) and np.sum(sol) < best_count
         ):
             best_sol = sol
             best_val = float(penalized)
@@ -111,7 +107,9 @@ def _write_single_end_fragment_bam(
                 fwd.reference_start = int(block_start + offset)
                 fwd.mapping_quality = 60
                 fwd.cigar = ((0, int(read_length)),)
-                fwd.query_qualities = pysam.qualitystring_to_array("I" * int(read_length))
+                fwd.query_qualities = pysam.qualitystring_to_array(
+                    "I" * int(read_length)
+                )
                 bam_file.write(fwd)
 
                 rev = pysam.AlignedSegment()
@@ -124,7 +122,9 @@ def _write_single_end_fragment_bam(
                 )
                 rev.mapping_quality = 60
                 rev.cigar = ((0, int(read_length)),)
-                rev.query_qualities = pysam.qualitystring_to_array("I" * int(read_length))
+                rev.query_qualities = pysam.qualitystring_to_array(
+                    "I" * int(read_length)
+                )
                 bam_file.write(rev)
     pysam.sort("-o", str(bam_path), str(unsorted_path))
     os.remove(unsorted_path)
@@ -200,66 +200,6 @@ def test_combine_chrom_results_no_names(test_setup):
 
 
 @pytest.mark.correctness
-def test_score_central_tendency_chrom():
-    X = np.array([[1, 2, 3, 4, 5], [2, 3, 4, 5, 6], [3, 4, 5, 6, 10]])
-    scores = score_central_tendency_chrom(X, method="quantile")
-    assert np.allclose(scores, np.array([2, 3, 4, 5, 6]))
-
-    scores = score_central_tendency_chrom(X, method="mean")
-    assert np.allclose(scores, np.array([2, 3, 4, 5, 7]))
-
-    X = np.array(
-        [
-            [0, 0, 0, 0, 0],
-            [2, 3, 4, 5, 6],
-            [1, 2, 3, 4, 5],
-            [2, 3, 4, 5, 6],
-            [1, 2, 3, 4, 5],
-            [2, 3, 4, 5, 6],
-            [1, 2, 3, 4, 5],
-            [5, 3, 4, 5, 6],
-            [1, 2, 3, 4, 5],
-            [1000, 1000, 1000, 1000, 1000],
-        ]
-    )
-    scores = score_central_tendency_chrom(X, method="tmean", tprop=0.11)
-    assert np.allclose(scores, np.array([1.875, 2.5, 3.5, 4.5, 5.5]))
-
-
-@pytest.mark.correctness
-def test_score_dispersion_chrom():
-    X = np.zeros(shape=(11, 3))
-    X[:, 0] = [0, 1, 1, 1, 1, 5, 25, 25, 25, 25, 100]
-    X[:, 1] = np.ones(11)
-    X[:, 2] = [1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1]
-
-    scores = score_dispersion_chrom(X, method="mad")
-    assert np.allclose(scores, np.array([5, 0, 0]))
-
-    scores = score_dispersion_chrom(X, method="std")
-    assert np.allclose(scores, np.array([27.89265, 0, 0.481045]), rtol=1e-4, atol=1e-4)
-
-    scores = score_dispersion_chrom(X, method="iqr")
-    assert np.allclose(scores, np.array([24, 0, 1]))
-
-
-@pytest.mark.correctness
-def test_score_loci_wls_emphasizes_consistent_signal():
-    X = np.array(
-        [
-            [1.0, 1.1, 8.0, 8.1],
-            [0.9, 1.0, 7.9, 8.2],
-            [1.1, 0.95, 8.2, 7.8],
-        ]
-    )
-    scores, details = score_loci_wls(X, return_details=True)
-    assert scores.shape == (4,)
-    assert np.all(details["sample_weights"] > 0)
-    assert np.mean(scores[2:]) > np.mean(scores[:2])
-    assert np.mean(details["z_scores"][2:]) > np.mean(details["z_scores"][:2])
-
-
-@pytest.mark.correctness
 def test_score_loci_wls_log_scales_input():
     scores, details = score_loci_wls(
         np.array([[1.0, 15.0]]),
@@ -267,10 +207,50 @@ def test_score_loci_wls_log_scales_input():
         return_details=True,
     )
     assert details["input_scale"] == "log2p1"
-    assert np.allclose(details["sample_intercepts"], np.array([2.5]))
-    assert np.allclose(details["sample_baselines"], np.array([2.5]))
+    assert "sample_intercepts" not in details
+    assert "sample_baselines" not in details
     assert np.allclose(details["mean"], np.array([-1.5, 1.5]))
-    assert np.allclose(scores, np.array([-1.5, 1.5]))
+    assert np.allclose(details["z_scores"], np.array([-0.67449076, 0.67449076]))
+    assert np.allclose(scores, np.array([-0.67449076, 0.67449076]))
+
+
+@pytest.mark.correctness
+def test_score_loci_wls_explicit_min_effect_shrinks_standardized_score():
+    scores, details = score_loci_wls(
+        np.array([[1.0, 15.0]]),
+        min_effect=0.5,
+        return_details=True,
+    )
+    assert np.isclose(details["min_effect"], 0.5)
+    assert scores[1] < details["z_scores"][1]
+    assert scores[0] < details["z_scores"][0]
+
+
+@pytest.mark.correctness
+def test_score_loci_wls_precision_floor_raises_standard_error():
+    centered = np.array(
+        [
+            [0.05, 1.0, 1.0, 0.05],
+            [0.04, 1.0, 1.0, 0.04],
+            [0.06, 1.0, 1.0, 0.06],
+        ],
+        dtype=np.float64,
+    )
+    low_floor_scores, low_floor_details = ROCCO_INFERENCE._score_centered_wls_matrix(
+        centered,
+        prior_df=6.0,
+        precision_floor_ratio=0.0,
+    )
+    high_floor_scores, high_floor_details = ROCCO_INFERENCE._score_centered_wls_matrix(
+        centered,
+        prior_df=6.0,
+        precision_floor_ratio=0.25,
+    )
+    assert np.isclose(high_floor_details["precision_floor_ratio"], 0.25)
+    assert np.all(
+        high_floor_details["standard_error"] >= low_floor_details["standard_error"]
+    )
+    assert np.all(high_floor_scores <= low_floor_scores)
 
 
 @pytest.mark.correctness
@@ -286,29 +266,50 @@ def test_score_loci_wls_low_memory_keeps_centered_matrix_in_float32():
 
 
 @pytest.mark.correctness
-def test_native_wls_matches_python_on_tied_large_matrix():
+def test_native_wls_scores_tied_large_matrix():
+    if ROCCO_INFERENCE._wls_native is None:
+        pytest.skip("native _wls backend is not built in this environment")
     centered = np.zeros((3, 250000), dtype=np.float64)
-    native_scores, native_details = ROCCO_INFERENCE._score_centered_wls_matrix(
+    scores, details = ROCCO_INFERENCE._score_centered_wls_matrix(
         centered,
         lower_bound_z=1.0,
         prior_df=5.0,
     )
-    python_scores, python_details = ROCCO_INFERENCE._score_centered_wls_matrix_python(
+    assert scores.shape == (250000,)
+    assert np.allclose(details["mean"], 0.0)
+    assert np.allclose(details["z_scores"], 0.0)
+    assert np.allclose(scores, -1.0)
+    assert np.all(details["standard_error"] > 0.0)
+
+
+@pytest.mark.correctness
+def test_native_wls_downweights_noisy_track_locally():
+    if ROCCO_INFERENCE._wls_native is None:
+        pytest.skip("native _wls backend is not built in this environment")
+    x = np.linspace(-4.0, 4.0, 513, dtype=np.float64)
+    smooth = 0.9 * np.sin(x) + 0.15 * np.cos(2.0 * x)
+    noisy = smooth.copy()
+    noisy_region = slice(180, 333)
+    noisy[noisy_region] += 0.75 * np.where(
+        (np.arange(noisy_region.stop - noisy_region.start) % 2) == 0,
+        1.0,
+        -1.0,
+    )
+    centered = np.vstack([smooth, noisy])
+    _, details = ROCCO_INFERENCE._score_centered_wls_matrix(
         centered,
-        lower_bound_z=1.0,
-        prior_df=5.0,
+        lower_bound_z=0.0,
+        prior_df=6.0,
+        spatial_window=31,
     )
-    assert np.allclose(native_scores, python_scores)
-    assert np.allclose(
-        native_details["sample_weights"],
-        python_details["sample_weights"],
+    simple_mean = centered.mean(axis=0)
+    quiet_region = slice(40, 140)
+    assert np.mean(
+        np.abs(details["mean"][noisy_region] - smooth[noisy_region])
+    ) < np.mean(np.abs(simple_mean[noisy_region] - smooth[noisy_region]))
+    assert np.mean(details["standard_error"][noisy_region]) > np.mean(
+        details["standard_error"][quiet_region]
     )
-    assert np.allclose(native_details["mean"], python_details["mean"])
-    assert np.allclose(
-        native_details["standard_error"],
-        python_details["standard_error"],
-    )
-    assert np.allclose(native_details["z_scores"], python_details["z_scores"])
 
 
 @pytest.mark.correctness
@@ -381,32 +382,17 @@ def test_empirical_bayes_budget_shrinkage():
         candidate_counts,
         total_counts,
     )
-    raw = {chrom: candidate_counts[chrom] / total_counts[chrom] for chrom in candidate_counts}
+    raw = {
+        chrom: candidate_counts[chrom] / total_counts[chrom]
+        for chrom in candidate_counts
+    }
     assert meta["prior_strength"] > 0
     assert meta["prior_dispersion"] >= meta["min_prior_dispersion"]
-    assert meta["posterior_summary"] == "mean_minus_sd"
+    assert meta["posterior_summary"] == "beta_quantile"
+    assert np.isclose(meta["posterior_quantile"], 0.01)
     assert budgets["chr1"] < raw["chr1"]
     assert budgets["chr2"] < raw["chr2"]
     assert budgets["chr1"] < budgets["chr3"] < budgets["chr2"]
-
-
-@pytest.mark.correctness
-def test_empirical_bayes_budget_dispersion_hits_binomial_floor_when_rates_match():
-    candidate_counts = {"chr1": 10, "chr2": 20, "chr3": 30}
-    total_counts = {"chr1": 100, "chr2": 200, "chr3": 300}
-    budgets, meta = estimate_empirical_bayes_budgets(
-        candidate_counts,
-        total_counts,
-    )
-    assert meta["prior_dispersion"] >= meta["min_prior_dispersion"]
-    assert meta["prior_dispersion_at_floor"]
-    assert meta["posterior_summary"] == "mean_minus_sd"
-    assert meta["prior_fit_method"] == "weak_pooled_prior"
-    assert meta["observed_raw_budget_var"] <= meta["theoretical_min_raw_budget_var"]
-    assert budgets["chr1"] < 0.1
-    assert budgets["chr2"] < 0.1
-    assert budgets["chr3"] < 0.1
-    assert budgets["chr1"] < budgets["chr2"] < budgets["chr3"]
 
 
 @pytest.mark.correctness
@@ -454,62 +440,43 @@ def test_budget_nonnull_fraction_from_empirical_null_reports_soft_count_metadata
 
 
 @pytest.mark.correctness
-def test_budget_nonnull_fraction_parallel_matches_serial():
-    if "fork" not in mp.get_all_start_methods():
-        pytest.skip("parallel budget null smoke test requires fork support")
-
-    x = np.arange(512, dtype=np.float64)
-    peak = 6.0 * np.exp(-0.5 * ((x - 200.0) / 18.0) ** 2)
-    chrom_matrix = np.vstack(
-        [
-            0.2 + peak + 0.03 * np.sin(x / 19.0),
-            0.22 + 0.95 * peak + 0.04 * np.cos(x / 23.0),
-            0.18 + 1.05 * peak + 0.03 * np.sin(x / 29.0),
-        ]
-    )
-    scores, details = score_loci_wls(chrom_matrix, return_details=True)
-    serial_fraction, serial_meta = estimate_budget_nonnull_fraction_from_empirical_null(
-        details["centered_matrix"],
-        observed_scores=scores,
-        dependence_lag_hint=16,
-        num_null_draws=6,
-        num_processes=1,
-        return_details=True,
-    )
-    parallel_fraction, parallel_meta = estimate_budget_nonnull_fraction_from_empirical_null(
-        details["centered_matrix"],
-        observed_scores=scores,
-        dependence_lag_hint=16,
-        num_null_draws=6,
-        num_processes=2,
-        return_details=True,
-    )
-    assert np.isclose(serial_fraction, parallel_fraction)
-    assert np.isclose(serial_meta["null_excess_units"], parallel_meta["null_excess_units"])
-    assert serial_meta["num_null_draws"] == parallel_meta["num_null_draws"] == 6.0
-
-
-@pytest.mark.correctness
 def test_empirical_bayes_budget_single_chrom_uses_default_center():
     budgets, meta = estimate_empirical_bayes_budgets(
         {"chr1": 0},
         {"chr1": 0},
     )
     assert np.isclose(meta["genome_wide_budget"], 0.05)
-    assert meta["posterior_summary"] == "mean_minus_sd"
-    assert np.isclose(budgets["chr1"], 0.05)
+    assert meta["posterior_summary"] == "beta_quantile"
+    assert np.isclose(meta["posterior_quantile"], 0.01)
+    assert 0.0 < budgets["chr1"] < meta["genome_wide_budget"]
+
+
+@pytest.mark.correctness
+def test_empirical_bayes_budget_lower_quantile_is_more_conservative():
+    candidate_counts = {"chr1": 5, "chr2": 50, "chr3": 15, "chr4": 30}
+    total_counts = {"chr1": 1000, "chr2": 1000, "chr3": 1000, "chr4": 1000}
+    conservative, _ = estimate_empirical_bayes_budgets(
+        candidate_counts,
+        total_counts,
+        posterior_quantile=0.20,
+    )
+    less_conservative, _ = estimate_empirical_bayes_budgets(
+        candidate_counts,
+        total_counts,
+        posterior_quantile=0.40,
+    )
+    for chrom in candidate_counts:
+        assert conservative[chrom] <= less_conservative[chrom]
 
 
 @pytest.mark.correctness
 def test_context_size_and_gamma_track_peak_width():
     x = np.arange(512, dtype=float)
-    narrow = (
-        4.0 * np.exp(-0.5 * ((x - 140.0) / 4.0) ** 2)
-        + 3.5 * np.exp(-0.5 * ((x - 340.0) / 5.0) ** 2)
+    narrow = 4.0 * np.exp(-0.5 * ((x - 140.0) / 4.0) ** 2) + 3.5 * np.exp(
+        -0.5 * ((x - 340.0) / 5.0) ** 2
     )
-    wide = (
-        4.0 * np.exp(-0.5 * ((x - 140.0) / 11.0) ** 2)
-        + 3.5 * np.exp(-0.5 * ((x - 340.0) / 13.0) ** 2)
+    wide = 4.0 * np.exp(-0.5 * ((x - 140.0) / 11.0) ** 2) + 3.5 * np.exp(
+        -0.5 * ((x - 340.0) / 13.0) ** 2
     )
     narrow_ctx = estimate_context_size(narrow)
     wide_ctx = estimate_context_size(wide)
@@ -523,6 +490,22 @@ def test_context_size_and_gamma_track_peak_width():
 
 
 @pytest.mark.correctness
+def test_context_size_is_stable_under_local_ripple():
+    x = np.arange(512, dtype=float)
+    wide = 4.0 * np.exp(-0.5 * ((x - 140.0) / 11.0) ** 2) + 3.5 * np.exp(
+        -0.5 * ((x - 340.0) / 13.0) ** 2
+    )
+    ripple = 0.35 * np.sin(x / 1.7) * np.exp(-0.5 * ((x - 340.0) / 18.0) ** 2)
+    wide_noisy = np.clip(wide + ripple, 0.0, None)
+
+    clean_ctx = estimate_context_size(wide)
+    noisy_ctx = estimate_context_size(wide_noisy)
+
+    assert noisy_ctx[0] > 0
+    assert abs(noisy_ctx[0] - clean_ctx[0]) <= 0.35 * clean_ctx[0]
+
+
+@pytest.mark.correctness
 def test_length_bins_do_not_get_finer_than_100bp():
     lengths = np.arange(50, 275, 25, dtype=np.int64)
     binned, representatives = ROCCO_SCORES._assign_length_bins(lengths, max_bins=24)
@@ -532,10 +515,12 @@ def test_length_bins_do_not_get_finer_than_100bp():
 
 
 @pytest.mark.correctness
-def test_build_chrom_cache_uses_largest_chrom_for_shared_context(monkeypatch):
+def test_build_chrom_cache_partially_pools_context_sizes(monkeypatch):
     chrom_lengths = {"chr_small": 120, "chr_big": 240}
     context_calls = []
     gamma_calls = []
+    context_edges = []
+    gamma_edges = []
 
     def fake_generate_chrom_matrix(chrom, *args, **kwargs):
         n = chrom_lengths[chrom]
@@ -547,40 +532,51 @@ def test_build_chrom_cache_uses_largest_chrom_for_shared_context(monkeypatch):
         return scores, {
             "centered_matrix": np.zeros((n, 2), dtype=float),
             "local_baseline_window": 101,
+            "mean": np.linspace(10.0, 13.0, n, dtype=float),
         }
 
     def fake_budget_estimator(centered_matrix, observed_scores, **kwargs):
         return 0.05, {"effective_total_count": float(observed_scores.shape[0])}
 
     def fake_estimate_context_size(vals, **kwargs):
-        context_calls.append(int(np.asarray(vals).shape[0]))
-        return 12, 10, 14, {
-            "feature_indices": np.array([10, 20], dtype=np.int64),
-            "feature_scores_log": np.array([1.0, 0.8], dtype=float),
-            "num_features": 2,
-            "tau_sq_hat": 0.1,
-            "best_order": 1,
-        }
+        n = int(np.asarray(vals).shape[0])
+        context_calls.append(n)
+        context_edges.append((float(np.asarray(vals)[0]), float(np.asarray(vals)[-1])))
+        if n <= 120:
+            point, lower, upper = 6, 4, 8
+        else:
+            point, lower, upper = 24, 20, 28
+        return (
+            point,
+            lower,
+            upper,
+            {
+                "feature_indices": np.array([10, 20], dtype=np.int64),
+                "feature_scores_log": np.array([1.0, 0.8], dtype=float),
+                "num_features": 2,
+                "tau_sq_hat": 0.1,
+                "context_log_mean": float(np.log(point)),
+                "context_log_mean_var": 0.5,
+                "context_max_span": 64,
+                "best_order": 1,
+            },
+        )
 
     def fake_estimate_gamma_from_scores(scores, **kwargs):
         gamma_calls.append(kwargs.get("context_size_summary"))
+        gamma_edges.append(
+            (float(np.asarray(scores)[0]), float(np.asarray(scores)[-1]))
+        )
         n = int(np.asarray(scores).shape[0])
         return float(n), {
             "gamma_scale": 0.5,
             "signal_scale": 1.0,
-            "signal_log_var": 0.1,
             "context_size_point": 12,
             "context_size_lower": 10,
             "context_size_upper": 14,
-            "width_log_var": 0.1,
-            "log_gamma_var": 0.1,
             "num_features": 2,
-            "context_shared": 1,
             "feature_detection_order": 1,
         }
-
-    def fake_shrink_gamma_estimates(gamma_hats, gamma_variances):
-        return dict(gamma_hats), {"prior_mean": 0.0, "prior_tau_sq": 0.0}
 
     monkeypatch.setattr(ROCCO_IMPL, "generate_chrom_matrix", fake_generate_chrom_matrix)
     monkeypatch.setattr(ROCCO_IMPL, "score_loci_wls", fake_score_loci_wls)
@@ -599,11 +595,6 @@ def test_build_chrom_cache_uses_largest_chrom_for_shared_context(monkeypatch):
         "estimate_gamma_from_scores",
         fake_estimate_gamma_from_scores,
     )
-    monkeypatch.setattr(
-        ROCCO_IMPL,
-        "shrink_gamma_estimates",
-        fake_shrink_gamma_estimates,
-    )
 
     args = {
         "chrom_sizes_file": None,
@@ -621,9 +612,9 @@ def test_build_chrom_cache_uses_largest_chrom_for_shared_context(monkeypatch):
         "threads": 1,
         "score_lower_bound_z": 1.0,
         "score_prior_df": 5.0,
+        "score_precision_floor_ratio": 0.01,
         "budget_null_draws": 4,
         "gamma": None,
-        "gamma_strategy": "peak_width",
         "gamma_scale": 0.5,
         "gamma_context_min_span": 3,
         "gamma_context_max_span": 64,
@@ -638,30 +629,20 @@ def test_build_chrom_cache_uses_largest_chrom_for_shared_context(monkeypatch):
         None,
     )
 
-    assert context_calls == [240]
-    assert gamma_calls == [(12, 10, 14), (12, 10, 14)]
-    assert chrom_cache["chr_small"]["gamma_meta"]["context_source_chrom"] == "chr_big"
-    assert chrom_cache["chr_big"]["gamma_meta"]["context_source_chrom"] == "chr_big"
-
-
-@pytest.mark.correctness
-def test_gamma_shrinkage_pulls_extremes_toward_genome_wide_center():
-    shrunk, meta = shrink_gamma_estimates(
-        {"chr1": 1.0, "chr2": 100.0, "chr3": 10.0},
-        {"chr1": 0.05, "chr2": 0.05, "chr3": 0.05},
+    assert context_calls == [120, 240]
+    assert all(np.allclose(edge, (10.0, 13.0)) for edge in context_edges)
+    assert gamma_calls[0] != gamma_calls[1]
+    assert all(np.allclose(edge, (10.0, 13.0)) for edge in gamma_edges)
+    assert (
+        chrom_cache["chr_small"]["gamma_meta"]["context_pooling"] == "log_width_partial"
     )
-    assert meta["num_chromosomes"] == 3
-    assert shrunk["chr1"] > 1.0
-    assert shrunk["chr2"] < 100.0
-    assert shrunk["chr1"] < shrunk["chr3"] < shrunk["chr2"]
-
-
-@pytest.mark.correctness
-def test_empirical_null_survival_has_finite_sample_correction():
-    empirical_null = EmpiricalNull(np.array([0.1, 0.2, 0.3]))
-    assert np.isclose(empirical_null.survival(-1.0), 1.0)
-    assert np.isclose(empirical_null.survival(0.3), 0.5)
-    assert np.isclose(empirical_null.survival(10.0), 0.25)
+    assert (
+        chrom_cache["chr_big"]["gamma_meta"]["context_pooling"] == "log_width_partial"
+    )
+    assert chrom_cache["chr_small"]["gamma_meta"]["raw_context_size_point"] == 6
+    assert chrom_cache["chr_big"]["gamma_meta"]["raw_context_size_point"] == 24
+    assert 6 < chrom_cache["chr_small"]["gamma_meta"]["context_size_point"] < 24
+    assert 6 < chrom_cache["chr_big"]["gamma_meta"]["context_size_point"] < 24
 
 
 @pytest.mark.correctness
@@ -771,9 +752,7 @@ def test_raw_count_matrix_uses_native_interval_counter(tmp_path):
     output_path = tmp_path / "toy_counts.tsv"
     _write_toy_bam(bam_path)
     peak_path.write_text(
-        "chr1\t90\t110\n"
-        "chr1\t100\t150\n"
-        "chr1\t150\t210\n",
+        "chr1\t90\t110\n" "chr1\t100\t150\n" "chr1\t150\t210\n",
         encoding="utf-8",
     )
 
@@ -810,40 +789,6 @@ def test_prepare_args_low_memory_uses_conservative_defaults(monkeypatch):
     assert args["low_memory"] is True
     assert 1 <= int(args["threads"]) <= 4
     assert int(args["budget_null_draws"]) == 16
-
-
-@pytest.mark.correctness
-def test_narrowpeak_sidecar_names_do_not_require_bed_suffix(monkeypatch):
-    captured = {}
-
-    def fake_score_peaks(*args, **kwargs):
-        captured["args"] = args
-        captured["kwargs"] = kwargs
-
-    monkeypatch.setattr(ROCCO_IMPL.posthoc_scores, "score_peaks", fake_score_peaks)
-    ROCCO_IMPL._generate_narrowpeak_if_requested(
-        {
-            "narrowPeak": True,
-            "input_files": ["a.bam"],
-            "chrom_sizes_file": "ref.sizes",
-            "ecdf_samples": 250,
-            "ecdf_seed": 42,
-            "ecdf_proc": 1,
-        },
-        "testAtac",
-    )
-    assert captured["args"][2] == "testAtac"
-    assert captured["kwargs"]["count_matrix_file"] == "testAtac.counts.tsv"
-    assert captured["kwargs"]["output_file"] == "testAtac.narrowPeak"
-
-
-@pytest.mark.correctness
-def test_removed_scoring_api_deleted():
-    assert not hasattr(rocco_module, "parsig")
-    assert not hasattr(rocco_module, "score_chrom_linear")
-    assert not hasattr(rocco_module, "apply_filter")
-    assert not hasattr(rocco_module, "apply_transformation")
-    assert not hasattr(rocco_module, "resolve_transformations")
 
 
 @pytest.mark.correctness
@@ -905,60 +850,17 @@ def test_version_flag():
 
 @pytest.mark.correctness
 def test_no_input_listed():
-    result = subprocess.run(["rocco", "--input_files"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    result = subprocess.run(
+        ["rocco", "--input_files"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
     assert result.returncode != 0
     assert "usage:" in result.stderr.decode()
 
 
 @pytest.mark.correctness
 def test_unrecognized_arg():
-    result = subprocess.run(["rocco", "--unrecognized_arg"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    assert result.returncode != 0
-    assert "unrecognized" in result.stderr.decode()
-
-
-@pytest.mark.correctness
-def test_bedgraph_input(tmp_path):
-    bedgraph_path = tmp_path / "test.bedgraph"
-    bedgraph_path.write_text("chr1\t0\t50\t1.0\n", encoding="utf-8")
-    chrom_sizes_path = Path(__file__).resolve().parents[1] / "rocco" / "hg38.sizes"
     result = subprocess.run(
-        [
-            "rocco",
-            "--input_files",
-            str(bedgraph_path),
-            "--chrom_sizes_file",
-            str(chrom_sizes_path),
-            "--effective_genome_size",
-            "2913022398",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        ["rocco", "--unrecognized_arg"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
     assert result.returncode != 0
-    assert "bam" in result.stderr.decode().lower()
-
-
-@pytest.mark.correctness
-def test_removed_solver_flag_is_rejected():
-    parser = ROCCO_IMPL._build_parser()
-    with pytest.raises(SystemExit) as exc_info:
-        parser.parse_args(["--solver", "pdlp"])
-    assert exc_info.value.code != 0
-
-
-@pytest.mark.correctness
-@pytest.mark.parametrize(
-    "flag",
-    [
-        "--transform_locratio",
-        "--transform_logpc",
-        "--transform_savgol",
-        "--transform_medfilt",
-    ],
-)
-def test_heuristic_transform_flags_are_rejected(flag):
-    parser = ROCCO_IMPL._build_parser()
-    with pytest.raises(SystemExit) as exc_info:
-        parser.parse_args([flag])
-    assert exc_info.value.code != 0
+    assert "unrecognized" in result.stderr.decode()

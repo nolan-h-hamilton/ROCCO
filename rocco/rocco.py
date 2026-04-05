@@ -32,7 +32,6 @@ from rocco.inference import (
     estimate_budget_nonnull_fraction_from_wild_bootstrap_null,
     estimate_context_size,
     estimate_gamma_from_scores,
-    shrink_gamma_estimates,
     score_loci_wls,
 )
 from rocco._version import __version__
@@ -518,12 +517,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Upper bounds the proportion of the genome that can be selected as open chromatin.",
     )
     parser.add_argument(
-        "--budget_strategy",
-        choices=["fixed", "empirical_bayes"],
-        default="empirical_bayes",
-        help="How chromosome-specific budget values are set. Default is empirical_bayes.",
-    )
-    parser.add_argument(
         "--budget_null_draws",
         type=int,
         default=25,
@@ -535,13 +528,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="This constant scales each chromosome-specific budget.",
     )
-    parser.add_argument("--gamma", type=float, default=None)
     parser.add_argument(
-        "--gamma_strategy",
-        choices=["peak_width", "fixed"],
-        default="peak_width",
-        help="How chromosome-specific gamma values are set when `--gamma` is not supplied.",
+        "--budget_posterior_quantile",
+        type=float,
+        default=0.01,
+        help="Lower beta-posterior quantile used to summarize EB chromosome budgets. Smaller values are more conservative.",
     )
+    parser.add_argument("--gamma", type=float, default=None)
     parser.add_argument(
         "--gamma_scale",
         type=float,
@@ -596,21 +589,30 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Direct penalty on selected loci. If supplied, `--budget` is ignored.",
     )
-    parser.add_argument("--scale_gamma", action="store_true")
-    parser.add_argument("--scale_gamma_eps", "--denom_const", type=float, default=None)
-    parser.add_argument("--scale_gamma_beta", "--beta", type=float, default=None)
 
     parser.add_argument(
         "--score_lower_bound_z",
         type=float,
         default=1.0,
-        help="Z-multiplier used to convert the WLS fit into a lower confidence bound score.",
+        help="Direct floor subtracted from the moderated standardized score when `--score_min_effect` is not supplied.",
     )
     parser.add_argument(
         "--score_prior_df",
         type=float,
         default=6.0,
-        help="Prior degrees of freedom for WLS variance shrinkage.",
+        help="Prior degrees of freedom for EB variance shrinkage.",
+    )
+    parser.add_argument(
+        "--score_min_effect",
+        type=float,
+        default=None,
+        help="Optional minimum effect on the log2(1+x) scale used in the optimization score. If omitted, ROCCO optimizes the moderated standardized score shifted by `--score_lower_bound_z`.",
+    )
+    parser.add_argument(
+        "--score_precision_floor_ratio",
+        type=float,
+        default=0.01,
+        help="Lower bound on moderated variance as a fraction of the prior variance before computing standard errors.",
     )
 
     parser.add_argument("--step", "-w", type=int, default=50)
@@ -816,6 +818,89 @@ def _resolve_parallel_process_count(
     return int(min(int(item_count), int(total_cores), 4))
 
 
+def _partially_pool_context_summaries(
+    chrom_context_summaries: dict[str, tuple[tuple[int, int, int], dict]],
+) -> tuple[dict[str, tuple[int, int, int]], dict[str, dict[str, float | int]]]:
+    if len(chrom_context_summaries) == 0:
+        return {}, {}
+
+    chroms = list(chrom_context_summaries.keys())
+    log_means = np.array(
+        [
+            float(
+                chrom_context_summaries[chrom][1].get(
+                    "context_log_mean",
+                    np.log(max(chrom_context_summaries[chrom][0][0], 1)),
+                )
+            )
+            for chrom in chroms
+        ],
+        dtype=np.float64,
+    )
+    log_mean_vars = np.array(
+        [
+            max(
+                float(chrom_context_summaries[chrom][1].get("context_log_mean_var", 1.0)),
+                1.0e-6,
+            )
+            for chrom in chroms
+        ],
+        dtype=np.float64,
+    )
+    inv_vars = 1.0 / log_mean_vars
+    global_log_mean = float(np.sum(inv_vars * log_means) / np.sum(inv_vars))
+    observed_log_var = float(np.var(log_means, ddof=1)) if len(chroms) > 1 else 0.0
+    mean_within_log_var = float(np.mean(log_mean_vars))
+    tau_sq_hat = float(max(0.0, observed_log_var - mean_within_log_var))
+
+    pooled_summaries: dict[str, tuple[int, int, int]] = {}
+    pooling_meta: dict[str, dict[str, float | int]] = {}
+    for chrom in chroms:
+        raw_summary, raw_meta = chrom_context_summaries[chrom]
+        raw_point = int(max(raw_summary[0], 1))
+        raw_log_point = float(np.log(raw_point))
+        log_mean = float(raw_meta.get("context_log_mean", raw_log_point))
+        log_mean_var = max(float(raw_meta.get("context_log_mean_var", 1.0)), 1.0e-6)
+        if tau_sq_hat > 1.0e-8:
+            shrinkage_weight = float(tau_sq_hat / (tau_sq_hat + log_mean_var))
+            pooled_log_mean = float(
+                (shrinkage_weight * log_mean)
+                + ((1.0 - shrinkage_weight) * global_log_mean)
+            )
+        else:
+            shrinkage_weight = 0.0
+            pooled_log_mean = float(global_log_mean)
+        scale_factor = float(np.exp(pooled_log_mean - raw_log_point))
+        max_span = max(int(raw_meta.get("context_max_span", raw_summary[2])), 1)
+        pooled_lower = int(np.clip(np.rint(raw_summary[1] * scale_factor), 1, max_span))
+        pooled_upper = int(
+            np.clip(
+                np.rint(raw_summary[2] * scale_factor),
+                max(pooled_lower, 1),
+                max_span,
+            )
+        )
+        pooled_point = int(
+            np.clip(
+                np.rint(raw_summary[0] * scale_factor),
+                pooled_lower,
+                pooled_upper,
+            )
+        )
+        pooled_summaries[chrom] = (pooled_point, pooled_lower, pooled_upper)
+        pooling_meta[chrom] = {
+            "context_pooling": "log_width_partial",
+            "context_pooling_num_chromosomes": int(len(chroms)),
+            "context_pooling_tau_sq_hat": float(tau_sq_hat),
+            "context_pooling_global_log_mean": float(global_log_mean),
+            "context_pooling_weight": float(shrinkage_weight),
+            "raw_context_size_point": int(raw_summary[0]),
+            "raw_context_size_lower": int(raw_summary[1]),
+            "raw_context_size_upper": int(raw_summary[2]),
+        }
+    return pooled_summaries, pooling_meta
+
+
 def _solve_cached_chromosome(chrom_: str) -> tuple[str, float, dict, str]:
     state = _CHROM_SOLVE_PROCESS_STATE
     if state is None:
@@ -845,9 +930,6 @@ def _solve_cached_chromosome(chrom_: str) -> tuple[str, float, dict, str]:
         chrom_data["scores"],
         budget=chrom_budget,
         gamma=chrom_gamma,
-        beta=state["scale_gamma_beta"],
-        denom_const=state["scale_gamma_eps"],
-        scale_gamma=state["scale_gamma"],
         selection_penalty=state["selection_penalty"],
         return_details=True,
     )
@@ -869,11 +951,6 @@ def _build_chrom_cache(
     params_df: pd.DataFrame | None,
 ) -> dict:
     chrom_cache = {}
-    raw_peak_width_gamma = {}
-    raw_peak_width_gamma_var = {}
-    peak_width_context_source = None
-    shared_context_size = None
-    shared_context_meta = None
     low_memory = bool(args.get("low_memory", False))
     budget_null_processes = (
         1
@@ -915,6 +992,8 @@ def _build_chrom_cache(
             chrom_matrix,
             lower_bound_z=args["score_lower_bound_z"],
             prior_df=args["score_prior_df"],
+            min_effect=args.get("score_min_effect"),
+            precision_floor_ratio=args["score_precision_floor_ratio"],
             low_memory=low_memory,
             return_details=True,
         )
@@ -933,6 +1012,8 @@ def _build_chrom_cache(
                 observed_scores=chrom_scores,
                 lower_bound_z=args["score_lower_bound_z"],
                 prior_df=args["score_prior_df"],
+                min_effect=args.get("score_min_effect"),
+                precision_floor_ratio=args["score_precision_floor_ratio"],
                 dependence_lag_hint=max(
                     25,
                     int(score_details.get("local_baseline_window", 101)),
@@ -975,7 +1056,11 @@ def _build_chrom_cache(
         )
         chrom_gamma = None
         gamma_meta = None
-        if not (args["gamma"] is None and args["gamma_strategy"] == "peak_width"):
+        chrom_effect_mean = np.asarray(
+            score_details.get("mean", chrom_scores),
+            dtype=np.float64,
+        )
+        if args["gamma"] is not None:
             chrom_gamma = _resolve_chrom_gamma(
                 chrom_,
                 params_df,
@@ -985,6 +1070,7 @@ def _build_chrom_cache(
         chrom_cache[chrom_] = {
             "intervals": chrom_intervals,
             "scores": chrom_scores,
+            "effect_mean": chrom_effect_mean,
             "gamma": chrom_gamma,
             "gamma_meta": gamma_meta,
             "budget_count_hat": float(budget_count_hat),
@@ -994,64 +1080,36 @@ def _build_chrom_cache(
             "num_loci": int(chrom_scores.shape[0]),
         }
 
-    if (
-        args["gamma"] is None
-        and args["gamma_strategy"] == "peak_width"
-        and len(chrom_cache) > 0
-    ):
-        peak_width_context_source = max(
-            chrom_cache,
-            key=lambda chrom: int(chrom_cache[chrom]["num_loci"]),
-        )
-        source_scores = np.clip(
-            np.asarray(
-                chrom_cache[peak_width_context_source]["scores"], dtype=np.float64
-            ),
-            0.0,
-            None,
-        )
-        logger.info(
-            "Estimating shared context size from %s with %s loci.",
-            peak_width_context_source,
-            int(chrom_cache[peak_width_context_source]["num_loci"]),
-        )
-        try:
-            context_point, width_lower, width_upper, shared_context_meta = (
-                estimate_context_size(
-                    source_scores,
+    if args["gamma"] is None and len(chrom_cache) > 0:
+        raw_context_summaries: dict[str, tuple[tuple[int, int, int], dict]] = {}
+        for chrom_ in chrom_cache:
+            try:
+                context_point, width_lower, width_upper, context_meta = estimate_context_size(
+                    np.clip(
+                        np.asarray(chrom_cache[chrom_]["effect_mean"], dtype=np.float64),
+                        0.0,
+                        None,
+                    ),
                     min_span=args["gamma_context_min_span"],
                     max_span=args["gamma_context_max_span"],
                     band_z=args["gamma_context_band_z"],
                     max_order=args["gamma_context_max_order"],
                     return_details=True,
                 )
-            )
-            shared_context_size = (
-                int(context_point),
-                int(width_lower),
-                int(width_upper),
-            )
-            logger.info(
-                "%s shared context-size estimate: %s",
-                peak_width_context_source,
-                {
-                    "context_size_point": int(context_point),
-                    "context_size_lower": int(width_lower),
-                    "context_size_upper": int(width_upper),
-                    "num_features": int(shared_context_meta["num_features"]),
-                    "best_order": int(shared_context_meta["best_order"]),
-                },
-            )
-        except Exception as exc:
-            logger.warning(
-                "Could not estimate shared width-informed context from %s; falling back to fixed gamma. %s",
-                peak_width_context_source,
-                exc,
-            )
-            shared_context_size = None
-
-        for chrom_ in chrom_cache:
-            if shared_context_size is None:
+                raw_context_summaries[chrom_] = (
+                    (
+                        int(context_point),
+                        int(width_lower),
+                        int(width_upper),
+                    ),
+                    context_meta,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Could not estimate width-informed context for %s; falling back to fixed gamma. %s",
+                    chrom_,
+                    exc,
+                )
                 chrom_cache[chrom_]["gamma"] = _resolve_chrom_gamma(
                     chrom_,
                     params_df,
@@ -1059,38 +1117,32 @@ def _build_chrom_cache(
                     chrom_cache[chrom_]["intervals"],
                 )
                 chrom_cache[chrom_]["gamma_meta"] = {
-                    "context_source_chrom": peak_width_context_source,
-                    "shared_context_failed": 1,
+                    "context_pooling_failed": 1,
+                    "gamma_fallback_reason": str(exc),
                 }
-                continue
+
+        pooled_context_summaries, pooling_meta = _partially_pool_context_summaries(
+            raw_context_summaries
+        )
+        for chrom_, context_summary in pooled_context_summaries.items():
             try:
                 chrom_gamma, gamma_meta = estimate_gamma_from_scores(
-                    chrom_cache[chrom_]["scores"],
+                    chrom_cache[chrom_]["effect_mean"],
                     gamma_scale=args["gamma_scale"],
                     min_span=args["gamma_context_min_span"],
                     max_span=args["gamma_context_max_span"],
                     band_z=args["gamma_context_band_z"],
                     max_order=args["gamma_context_max_order"],
-                    context_size_summary=shared_context_size,
+                    context_size_summary=context_summary,
                 )
                 gamma_meta = {
                     **gamma_meta,
-                    "context_source_chrom": peak_width_context_source,
-                    "context_source_num_loci": int(
-                        chrom_cache[peak_width_context_source]["num_loci"]
-                    ),
-                    "context_source_num_features": int(
-                        shared_context_meta["num_features"]
-                    ),
+                    **pooling_meta.get(chrom_, {}),
                 }
-                raw_peak_width_gamma[chrom_] = float(chrom_gamma)
-                raw_peak_width_gamma_var[chrom_] = float(
-                    gamma_meta.get("log_gamma_var", 1.0)
-                )
                 chrom_cache[chrom_]["gamma"] = float(chrom_gamma)
                 chrom_cache[chrom_]["gamma_meta"] = gamma_meta
                 logger.info(
-                    "%s raw width-informed gamma estimate: %s",
+                    "%s width-informed gamma estimate: %s",
                     chrom_,
                     gamma_meta,
                 )
@@ -1107,28 +1159,13 @@ def _build_chrom_cache(
                     chrom_cache[chrom_]["intervals"],
                 )
                 chrom_cache[chrom_]["gamma_meta"] = {
-                    "context_source_chrom": peak_width_context_source,
-                    "shared_context_failed": 0,
+                    **pooling_meta.get(chrom_, {}),
+                    "context_pooling_failed": 0,
                     "gamma_fallback_reason": str(exc),
                 }
 
-    if len(raw_peak_width_gamma) > 0:
-        shrunk_gamma, gamma_shrink_meta = shrink_gamma_estimates(
-            raw_peak_width_gamma,
-            raw_peak_width_gamma_var,
-        )
-        logger.info(
-            "Genome-wide gamma shrinkage summary: %s",
-            gamma_shrink_meta,
-        )
-        for chrom_, gamma_ in shrunk_gamma.items():
-            chrom_cache[chrom_]["gamma"] = float(gamma_)
-            chrom_cache[chrom_]["gamma_meta"] = {
-                **(chrom_cache[chrom_].get("gamma_meta") or {}),
-                "gamma_shrunk": float(gamma_),
-                "shrinkage_prior_mean": float(gamma_shrink_meta["prior_mean"]),
-                "shrinkage_prior_tau_sq": float(gamma_shrink_meta["prior_tau_sq"]),
-            }
+    for chrom_data in chrom_cache.values():
+        chrom_data.pop("effect_mean", None)
     return chrom_cache
 
 
@@ -1137,53 +1174,33 @@ def _resolve_budgets(
     params_df: pd.DataFrame | None,
     args: dict,
 ) -> tuple[dict, dict]:
-    if args["budget_strategy"] == "empirical_bayes":
-        chrom_budget_counts = {
-            chrom: chrom_cache[chrom]["budget_count_hat"] for chrom in chrom_cache
-        }
-        chrom_total_counts = {
-            chrom: chrom_cache[chrom]["total_count"] for chrom in chrom_cache
-        }
-        chrom_budgets, budget_meta = estimate_empirical_bayes_budgets(
-            chrom_budget_counts,
-            chrom_total_counts,
-        )
-        if args["budget"] is not None and budget_meta["genome_wide_budget"] > 0:
-            rescale = float(args["budget"]) / budget_meta["genome_wide_budget"]
-        else:
-            rescale = 1.0
-        chrom_budgets = {
-            chrom: min(
-                max(
-                    chrom_budgets[chrom] * rescale * float(args["scale_chrom_budgets"]),
-                    1.0e-4,
-                ),
-                0.5,
-            )
-            for chrom in chrom_budgets
-        }
-        logger.info("Empirical-Bayes budget prior: %s", budget_meta)
-        return chrom_budgets, budget_meta
-
-    chrom_budgets = {}
-    for chrom in chrom_cache:
-        chrom_budget = None
-        if (
-            params_df is not None
-            and "chrom" in params_df.columns
-            and "budget" in params_df.columns
-            and chrom in params_df["chrom"].values
-        ):
-            chrom_budget = float(
-                params_df.loc[params_df["chrom"] == chrom]["budget"].values[0]
-            )
-        if chrom_budget is None or args["budget"] is not None:
-            chrom_budget = float(args["budget"]) if args["budget"] is not None else 0.03
-        chrom_budgets[chrom] = float(chrom_budget) * float(args["scale_chrom_budgets"])
-    return chrom_budgets, {
-        "genome_wide_budget": float(np.mean(list(chrom_budgets.values()))),
-        "prior_strength": 0.0,
+    chrom_budget_counts = {
+        chrom: chrom_cache[chrom]["budget_count_hat"] for chrom in chrom_cache
     }
+    chrom_total_counts = {
+        chrom: chrom_cache[chrom]["total_count"] for chrom in chrom_cache
+    }
+    chrom_budgets, budget_meta = estimate_empirical_bayes_budgets(
+        chrom_budget_counts,
+        chrom_total_counts,
+        posterior_quantile=args["budget_posterior_quantile"],
+    )
+    if args["budget"] is not None and budget_meta["genome_wide_budget"] > 0:
+        rescale = float(args["budget"]) / budget_meta["genome_wide_budget"]
+    else:
+        rescale = 1.0
+    chrom_budgets = {
+        chrom: min(
+            max(
+                chrom_budgets[chrom] * rescale * float(args["scale_chrom_budgets"]),
+                1.0e-4,
+            ),
+            0.5,
+        )
+        for chrom in chrom_budgets
+    }
+    logger.info("Empirical-Bayes budget prior: %s", budget_meta)
+    return chrom_budgets, budget_meta
 
 
 def _solve_cached_chromosomes(
@@ -1210,9 +1227,6 @@ def _solve_cached_chromosomes(
     _CHROM_SOLVE_PROCESS_STATE = {
         "chrom_cache": chrom_cache,
         "chrom_budgets": chrom_budgets,
-        "scale_gamma_beta": args["scale_gamma_beta"],
-        "scale_gamma_eps": args["scale_gamma_eps"],
-        "scale_gamma": args["scale_gamma"],
         "selection_penalty": args["selection_penalty"],
         "min_length_bp": args["min_length_bp"],
         "run_id": run_id,

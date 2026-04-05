@@ -5,13 +5,6 @@
 
 #include "native/wls_backend.h"
 
-/*
- * Python wrapper for centered-WLS scoring.
- *
- * This computes :math:`\hat\mu_j`, :math:`\hat{\mathrm{se}}_j`, and the
- * lower-bound score used during budget initialization.
- */
-
 static PyObject *score_centered_wls(
     PyObject *self,
     PyObject *args,
@@ -21,27 +14,41 @@ static PyObject *score_centered_wls(
         "centered_matrix",
         "lower_bound_z",
         "prior_df",
+        "min_effect",
+        "spatial_window",
+        "precision_floor_ratio",
         NULL,
     };
     PyObject *matrix_obj = NULL;
     PyArrayObject *matrix_arr = NULL;
-    PyArrayObject *weights_arr = NULL;
     PyArrayObject *mean_arr = NULL;
+    PyArrayObject *raw_variance_arr = NULL;
+    PyArrayObject *prior_variance_arr = NULL;
+    PyArrayObject *moderated_variance_arr = NULL;
     PyArrayObject *se_arr = NULL;
-    PyArrayObject *z_arr = NULL;
     PyArrayObject *scores_arr = NULL;
     double lower_bound_z = 1.0;
     double prior_df = 5.0;
+    PyObject *min_effect_obj = Py_None;
+    double min_effect = 0.0;
+    int use_min_effect = 0;
+    int spatial_window = 31;
+    double precision_floor_ratio = 0.01;
+    double total_df = 0.0;
+    int resolved_window = 0;
     int status = 0;
 
     if (!PyArg_ParseTupleAndKeywords(
             args,
             kwargs,
-            "O|dd",
+            "O|ddOid",
             kwlist,
             &matrix_obj,
             &lower_bound_z,
-            &prior_df))
+            &prior_df,
+            &min_effect_obj,
+            &spatial_window,
+            &precision_floor_ratio))
     {
         return NULL;
     }
@@ -60,42 +67,64 @@ static PyObject *score_centered_wls(
         Py_DECREF(matrix_arr);
         return NULL;
     }
+    if (min_effect_obj != NULL && min_effect_obj != Py_None)
+    {
+        min_effect = PyFloat_AsDouble(min_effect_obj);
+        if (PyErr_Occurred() != NULL)
+        {
+            Py_DECREF(matrix_arr);
+            return NULL;
+        }
+        if (min_effect < 0.0)
+        {
+            min_effect = 0.0;
+        }
+        use_min_effect = 1;
+    }
 
     {
         npy_intp sample_count = PyArray_DIM(matrix_arr, 0);
         npy_intp locus_count = PyArray_DIM(matrix_arr, 1);
-        npy_intp sample_dims[1] = {sample_count};
         npy_intp locus_dims[1] = {locus_count};
 
-        weights_arr = (PyArrayObject *)PyArray_ZEROS(1, sample_dims, NPY_FLOAT64, 0);
         mean_arr = (PyArrayObject *)PyArray_ZEROS(1, locus_dims, NPY_FLOAT64, 0);
+        raw_variance_arr = (PyArrayObject *)PyArray_ZEROS(1, locus_dims, NPY_FLOAT64, 0);
+        prior_variance_arr = (PyArrayObject *)PyArray_ZEROS(1, locus_dims, NPY_FLOAT64, 0);
+        moderated_variance_arr = (PyArrayObject *)PyArray_ZEROS(1, locus_dims, NPY_FLOAT64, 0);
         se_arr = (PyArrayObject *)PyArray_ZEROS(1, locus_dims, NPY_FLOAT64, 0);
-        z_arr = (PyArrayObject *)PyArray_ZEROS(1, locus_dims, NPY_FLOAT64, 0);
         scores_arr = (PyArrayObject *)PyArray_ZEROS(1, locus_dims, NPY_FLOAT64, 0);
-        if (weights_arr == NULL || mean_arr == NULL || se_arr == NULL ||
-            z_arr == NULL || scores_arr == NULL)
+        if (mean_arr == NULL || raw_variance_arr == NULL || prior_variance_arr == NULL ||
+            moderated_variance_arr == NULL || se_arr == NULL || scores_arr == NULL)
         {
             Py_DECREF(matrix_arr);
-            Py_XDECREF(weights_arr);
             Py_XDECREF(mean_arr);
+            Py_XDECREF(raw_variance_arr);
+            Py_XDECREF(prior_variance_arr);
+            Py_XDECREF(moderated_variance_arr);
             Py_XDECREF(se_arr);
-            Py_XDECREF(z_arr);
             Py_XDECREF(scores_arr);
             return NULL;
         }
 
         Py_BEGIN_ALLOW_THREADS
-        status = rocco_score_centered_wls_f64(
-            (const double *)PyArray_DATA(matrix_arr),
-            (size_t)sample_count,
-            (size_t)locus_count,
-            lower_bound_z,
-            prior_df,
-            (double *)PyArray_DATA(weights_arr),
-            (double *)PyArray_DATA(mean_arr),
-            (double *)PyArray_DATA(se_arr),
-            (double *)PyArray_DATA(z_arr),
-            (double *)PyArray_DATA(scores_arr));
+            status = rocco_score_centered_wls_f64(
+                (const double *)PyArray_DATA(matrix_arr),
+                (size_t)sample_count,
+                (size_t)locus_count,
+                lower_bound_z,
+                prior_df,
+                min_effect,
+                use_min_effect,
+                spatial_window,
+                precision_floor_ratio,
+                (double *)PyArray_DATA(mean_arr),
+                (double *)PyArray_DATA(raw_variance_arr),
+                (double *)PyArray_DATA(prior_variance_arr),
+                (double *)PyArray_DATA(moderated_variance_arr),
+                (double *)PyArray_DATA(se_arr),
+                (double *)PyArray_DATA(scores_arr),
+                &total_df,
+                &resolved_window);
         Py_END_ALLOW_THREADS
     }
 
@@ -103,10 +132,11 @@ static PyObject *score_centered_wls(
 
     if (status != 0)
     {
-        Py_DECREF(weights_arr);
         Py_DECREF(mean_arr);
+        Py_DECREF(raw_variance_arr);
+        Py_DECREF(prior_variance_arr);
+        Py_DECREF(moderated_variance_arr);
         Py_DECREF(se_arr);
-        Py_DECREF(z_arr);
         Py_DECREF(scores_arr);
         if (status == -1)
         {
@@ -120,12 +150,15 @@ static PyObject *score_centered_wls(
     }
 
     return Py_BuildValue(
-        "NNNNN",
+        "NNNNNNdi",
         scores_arr,
-        weights_arr,
         mean_arr,
+        raw_variance_arr,
+        prior_variance_arr,
+        moderated_variance_arr,
         se_arr,
-        z_arr);
+        total_df,
+        resolved_window);
 }
 
 static PyMethodDef wls_methods[] = {
