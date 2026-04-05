@@ -57,7 +57,7 @@ jobs:
               echo "No supported package manager found" >&2
               exit 1
             fi
-          CIBW_TEST_COMMAND: "python -c \"import rocco; import rocco._chain_dp; import rocco._hts_counts\""
+          CIBW_TEST_COMMAND: "python -c \"import rocco; import rocco.readtracks; import rocco._chain_dp; import rocco._hts_counts\""
 
       - if: matrix.name == 'linux-x86_64'
         name: Build source distribution

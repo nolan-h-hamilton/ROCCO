@@ -7,9 +7,12 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import pyBigWig
 import pysam
 import pytest
+try:
+    import pyBigWig
+except ImportError:  # pragma: no cover - depends on optional extra
+    pyBigWig = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -22,6 +25,7 @@ ROCCO_INFERENCE = importlib.import_module("rocco.inference")
 ROCCO_READTRACKS = importlib.import_module("rocco.readtracks")
 ROCCO_SCORES = importlib.import_module("rocco.scores")
 ROCCO_VERSION = importlib.import_module("rocco._version").__version__
+BIGWIG_AVAILABLE = pyBigWig is not None
 
 
 @pytest.fixture
@@ -137,6 +141,8 @@ def _write_toy_bigwig(
     chrom_size: int = 500,
     entries: list[tuple[int, int, float]] | None = None,
 ):
+    if pyBigWig is None:
+        raise ImportError("pyBigWig is required for bigWig tests")
     if entries is None:
         entries = [
             (0, 50, 0.0),
@@ -733,6 +739,7 @@ def test_generate_chrom_matrix_low_memory_uses_float32(tmp_path):
 
 
 @pytest.mark.correctness
+@pytest.mark.skipif(not BIGWIG_AVAILABLE, reason="pyBigWig not installed")
 def test_generate_chrom_matrix_reads_bigwig_scores_directly(tmp_path):
     bw_path = tmp_path / "toy.bw"
     chrom_sizes_path = tmp_path / "toy_bw.sizes"
@@ -816,6 +823,7 @@ def test_raw_count_matrix_uses_native_interval_counter(tmp_path):
 
 
 @pytest.mark.correctness
+@pytest.mark.skipif(not BIGWIG_AVAILABLE, reason="pyBigWig not installed")
 def test_build_chrom_cache_uses_bigwig_scores_directly(monkeypatch):
     direct_budget_calls = []
 

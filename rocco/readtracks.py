@@ -14,7 +14,11 @@ from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
-import pyBigWig
+
+try:
+    import pyBigWig
+except ImportError:  # pragma: no cover - depends on optional extra
+    pyBigWig = None
 
 try:
     from . import _hts_counts
@@ -68,6 +72,14 @@ def _require_native_counter():
     return _hts_counts
 
 
+def _require_pybigwig():
+    if pyBigWig is None:
+        raise ImportError(
+            "bigWig input requires the optional `pyBigWig` dependency...try `python -m pip install pybigwig`"
+        )
+    return pyBigWig
+
+
 def _get_track_type(track_file: str) -> str:
     ext = os.path.splitext(track_file)[1].lower().lstrip(".")
     if ext == "bam":
@@ -99,9 +111,12 @@ def get_bigwig_chrom_scores(
             f"Chromosome {chromosome} not found in chromosome sizes file: {chrom_sizes_file}"
         )
 
-    bw = pyBigWig.open(bigwig_file)
+    pybigwig = _require_pybigwig()
+    bw = pybigwig.open(bigwig_file)
     if bw is None:
-        raise RuntimeError(f"Could not open bigWig file: {bigwig_file}")
+        raise RuntimeError(
+            f"Could not open bigWig file: {bigwig_file}...try installing `pyBigWig`: `python -m pip install pybigwig`"
+        )
     try:
         chrom_sizes = bw.chroms()
         if chromosome not in chrom_sizes:
