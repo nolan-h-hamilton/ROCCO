@@ -229,125 +229,74 @@ def _estimate_local_background_matrix(
     return local_baselines, window, penalty_lambda
 
 
-def _score_centered_wls_matrix_python(
-    centered_matrix: np.ndarray,
-    lower_bound_z: float = 1.0,
-    prior_df: float = 5.0,
-) -> tuple[np.ndarray, Dict[str, np.ndarray | float]]:
-    centered = np.asarray(centered_matrix, dtype=np.float64)
-    if centered.ndim != 2:
-        raise ValueError("`centered_matrix` must be two-dimensional")
-    if centered.shape[0] == 0 or centered.shape[1] == 0:
-        raise ValueError("`centered_matrix` must be non-empty")
-
-    if centered.shape[0] == 1:
-        mu = centered[0].copy()
-        se = np.full(
-            mu.shape,
-            _robust_scale(mu),
-            dtype=np.float64,
-        )
-        z_scores = mu / np.maximum(se, 1.0e-8)
-        scores = mu - float(lower_bound_z) * se
-        return scores, {
-            "sample_weights": np.ones(1, dtype=np.float64),
-            "mean": mu,
-            "standard_error": se,
-            "z_scores": z_scores,
-        }
-
-    consensus = np.median(centered, axis=0, keepdims=True)
-    sample_residuals = centered - consensus
-    sample_scale = np.median(np.abs(sample_residuals), axis=1)
-    positive_scale = sample_scale[sample_scale > 0]
-    scale_floor = (
-        float(np.median(positive_scale)) if positive_scale.size > 0 else 1.0e-6
-    )
-    scale_floor = max(scale_floor, 1.0e-6)
-    sample_var = np.maximum(sample_scale, scale_floor) ** 2
-    # Use :math:`w_i = 1 / \hat\sigma_i^2` so noisy samples count less.
-    sample_weights = 1.0 / sample_var
-
-    sum_w = float(np.sum(sample_weights))
-    sum_w2 = float(np.sum(sample_weights**2))
-    effective_n = (sum_w**2) / max(sum_w2, 1.0e-12)
-
-    mu = (sample_weights[:, None] * centered).sum(axis=0) / sum_w
-    centered_resid = centered - mu[None, :]
-
-    variance_denom = max(sum_w - (sum_w2 / sum_w), 1.0e-8)
-    weighted_var = (sample_weights[:, None] * centered_resid**2).sum(
-        axis=0
-    ) / variance_denom
-    global_var = max(
-        (
-            float(np.median(weighted_var[weighted_var > 0]))
-            if np.any(weighted_var > 0)
-            else float(np.median(weighted_var))
-        ),
-        1.0e-6,
-    )
-
-    # Shrink :math:`\hat v_j` toward a chromosome-wide target with
-    # :math:`\nu_0 = \texttt{prior\_df}` pseudo degrees of freedom.
-    posterior_var = (
-        (max(effective_n - 1.0, 0.0) * weighted_var) + (float(prior_df) * global_var)
-    ) / max((effective_n - 1.0) + float(prior_df), 1.0)
-    se = np.sqrt(posterior_var / sum_w)
-    z_scores = mu / np.maximum(se, 1.0e-8)
-    # use the lower confidence bound :math:`\hat\mu_j - z \hat{\mathrm{se}}_j`.
-    scores = mu - float(lower_bound_z) * se
-    return scores, {
-        "sample_weights": sample_weights.astype(np.float64),
-        "mean": mu.astype(np.float64),
-        "standard_error": se.astype(np.float64),
-        "z_scores": z_scores.astype(np.float64),
-    }
-
-
 def _score_centered_wls_matrix(
     centered_matrix: np.ndarray,
     lower_bound_z: float = 1.0,
     prior_df: float = 5.0,
+    min_effect: float | None = None,
+    spatial_window: int | None = None,
+    precision_floor_ratio: float = 0.01,
 ) -> tuple[np.ndarray, Dict[str, np.ndarray | float]]:
     centered = np.asarray(centered_matrix, dtype=np.float64)
     if centered.ndim != 2:
         raise ValueError("`centered_matrix` must be two-dimensional")
     if centered.shape[0] == 0 or centered.shape[1] == 0:
         raise ValueError("`centered_matrix` must be non-empty")
-
     if _wls_native is None:
-        # Fall back to the Python code if the compiled module is unavailable.
-        result = _score_centered_wls_matrix_python(
-            centered,
-            lower_bound_z=lower_bound_z,
-            prior_df=prior_df,
-        )
-    else:
-        scores, sample_weights, mean, se, z_scores = _wls_native.score_centered_wls(
-            centered,
-            lower_bound_z=float(lower_bound_z),
-            prior_df=float(prior_df),
-        )
-        result = (
-            np.asarray(scores, dtype=np.float64),
-            {
-                "sample_weights": np.asarray(sample_weights, dtype=np.float64),
-                "mean": np.asarray(mean, dtype=np.float64),
-                "standard_error": np.asarray(se, dtype=np.float64),
-                "z_scores": np.asarray(z_scores, dtype=np.float64),
-            },
-        )
+        raise RuntimeError("Make sure native C extensions are built and available")
+    precision_floor_ratio_ = float(max(precision_floor_ratio, 0.0))
+    # run EB munc + WLS to get per-locus scores and details for the constrained optimization (DP)
+    result_native = _wls_native.score_centered_wls(
+        centered,
+        lower_bound_z=float(lower_bound_z),
+        prior_df=float(prior_df),
+        min_effect=min_effect,
+        spatial_window=31 if spatial_window is None else int(spatial_window),
+        precision_floor_ratio=precision_floor_ratio_,
+    )
+    (
+        scores_arr,
+        mean_arr,
+        raw_var_arr,
+        prior_var_arr,
+        moderated_var_arr,
+        se_arr,
+        total_df,
+        resolved_window,
+    ) = result_native
+    se = np.asarray(se_arr, dtype=np.float64)
+    mean = np.asarray(mean_arr, dtype=np.float64)
+    result = (
+        np.asarray(scores_arr, dtype=np.float64),
+        {
+            "mean": mean,
+            "raw_variance": np.asarray(raw_var_arr, dtype=np.float64),
+            "prior_variance": np.asarray(prior_var_arr, dtype=np.float64),
+            "moderated_variance": np.asarray(moderated_var_arr, dtype=np.float64),
+            "standard_error": se,
+            "z_scores": mean / np.maximum(se, 1.0e-8),
+            "min_effect": float(0.0 if min_effect is None else max(min_effect, 0.0)),
+            "precision_floor_ratio": float(precision_floor_ratio_),
+            "degrees_of_freedom": np.full(
+                centered.shape[1],
+                float(total_df),
+                dtype=np.float64,
+            ),
+            "prior_spatial_window": float(resolved_window),
+        },
+    )
 
     scores, details = result
     if (
         not np.all(np.isfinite(scores))
-        or not np.all(np.isfinite(details["sample_weights"]))
         or not np.all(np.isfinite(details["mean"]))
+        or not np.all(np.isfinite(details["raw_variance"]))
+        or not np.all(np.isfinite(details["prior_variance"]))
+        or not np.all(np.isfinite(details["moderated_variance"]))
         or not np.all(np.isfinite(details["standard_error"]))
         or not np.all(np.isfinite(details["z_scores"]))
     ):
-        raise ValueError("WLS scoring produced non-finite values")
+        raise ValueError("EB scoring produced non-finite values")
     return scores, details
 
 
@@ -355,22 +304,24 @@ def score_loci_wls(
     chrom_matrix: np.ndarray,
     lower_bound_z: float = 1.0,
     prior_df: float = 5.0,
+    min_effect: float | None = None,
+    precision_floor_ratio: float = 0.01,
     low_memory: bool = False,
     return_details: bool = False,
 ) -> np.ndarray | Tuple[np.ndarray, Dict[str, Any]]:
-    r"""Score loci with a robust weighted least squares summary.
+    r"""Score loci with an EB-moderated summary on baseline-corrected log signal.
 
     We model the log-scaled signal at each locus as
-    :math:`y_{ij} = \log_2(1 + x_{ij}) = a_i + b_{ij} + \mu_j + e_{ij}` where
+    :math:`y_{ij} = \log(x_{ij}) = b_{ij} + \mu_j + e_{ij}` where
     :math:`b_{ij}` is a broad local background term from a cross-fit Whittaker
-    smoother. The sample intercept :math:`a_i` is fit
-    after subtracting :math:`b_{ij}`, with
-    the chromosome-wide mean of :math:`\mu_j` zero. Sample weights are set to the
-    inverse robust residual variance, using residuals around the across-sample median signal.
-    At each locus we compute a weighted mean, shrink the weighted variance toward a
-    chromosome-wide median variance with ``prior_df`` pseudo degrees of freedom,
-    and report the lower confidence bound
-    :math:`\mathrm{score}_j = \mu_j - z \, \mathrm{se}_j`.
+    smoother (see Consenrich api). On the resulting ``m x n`` centered matrix, ROCCO follows the
+    Consenrich pattern track by track: each sample gets a local variance track
+    from rolling AR(1) innovation variances, a separate global monotone prior
+    variance trend as a function of absolute signal level, and an EB-shrunk
+    posterior variance track based on the prior variance. Final locus estimate and standard error are
+    then computed by WLS over the full data matrix and the full posterior
+    variance matrix. The default score for the constrained optimization is the 'moderated'
+    standardized effect :math:`t_j = \mu_j / \mathrm{se}_j`.
     """
     matrix = _log_scale_wls_matrix(chrom_matrix)
     if matrix.ndim != 2:
@@ -385,22 +336,16 @@ def score_loci_wls(
     local_baselines, local_window, local_lambda = _estimate_local_background_matrix(
         global_centered
     )
-    # Drop full-chrom copies as soon as they have done their job.
-    del global_centered
-    residualized = matrix - local_baselines
+    centered = global_centered - local_baselines
     del matrix
+    del global_centered
     del local_baselines
-    # With :math:`\sum_j \mu_j = 0`, the fitted intercept is
-    # :math:`\hat a_i = n^{-1}\sum_j (y_{ij} - \hat b_{ij})`.
-    sample_intercepts = np.mean(residualized, axis=1, keepdims=True)
-    if not np.all(np.isfinite(sample_intercepts)):
-        raise ValueError("Sample intercept fit produced non-finite values")
-    centered = residualized - sample_intercepts
-    del residualized
     scores, core_details = _score_centered_wls_matrix(
         centered,
         lower_bound_z=lower_bound_z,
         prior_df=prior_df,
+        min_effect=min_effect,
+        precision_floor_ratio=precision_floor_ratio,
     )
     if not np.all(np.isfinite(scores)):
         raise ValueError("Locus scoring produced non-finite values")
@@ -412,14 +357,22 @@ def score_loci_wls(
 
     details = {
         "input_scale": "log2p1",
-        "sample_weights": np.asarray(core_details["sample_weights"], dtype=np.float64),
-        "sample_intercepts": sample_intercepts[:, 0].astype(np.float64),
-        "sample_baselines": sample_intercepts[:, 0].astype(np.float64),
         "local_baseline_window": int(local_window),
         "local_baseline_lambda": float(local_lambda),
         "mean": np.asarray(core_details["mean"], dtype=np.float64),
+        "raw_variance": np.asarray(core_details["raw_variance"], dtype=np.float64),
+        "prior_variance": np.asarray(core_details["prior_variance"], dtype=np.float64),
+        "moderated_variance": np.asarray(
+            core_details["moderated_variance"], dtype=np.float64
+        ),
         "standard_error": np.asarray(core_details["standard_error"], dtype=np.float64),
         "z_scores": np.asarray(core_details["z_scores"], dtype=np.float64),
+        "min_effect": float(core_details["min_effect"]),
+        "precision_floor_ratio": float(core_details["precision_floor_ratio"]),
+        "prior_spatial_window": int(core_details["prior_spatial_window"]),
+        "degrees_of_freedom": np.asarray(
+            core_details["degrees_of_freedom"], dtype=np.float64
+        ),
         "centered_matrix": centered_out,
     }
     if return_details:
@@ -465,6 +418,9 @@ def _standardize_wls_z_scores(
         else _robust_scale(z_scores_finite)
     )
     standardized = np.zeros_like(z_scores_, dtype=np.float64)
+    # we standardize by empirical null scale, where null scale is
+    # from the negative residuals so the null is always centered
+    # at zero and the standardized scores are one-sided pos. exceedances
     standardized[finite] = z_scores_[finite] / max(null_scale, 1.0e-6)
     return standardized, float(null_scale)
 
@@ -566,7 +522,7 @@ def _resolve_budget_bootstrap_bandwidth(
     n_loci: int,
     dependence_lag_hint: int | None = None,
 ) -> int:
-    r"""Resolve the dependent-multiplier bandwidth for the budget null."""
+    r"""Resolve the dependent-multiplier bandwidth for the budget null (DWB)."""
     n_loci_ = int(max(1, n_loci))
     if n_loci_ <= 1:
         return 1
@@ -578,7 +534,7 @@ def _resolve_budget_bootstrap_bandwidth(
 def _build_budget_bootstrap_kernel(
     bandwidth: int,
 ) -> np.ndarray:
-    r"""Build the Bartlett kernel used by the dependent wild bootstrap."""
+    r"""Build the Bartlett kernel used by the dependent wild bootstrap to induce short-range dependence."""
     bandwidth_ = int(max(1, bandwidth))
     support = np.arange(-bandwidth_, bandwidth_ + 1, dtype=np.float64)
     kernel = np.maximum(1.0 - (np.abs(support) / float(bandwidth_ + 1)), 0.0)
@@ -593,9 +549,9 @@ def _generate_dependent_wild_weights(
 ) -> np.ndarray:
     r"""Draw a short-range dependent multiplier process for the wild bootstrap.
 
-    Independent innovations are smoothed by a precomputed Bartlett kernel so
+    Independent innovations are smoothed by a precomputed *Bartlett kernel* so
     the multiplier field has mean zero, unit variance, and a fixed dependence
-    scale across all draws.
+    scale across all draws (i.e., the dependent wild bootstrap).
     """
     n_loci_ = int(max(1, n_loci))
     if n_loci_ == 1:
@@ -621,6 +577,7 @@ def _update_running_moments(
     m2: float,
     new_value: float,
 ) -> tuple[int, float, float]:
+    # Welford's algorithm for numerically stable online mean and variance updates
     count_ = int(count) + 1
     delta = float(new_value) - float(mean)
     mean_ = float(mean) + (delta / float(count_))
@@ -656,6 +613,8 @@ def _init_budget_null_process(
     residual_template: np.ndarray,
     lower_bound_z: float,
     prior_df: float,
+    min_effect: float | None,
+    precision_floor_ratio: float,
     null_center: float,
     null_soft_scale: float,
     null_threshold: float,
@@ -667,6 +626,8 @@ def _init_budget_null_process(
         "residual_template": np.asarray(residual_template, dtype=np.float64),
         "lower_bound_z": float(lower_bound_z),
         "prior_df": float(prior_df),
+        "min_effect": None if min_effect is None else float(max(min_effect, 0.0)),
+        "precision_floor_ratio": float(max(precision_floor_ratio, 0.0)),
         "null_center": float(null_center),
         "null_soft_scale": float(null_soft_scale),
         "null_threshold": float(null_threshold),
@@ -683,6 +644,8 @@ def _compute_budget_null_draw(draw_index: int) -> tuple[float, float, float, flo
     residual_template = np.asarray(state["residual_template"], dtype=np.float64)
     lower_bound_z = float(state["lower_bound_z"])
     prior_df = float(state["prior_df"])
+    min_effect = state["min_effect"]
+    precision_floor_ratio = float(state["precision_floor_ratio"])
     null_center = float(state["null_center"])
     null_soft_scale = float(state["null_soft_scale"])
     null_threshold = float(state["null_threshold"])
@@ -704,6 +667,8 @@ def _compute_budget_null_draw(draw_index: int) -> tuple[float, float, float, flo
         bootstrap_centered,
         lower_bound_z=lower_bound_z,
         prior_df=prior_df,
+        min_effect=min_effect,
+        precision_floor_ratio=precision_floor_ratio,
     )
     bootstrap_residual_scores = (
         np.asarray(bootstrap_scores, dtype=np.float64) - null_center
@@ -721,6 +686,8 @@ def _fit_budget_null_residual_template(
     centered_matrix: np.ndarray,
     lower_bound_z: float = 1.0,
     prior_df: float = 5.0,
+    min_effect: float | None = None,
+    precision_floor_ratio: float = 0.01,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     r"""Fit the one-sided null residual template used by the budget bootstrap.
 
@@ -739,6 +706,8 @@ def _fit_budget_null_residual_template(
         centered_matrix,
         lower_bound_z=lower_bound_z,
         prior_df=prior_df,
+        min_effect=min_effect,
+        precision_floor_ratio=precision_floor_ratio,
     )
     mu_hat = np.asarray(score_details["mean"], dtype=np.float64)
     positive_consensus = np.clip(mu_hat, 0.0, None)
@@ -752,6 +721,8 @@ def _estimate_wild_bootstrap_score_null(
     centered_matrix: np.ndarray,
     lower_bound_z: float = 1.0,
     prior_df: float = 5.0,
+    min_effect: float | None = None,
+    precision_floor_ratio: float = 0.01,
     observed_scores: np.ndarray | None = None,
     dependence_lag_hint: int | None = None,
     num_null_draws: int = 25,
@@ -783,6 +754,8 @@ def _estimate_wild_bootstrap_score_null(
             centered,
             lower_bound_z=lower_bound_z,
             prior_df=prior_df,
+            min_effect=min_effect,
+            precision_floor_ratio=precision_floor_ratio,
         )
     )
     if observed_scores is None:
@@ -798,6 +771,8 @@ def _estimate_wild_bootstrap_score_null(
         residual_template,
         lower_bound_z=lower_bound_z,
         prior_df=prior_df,
+        min_effect=min_effect,
+        precision_floor_ratio=precision_floor_ratio,
     )
     finite_null_scores = np.asarray(null_reference_scores, dtype=np.float64)
     null_center = float(np.median(finite_null_scores))
@@ -814,7 +789,7 @@ def _estimate_wild_bootstrap_score_null(
     if not np.isfinite(null_center) or not np.isfinite(null_scale):
         raise ValueError("Budget null fit produced non-finite values")
     null_soft_scale = float(max(null_scale, 1.0e-6))
-    # Conservative score threshold at :math:`\mu_0 + 2\sigma_0`.
+    # Conservative score threshold at :math:`\mu_0 + 2\sigma_0`, where sigma_0 is null scale
     null_threshold = float(null_center + (2.0 * null_scale))
 
     n_samples, n_loci = centered.shape
@@ -844,6 +819,8 @@ def _estimate_wild_bootstrap_score_null(
             residual_template,
             lower_bound_z,
             prior_df,
+            min_effect,
+            precision_floor_ratio,
             null_center,
             null_soft_scale,
             null_threshold,
@@ -901,6 +878,8 @@ def _estimate_wild_bootstrap_score_null(
                 residual_template,
                 lower_bound_z,
                 prior_df,
+                min_effect,
+                precision_floor_ratio,
                 null_center,
                 null_soft_scale,
                 null_threshold,
@@ -1012,6 +991,8 @@ def estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
     observed_scores: np.ndarray | None = None,
     lower_bound_z: float = 1.0,
     prior_df: float = 5.0,
+    min_effect: float | None = None,
+    precision_floor_ratio: float = 0.01,
     dependence_lag_hint: int | None = None,
     num_null_draws: int = 25,
     random_seed: int = 0,
@@ -1072,6 +1053,8 @@ def estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
         centered,
         lower_bound_z=lower_bound_z,
         prior_df=prior_df,
+        min_effect=min_effect,
+        precision_floor_ratio=precision_floor_ratio,
         observed_scores=observed_scores,
         dependence_lag_hint=dependence_lag_hint,
         num_null_draws=num_null_draws,
@@ -1165,11 +1148,285 @@ def estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
     return nonnull_fraction
 
 
+def _estimate_wild_bootstrap_direct_score_null(
+    score_track: np.ndarray,
+    dependence_lag_hint: int | None = None,
+    num_null_draws: int = 25,
+    random_seed: int = 0,
+    progress_label: str | None = None,
+    min_null_draws: int | None = None,
+    stability_abs_tol: float = 5.0e-3,
+    stability_rel_tol: float = 5.0e-2,
+) -> dict[str, float | int | str | np.ndarray]:
+    r"""Draw nulls from generic score tracks by a dependent wild bootstrap"""
+    scores = np.asarray(score_track, dtype=np.float64)
+    if scores.ndim != 1:
+        raise ValueError("`score_track` must be one-dimensional")
+    if scores.size == 0:
+        raise ValueError("`score_track` must contain at least one locus")
+
+    observed_scores = scores.astype(np.float64, copy=False)
+    positive_consensus = np.clip(observed_scores, 0.0, None)
+    residual_template = observed_scores - positive_consensus
+    null_reference_scores = residual_template
+    null_center = float(np.median(null_reference_scores))
+    null_reference_residuals = null_reference_scores - null_center
+    negative_reference = null_reference_residuals[null_reference_residuals <= 0.0]
+    if negative_reference.size == 0:
+        negative_magnitudes = np.abs(null_reference_residuals)
+    else:
+        negative_magnitudes = -negative_reference
+    if negative_magnitudes.size == 0:
+        negative_magnitudes = np.array([0.0], dtype=np.float64)
+    mirrored_reference = np.concatenate((-negative_magnitudes, negative_magnitudes))
+    null_scale = float(_robust_scale(mirrored_reference))
+    if not np.isfinite(null_center) or not np.isfinite(null_scale):
+        raise ValueError("Direct-score budget null fit produced non-finite values")
+    null_soft_scale = float(max(null_scale, 1.0e-6))
+    null_threshold = float(null_center + (2.0 * null_scale))
+
+    bandwidth = _resolve_budget_bootstrap_bandwidth(
+        observed_scores.size,
+        dependence_lag_hint=dependence_lag_hint,
+    )
+    kernel = _build_budget_bootstrap_kernel(bandwidth)
+    num_draws = int(max(1, num_null_draws))
+    min_draws = int(
+        min(num_draws, max(4, 8 if min_null_draws is None else min_null_draws))
+    )
+    draws_used = 0
+    mean_mass = 0.0
+    m2_mass = 0.0
+    mean_units = 0.0
+    m2_units = 0.0
+    mean_fraction = 0.0
+    m2_fraction = 0.0
+    mean_tail_occupancy = 0.0
+    m2_tail_occupancy = 0.0
+    rng = np.random.default_rng(int(random_seed))
+
+    # For each draw, generate a short-range dependency-inducing conv. kernel for the wild bootstrap
+    for draw_id in range(num_draws):
+        wild_weights = _generate_dependent_wild_weights(
+            observed_scores.size,
+            kernel=kernel,
+            rng=rng,
+        )
+        # convolve w/ template
+        bootstrap_scores = residual_template * wild_weights
+        # center null draws
+        bootstrap_residual_scores = bootstrap_scores - null_center
+        bootstrap_positive = np.clip(bootstrap_residual_scores, 0.0, None)
+        null_mass = float(np.mean(bootstrap_positive))
+        null_units = float(np.mean(bootstrap_positive / null_soft_scale))
+        null_fraction = float(np.mean(bootstrap_positive > 0.0))
+        null_tail_occupancy = float(np.mean(bootstrap_scores > null_threshold))
+
+        draws_used, mean_mass, m2_mass = _update_running_moments(
+            draws_used,
+            mean_mass,
+            m2_mass,
+            null_mass,
+        )
+        _, mean_units, m2_units = _update_running_moments(
+            draws_used - 1,
+            mean_units,
+            m2_units,
+            null_units,
+        )
+        _, mean_fraction, m2_fraction = _update_running_moments(
+            draws_used - 1,
+            mean_fraction,
+            m2_fraction,
+            null_fraction,
+        )
+        _, mean_tail_occupancy, m2_tail_occupancy = _update_running_moments(
+            draws_used - 1,
+            mean_tail_occupancy,
+            m2_tail_occupancy,
+            null_tail_occupancy,
+        )
+        if progress_label:
+            sys.stderr.write(f"\r{progress_label}: {draws_used}/{num_draws}")
+            sys.stderr.flush()
+        if _budget_null_stable_enough(
+            draws_used,
+            mean_units,
+            m2_units,
+            min_draws=min_draws,
+            abs_tol=stability_abs_tol,
+            rel_tol=stability_rel_tol,
+        ):
+            break
+
+    if progress_label:
+        sys.stderr.write("\n")
+        sys.stderr.flush()
+
+    null_units_sd = float(np.sqrt(max(m2_units / float(max(draws_used - 1, 1)), 0.0)))
+    null_units_stderr = float(
+        np.sqrt(
+            max(m2_units / float(max(draws_used - 1, 1)), 0.0)
+            / float(max(draws_used, 1))
+        )
+    )
+    null_tail_occupancy_sd = float(
+        np.sqrt(max(m2_tail_occupancy / float(max(draws_used - 1, 1)), 0.0))
+    )
+    null_tail_occupancy_stderr = float(
+        np.sqrt(
+            max(m2_tail_occupancy / float(max(draws_used - 1, 1)), 0.0)
+            / float(max(draws_used, 1))
+        )
+    )
+
+    # build metadata dict with null estimates and diagnostics
+    return {
+        "observed_scores": observed_scores.astype(np.float64),
+        "null_center": float(null_center),
+        "null_scale": float(null_scale),
+        "null_positive_mass": float(mean_mass),
+        "null_positive_units": float(mean_units),
+        "null_positive_fraction": float(mean_fraction),
+        "null_positive_units_sd": float(null_units_sd),
+        "null_positive_units_stderr": float(null_units_stderr),
+        "null_threshold": float(null_threshold),
+        "null_tail_occupancy": float(mean_tail_occupancy),
+        "null_tail_occupancy_sd": float(null_tail_occupancy_sd),
+        "null_tail_occupancy_stderr": float(null_tail_occupancy_stderr),
+        "negative_support_size": int(negative_magnitudes.size),
+        "negative_fraction": float(
+            negative_magnitudes.size / max(int(null_reference_scores.size), 1)
+        ),
+        "num_null_draws": int(draws_used),
+        "max_null_draws": int(num_draws),
+        "adaptive_stop": bool(draws_used < num_draws),
+        "wild_bandwidth": int(bandwidth),
+        "wild_process": "bartlett_multiplier",
+        "null_method": "dependent_wild_score_bootstrap",
+        "null_reference_mean_positive_consensus": float(np.mean(positive_consensus)),
+        "null_reference_max_positive_consensus": float(np.max(positive_consensus)),
+    }
+
+
+def estimate_budget_nonnull_fraction_from_score_track(
+    score_track: np.ndarray,
+    dependence_lag_hint: int | None = None,
+    num_null_draws: int = 25,
+    random_seed: int = 0,
+    progress_label: str | None = None,
+    num_processes: int = 1,
+    return_details: bool = False,
+) -> float | Tuple[float, Dict[str, Any]]:
+    r"""Estimate a conservative enriched fraction directly from a score track."""
+    _ = int(max(1, num_processes))
+    scores = np.asarray(score_track, dtype=np.float64)
+    if scores.ndim != 1:
+        raise ValueError("`score_track` must be one-dimensional")
+    if scores.size == 0:
+        raise ValueError("`score_track` must contain at least one locus")
+
+    null_meta = _estimate_wild_bootstrap_direct_score_null(
+        scores,
+        dependence_lag_hint=dependence_lag_hint,
+        num_null_draws=num_null_draws,
+        random_seed=random_seed,
+        progress_label=progress_label,
+    )
+    observed_scores = np.asarray(null_meta["observed_scores"], dtype=np.float64)
+    null_center = float(null_meta["null_center"])
+    null_scale = float(null_meta["null_scale"])
+    null_soft_scale = float(max(null_scale, 1.0e-6))
+    residual_scores = observed_scores - null_center
+    observed_excess = np.clip(residual_scores, 0.0, None)
+    observed_negative = np.clip(-residual_scores, 0.0, None)
+    observed_soft_counts = observed_excess / null_soft_scale
+    observed_positive_fraction = float(np.mean(observed_excess > 0.0))
+    observed_negative_fraction = float(np.mean(observed_negative > 0.0))
+    observed_excess_mass = float(np.mean(observed_excess))
+    observed_excess_units = float(np.mean(observed_soft_counts))
+    null_excess_mass = float(null_meta["null_positive_mass"])
+    null_excess_units = float(null_meta["null_positive_units"])
+    null_excess_units_sd = float(null_meta["null_positive_units_sd"])
+    null_threshold = float(null_meta["null_threshold"])
+    observed_tail_occupancy = float(np.mean(observed_scores > null_threshold))
+    null_tail_occupancy = float(null_meta["null_tail_occupancy"])
+    null_tail_occupancy_sd = float(null_meta["null_tail_occupancy_sd"])
+    ess_max_lag = _resolve_budget_ess_max_lag(
+        scores.size,
+        dependence_lag_hint=dependence_lag_hint,
+    )
+    effective_total_count, tau_int, ess_lags_used = _estimate_effective_sample_size(
+        observed_soft_counts,
+        max_lag=ess_max_lag,
+    )
+    nonnull_fraction = float(
+        np.clip(
+            observed_tail_occupancy - null_tail_occupancy - null_tail_occupancy_sd,
+            0.0,
+            1.0,
+        )
+    )
+    if (
+        not np.isfinite(nonnull_fraction)
+        or not np.isfinite(effective_total_count)
+        or not np.isfinite(tau_int)
+    ):
+        raise ValueError(
+            "Direct-score budget initialization produced non-finite values"
+        )
+
+    details = {
+        "observed_positive_fraction": float(observed_positive_fraction),
+        "observed_negative_fraction": float(observed_negative_fraction),
+        "null_positive_fraction": float(null_meta["null_positive_fraction"]),
+        "observed_excess_mass": float(observed_excess_mass),
+        "null_excess_mass": float(null_excess_mass),
+        "observed_excess_units": float(observed_excess_units),
+        "null_excess_units": float(null_excess_units),
+        "null_excess_units_sd": float(null_excess_units_sd),
+        "null_excess_units_stderr": float(null_meta["null_positive_units_stderr"]),
+        "null_threshold": float(null_threshold),
+        "observed_tail_occupancy": float(observed_tail_occupancy),
+        "null_tail_occupancy": float(null_tail_occupancy),
+        "null_tail_occupancy_sd": float(null_tail_occupancy_sd),
+        "null_tail_occupancy_stderr": float(null_meta["null_tail_occupancy_stderr"]),
+        "null_center": float(null_center),
+        "null_scale": float(null_scale),
+        "nonnull_fraction": float(nonnull_fraction),
+        "effective_count": float(nonnull_fraction * effective_total_count),
+        "effective_total_count": float(effective_total_count),
+        "autocorrelation_time": float(tau_int),
+        "ess_max_lag": float(ess_max_lag),
+        "ess_lags_used": float(ess_lags_used),
+        "num_loci": float(scores.size),
+        "negative_support_size": float(null_meta["negative_support_size"]),
+        "negative_fraction": float(null_meta["negative_fraction"]),
+        "num_null_draws": float(null_meta["num_null_draws"]),
+        "max_null_draws": float(null_meta["max_null_draws"]),
+        "adaptive_stop": bool(null_meta["adaptive_stop"]),
+        "wild_bandwidth": float(null_meta["wild_bandwidth"]),
+        "wild_process": str(null_meta["wild_process"]),
+        "null_method": str(null_meta["null_method"]),
+        "null_reference_mean_positive_consensus": float(
+            null_meta["null_reference_mean_positive_consensus"]
+        ),
+        "null_reference_max_positive_consensus": float(
+            null_meta["null_reference_max_positive_consensus"]
+        ),
+    }
+    if return_details:
+        return nonnull_fraction, details
+    return nonnull_fraction
+
+
 def estimate_budget_nonnull_fraction_from_empirical_null(
     centered_matrix: np.ndarray,
     observed_scores: np.ndarray | None = None,
     lower_bound_z: float = 1.0,
     prior_df: float = 5.0,
+    min_effect: float | None = None,
+    precision_floor_ratio: float = 0.01,
     dependence_lag_hint: int | None = None,
     num_null_draws: int = 25,
     random_seed: int = 0,
@@ -1183,6 +1440,8 @@ def estimate_budget_nonnull_fraction_from_empirical_null(
         observed_scores=observed_scores,
         lower_bound_z=lower_bound_z,
         prior_df=prior_df,
+        min_effect=min_effect,
+        precision_floor_ratio=precision_floor_ratio,
         dependence_lag_hint=dependence_lag_hint,
         num_null_draws=num_null_draws,
         random_seed=random_seed,
@@ -1197,6 +1456,8 @@ def estimate_budget_nonnull_fraction_from_resampled_null(
     observed_scores: np.ndarray | None = None,
     lower_bound_z: float = 1.0,
     prior_df: float = 5.0,
+    min_effect: float | None = None,
+    precision_floor_ratio: float = 0.01,
     num_null_draws: int = 25,
     mean_block_length: int | None = None,
     null_threshold_scale: float = 1.0,
@@ -1212,6 +1473,8 @@ def estimate_budget_nonnull_fraction_from_resampled_null(
         observed_scores=observed_scores,
         lower_bound_z=lower_bound_z,
         prior_df=prior_df,
+        min_effect=min_effect,
+        precision_floor_ratio=precision_floor_ratio,
         dependence_lag_hint=mean_block_length,
         num_null_draws=num_null_draws,
         random_seed=random_seed,
@@ -1264,15 +1527,17 @@ def _estimate_local_peak_width(
     return float(max(1.0, width_hat))
 
 
-def _bootstrap_local_peak_log_width_variance(
+def _estimate_local_peak_log_width_variance(
     y_vals: np.ndarray,
     peak_idx: int,
     half_window: int,
-    num_boot: int = 16,
 ) -> tuple[float | None, float | None]:
-    r"""Bootstrap the variance of the local peak width estimate on a log scale.
+    r"""Estimate local log-width and its uncertainty from a small smoothing ensemble.
 
-    Used to set the prior variance of the width parameter in the local context estimation.
+    The width itself is measured with the heuristic ``scipy.signal.peak_widths`` after a local
+    peak re-centering step. We then evaluate the same local peak on a few nearby
+    smoothings of the local signal and use the spread of the resulting log-widths
+    as a heteroskedastic uncertainty estimate for the EB summary downstream.
     """
     n = int(y_vals.size)
     if n < 8:
@@ -1298,41 +1563,44 @@ def _bootstrap_local_peak_log_width_variance(
     if smooth_size >= local_y.size:
         smooth_size = local_y.size - 1 if local_y.size % 2 == 0 else local_y.size
     smooth_size = max(3, smooth_size)
-    # fit a moving polynomial to the window
-    local_fit = signal.savgol_filter(
-        local_y,
-        window_length=smooth_size,
-        polyorder=min(2, smooth_size - 1),
-        mode="interp",
+    candidate_windows = sorted(
+        {
+            1,
+            smooth_size,
+            min(
+                local_y.size if (local_y.size % 2) == 1 else local_y.size - 1,
+                smooth_size + 2,
+            ),
+        }
     )
-    residuals = np.asarray(local_y - local_fit, dtype=np.float64)
-    residuals = residuals[np.isfinite(residuals)]
-    if residuals.size < 4:
-        return float(np.log(width_hat)), 1.0e-6
-
-    residuals = residuals - float(np.mean(residuals))
-    rng = np.random.default_rng(
-        int((int(peak_idx) + 1) * 104729 + (half_window + 1) * 1009 + n)
-    )
-    # now bootstrap the residuals and re-estimate the width to get a distribution of log-widths for variance estimation
-    boot_log_widths: list[float] = []
-    for _ in range(int(max(4, num_boot))):
-        boot_residuals = rng.choice(residuals, size=local_y.size, replace=True)
-        boot_residuals = boot_residuals - float(np.mean(boot_residuals))
-        local_y_boot = local_fit + boot_residuals
-        width_boot = _estimate_local_peak_width(
-            local_y_boot,
+    log_widths: list[float] = []
+    for window_length in candidate_windows:
+        if window_length <= 1:
+            local_variant = local_y
+        else:
+            local_variant = signal.savgol_filter(
+                local_y,
+                window_length=window_length,
+                polyorder=min(2, window_length - 1),
+                mode="interp",
+            )
+        width_variant = _estimate_local_peak_width(
+            np.asarray(local_variant, dtype=np.float64),
             local_peak_idx,
             peak_search_radius=2,
         )
-        if width_boot is None:
+        if width_variant is None:
             continue
-        boot_log_widths.append(float(np.log(width_boot)))
+        # log-scale widths st rare/wide peaks do not unduly dominate the variance estimate for more typical peaks
+        log_widths.append(float(np.log(width_variant)))
 
-    log_width = float(np.log(width_hat))
-    if len(boot_log_widths) < 2:
-        return log_width, 1.0e-6
-    return log_width, float(max(1.0e-6, np.var(boot_log_widths, ddof=1)))
+    if len(log_widths) == 0:
+        return None, None
+    log_width_arr = np.asarray(log_widths, dtype=np.float64)
+    log_width = float(np.median(log_width_arr))
+    if log_width_arr.size < 2:
+        return log_width, 1.0e-4
+    return log_width, float(max(1.0e-4, np.var(log_width_arr, ddof=1)))
 
 
 def _select_context_features(
@@ -1386,7 +1654,7 @@ def _select_context_features(
             warnings.filterwarnings("ignore", category=UserWarning)
             features, props = signal.find_peaks(
                 y_log_smooth,
-                distance=int(max(1, order)),
+                distance=int(max(1, order * max(1, min_span_))),
                 prominence=1.0e-4,
             )
 
@@ -1396,6 +1664,16 @@ def _select_context_features(
             feature_mask = y_log[features] > thr_log
             if prominences is not None:
                 feature_mask &= prominences > 0.0
+            widths_half, _, _, _ = signal.peak_widths(
+                y_log_smooth,
+                features.astype(np.int64, copy=False),
+                rel_height=0.5,
+            )
+            feature_mask &= np.isfinite(widths_half)
+            feature_mask &= widths_half >= float(max(1, min_span_))
+            if max_span_ > 0:
+                feature_mask &= widths_half <= float(max_span_ * 2)
+            if prominences is not None:
                 prom_masked = prominences[feature_mask]
             features = features[feature_mask]
 
@@ -1412,7 +1690,7 @@ def _select_context_features(
                 score = float(features.size)
             else:
                 top = np.partition(prom_masked, -top_k)[-top_k:]
-                score = float(np.sum(np.log1p(top)))
+                score = float(np.sum(np.log1p(top)) / np.sqrt(float(top_k)))
 
         if score > best_score:
             best_score = score
@@ -1483,7 +1761,8 @@ def estimate_context_size(
     r"""Estimate a characteristic peak width from local half-height widths.
 
     We detect prominent local features on a smoothed log-scale track, estimate a
-    half-height width for each feature, bootstrap for log-width variance, and then
+    half-height width for each feature with ``scipy.signal.peak_widths``, derive
+    a per-feature log-width uncertainty from a small smoothing ensemble, and then
     shrink widths with a simple normal-normal EB approach on log scale.
     """
     feature_meta = _select_context_features(
@@ -1503,11 +1782,10 @@ def estimate_context_size(
     s_hat_list: list[float] = []
     sigma2_list: list[float] = []
     for peak_idx in feature_index_array:
-        log_width, sigma_s2 = _bootstrap_local_peak_log_width_variance(
+        log_width, sigma_s2 = _estimate_local_peak_log_width_variance(
             y_vals=y_log,
             peak_idx=int(peak_idx),
             half_window=noise_window,
-            num_boot=16,
         )
         if log_width is None or sigma_s2 is None:
             continue
@@ -1579,6 +1857,9 @@ def estimate_context_size(
         ),
         "num_features": int(feature_index_array.size),
         "tau_sq_hat": float(tau_sq_hat),
+        "context_log_mean": float(mu_hat),
+        "context_log_mean_var": float(mu_var),
+        "context_max_span": int(max_span_),
         "best_order": int(feature_meta["best_order"]),
     }
     logger.info(
@@ -1600,14 +1881,14 @@ def estimate_context_size(
 def _estimate_gamma_signal_scale(
     scores: np.ndarray,
     feature_indices: np.ndarray,
-    width_lower: int,
-) -> tuple[float, float]:
+    context_width: int,
+) -> float:
     r"""Estimate the local positive score scale used for ``gamma_hat`` initialization."""
     scores_ = np.asarray(scores, dtype=np.float64)
     positive_scores = np.clip(scores_, 0.0, None)
     feature_indices_ = np.asarray(feature_indices, dtype=np.int64)
     local_mean_excess = []
-    half_width = max(1, int(width_lower))
+    half_width = max(1, int(context_width))
     for idx in feature_indices_:
         left = max(0, int(idx) - half_width)
         right = min(scores_.size, int(idx) + half_width + 1)
@@ -1626,32 +1907,13 @@ def _estimate_gamma_signal_scale(
             dtype=np.float64,
         )
         signal_scale = float(np.median(local_mean_excess_arr))
-        if local_mean_excess_arr.size > 1:
-            signal_log_var = float(
-                max(
-                    1.0e-6,
-                    np.var(np.log(local_mean_excess_arr), ddof=1)
-                    / float(local_mean_excess_arr.size),
-                )
-            )
-        else:
-            signal_log_var = 1.0e-2
-        return signal_scale, signal_log_var
+        return signal_scale
 
     positive = positive_scores[positive_scores > 0]
     if positive.size == 0:
         raise ValueError("Cannot estimate gamma from scores without positive signal.")
     signal_scale = float(np.quantile(positive, 0.75))
-    if positive.size > 1:
-        signal_log_var = float(
-            max(
-                1.0e-6,
-                np.var(np.log(positive), ddof=1) / float(positive.size),
-            )
-        )
-    else:
-        signal_log_var = 1.0e-2
-    return signal_scale, signal_log_var
+    return signal_scale
 
 
 def estimate_gamma_from_scores(
@@ -1666,8 +1928,8 @@ def estimate_gamma_from_scores(
     r"""Initialize ``gamma`` from peak width and local positive score scale.
 
     The raw estimate is
-    ``gamma_hat = gamma_scale * width_lower * signal_scale`` where
-    ``width_lower`` is a conservative lower bound on characteristic width and
+    ``gamma_hat = gamma_scale * context_size_point * signal_scale`` where
+    ``context_size_point`` is the point width estimate and
     ``signal_scale`` is the median local positive score excess around detected
     features.
     """
@@ -1686,7 +1948,6 @@ def estimate_gamma_from_scores(
             context_meta["feature_indices"],
             dtype=np.int64,
         )
-        context_shared = False
     else:
         context_point = int(context_size_summary[0])
         width_lower = int(context_size_summary[1])
@@ -1705,140 +1966,25 @@ def estimate_gamma_from_scores(
             "best_order": int(feature_meta["best_order"]),
             "num_features": int(feature_indices.size),
         }
-        context_shared = True
 
-    signal_scale, signal_log_var = _estimate_gamma_signal_scale(
+    signal_scale = _estimate_gamma_signal_scale(
         scores_,
         feature_indices,
-        width_lower,
+        context_point,
     )
-
-    if band_z > 0 and width_upper > width_lower:
-        log_width_se = float(
-            (np.log(width_upper) - np.log(width_lower))
-            / max(2.0 * float(band_z), 1.0e-6)
-        )
-        width_log_var = float(max(1.0e-6, log_width_se * log_width_se))
-    else:
-        width_log_var = 1.0e-2
 
     gamma_hat = float(
-        max(1.0e-6, float(gamma_scale) * float(max(1, width_lower)) * signal_scale)
+        max(1.0e-6, float(gamma_scale) * float(max(1, context_point)) * signal_scale)
     )
-    log_gamma_var = float(max(1.0e-6, width_log_var + signal_log_var))
     return gamma_hat, {
         "gamma_scale": float(gamma_scale),
         "signal_scale": float(signal_scale),
-        "signal_log_var": float(signal_log_var),
         "context_size_point": int(context_point),
         "context_size_lower": int(width_lower),
         "context_size_upper": int(width_upper),
-        "width_log_var": float(width_log_var),
-        "log_gamma_var": float(log_gamma_var),
         "num_features": int(context_meta["num_features"]),
-        "context_shared": float(context_shared),
         "feature_detection_order": int(context_meta["best_order"]),
     }
-
-
-def shrink_gamma_estimates(
-    gamma_hats: Dict[str, float],
-    gamma_variances: Dict[str, float] | None = None,
-    min_gamma: float = 1.0e-6,
-) -> Tuple[Dict[str, float], Dict[str, float]]:
-    r"""Shrink chromosome-level ``gamma`` estimates on the log scale.
-
-    Each chromosome contributes a log-gamma estimate and var,
-    and the posterior mean borrows strength toward the genome-wide
-    center.
-    """
-    chroms = list(gamma_hats.keys())
-    if len(chroms) == 0:
-        return {}, {
-            "prior_mean": 0.0,
-            "prior_tau_sq": 0.0,
-            "num_chromosomes": 0,
-        }
-
-    log_gamma = np.log(
-        np.maximum(
-            np.asarray([gamma_hats[chrom] for chrom in chroms], dtype=np.float64),
-            float(min_gamma),
-        )
-    )
-    if gamma_variances is None:
-        sigma2 = np.ones(len(chroms), dtype=np.float64)
-    else:
-        sigma2 = np.asarray(
-            [max(float(gamma_variances.get(chrom, 1.0)), 1.0e-6) for chrom in chroms],
-            dtype=np.float64,
-        )
-
-    if len(chroms) == 1:
-        return (
-            {chroms[0]: float(np.exp(log_gamma[0]))},
-            {
-                "prior_mean": float(log_gamma[0]),
-                "prior_tau_sq": 0.0,
-                "num_chromosomes": 1,
-            },
-        )
-
-    observed_var = float(np.var(log_gamma, ddof=1))
-    mean_sigma2 = float(np.mean(sigma2))
-    tau2_mom = float(max(0.0, observed_var - mean_sigma2))
-    tau2_max = float(max(1.0e-6, observed_var + mean_sigma2) * 10.0)
-
-    def _negative_log_likelihood(prior_tau_sq: float) -> float:
-        tau_sq = float(max(0.0, prior_tau_sq))
-        total_var = np.maximum(sigma2 + tau_sq, 1.0e-12)
-        inv_total_var = 1.0 / total_var
-        mu_hat = float(np.sum(inv_total_var * log_gamma) / np.sum(inv_total_var))
-        residuals = log_gamma - mu_hat
-        return 0.5 * float(
-            np.sum(np.log(total_var)) + np.sum((residuals * residuals) * inv_total_var)
-        )
-
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=RuntimeWarning)
-        warnings.filterwarnings("ignore", category=UserWarning)
-        res = optimize.minimize_scalar(
-            _negative_log_likelihood,
-            bounds=(0.0, tau2_max),
-            method="bounded",
-            options={"xatol": 1.0e-4, "maxiter": 50},
-        )
-
-    if getattr(res, "success", False):
-        tau_sq_hat = float(res.x)
-    else:
-        tau_sq_hat = tau2_mom
-        logger.warning(
-            "Failed to optimize gamma shrinkage tau^2; using MoM estimate tau^2=%.6f.",
-            tau2_mom,
-        )
-
-    total_var = np.maximum(sigma2 + tau_sq_hat, 1.0e-12)
-    inv_total_var = 1.0 / total_var
-    prior_mean = float(np.sum(inv_total_var * log_gamma) / np.sum(inv_total_var))
-    if tau_sq_hat <= 1.0e-12:
-        posterior_log_gamma = np.full_like(log_gamma, prior_mean)
-    else:
-        posterior_log_gamma = ((tau_sq_hat * log_gamma) + (sigma2 * prior_mean)) / (
-            sigma2 + tau_sq_hat
-        )
-
-    return (
-        {
-            chrom: float(np.exp(posterior_log_gamma[idx]))
-            for idx, chrom in enumerate(chroms)
-        },
-        {
-            "prior_mean": float(prior_mean),
-            "prior_tau_sq": float(tau_sq_hat),
-            "num_chromosomes": int(len(chroms)),
-        },
-    )
 
 
 def fit_beta_prior_mle(
@@ -1918,37 +2064,28 @@ def fit_beta_prior_mle(
     return alpha_hat, beta_hat
 
 
-def _conservative_beta_posterior_budget(
+def _beta_posterior_budget_quantile(
     successes: float,
     total: float,
     alpha: float,
     beta: float,
+    posterior_quantile: float,
     min_budget: float,
     max_budget: float,
 ) -> float:
     posterior_alpha = float(max(1.0e-12, successes + alpha))
     posterior_beta = float(max(1.0e-12, (total - successes) + beta))
-    posterior_sum = posterior_alpha + posterior_beta
-    posterior_mean = posterior_alpha / posterior_sum
-    if total <= 0.0:
-        return float(np.clip(posterior_mean, min_budget, max_budget))
-
-    # FFR: revisit
-    # This is conservative in the sense that we subtract a posterior standard deviation from the mean,
-    # which gives more shrinkage for chromosomes with less data and/or more uncertainty.
-    # The posterior variance of a beta distribution is :math:`\frac{\alpha \beta}{(\alpha + \beta)^2 (\alpha + \beta + 1)}`,
-    # so we take:
-    #   :math:`\mathbb{E}[p_c \mid x_c] - \operatorname{sd}(p_c \mid x_c) = \frac{\alpha}{\alpha + \beta} - \sqrt{\frac{\alpha \beta}{(\alpha + \beta)^2 (\alpha + \beta + 1)}}`
-    # but clip to plausible ranges
-    posterior_var = (
-        posterior_alpha
-        * posterior_beta
-        / ((posterior_sum * posterior_sum) * (posterior_sum + 1.0))
+    posterior_quantile_ = float(np.clip(posterior_quantile, 1.0e-6, 1.0 - 1.0e-6))
+    posterior_budget = float(
+        stats.beta.ppf(
+            posterior_quantile_,
+            posterior_alpha,
+            posterior_beta,
+        )
     )
-    posterior_sd = float(np.sqrt(max(posterior_var, 0.0)))
     return float(
         np.clip(
-            posterior_mean - posterior_sd,
+            posterior_budget,
             min_budget,
             max_budget,
         )
@@ -1962,6 +2099,7 @@ def estimate_empirical_bayes_budgets(
     max_budget: float = 0.5,
     init_center: float = 0.05,
     init_strength: float = 10.0,
+    posterior_quantile: float = 0.01,
 ) -> Tuple[Dict[str, float], Dict[str, float]]:
     r"""Estimate per-chromosome budgets with beta-binomial EB shrinkage."""
     chroms = list(chrom_candidate_counts.keys())
@@ -1996,16 +2134,21 @@ def estimate_empirical_bayes_budgets(
         observed_raw_budget_var <= theoretical_min_raw_budget_var + 1.0e-12
     )
 
+    posterior_quantile_ = float(posterior_quantile)
+    if not (0.0 < posterior_quantile_ < 1.0):
+        raise ValueError("`posterior_quantile` must lie strictly between 0 and 1")
+
     if len(chroms) <= 1:
         alpha0 = float(init_center) * float(init_strength)
         beta0 = (1.0 - float(init_center)) * float(init_strength)
         shrunk = {
             chrom: float(
-                _conservative_beta_posterior_budget(
+                _beta_posterior_budget_quantile(
                     successes[idx],
                     totals[idx],
                     alpha0,
                     beta0,
+                    posterior_quantile_,
                     min_budget,
                     max_budget,
                 )
@@ -2022,7 +2165,8 @@ def estimate_empirical_bayes_budgets(
             "observed_raw_budget_var": float(observed_raw_budget_var),
             "theoretical_min_raw_budget_var": float(theoretical_min_raw_budget_var),
             "prior_dispersion_at_floor": bool(False),
-            "posterior_summary": "mean_minus_sd",
+            "posterior_summary": "beta_quantile",
+            "posterior_quantile": float(posterior_quantile_),
             "prior_fit_method": "single_chrom_default",
         }
 
@@ -2030,11 +2174,12 @@ def estimate_empirical_bayes_budgets(
         alpha_hat = float(pooled_rate) * float(init_strength)
         beta_hat = (1.0 - float(pooled_rate)) * float(init_strength)
         shrunk = {
-            chrom: _conservative_beta_posterior_budget(
+            chrom: _beta_posterior_budget_quantile(
                 successes[idx],
                 totals[idx],
                 alpha_hat,
                 beta_hat,
+                posterior_quantile_,
                 min_budget,
                 max_budget,
             )
@@ -2053,7 +2198,8 @@ def estimate_empirical_bayes_budgets(
             "prior_dispersion_at_floor": bool(
                 observed_raw_budget_var <= theoretical_min_raw_budget_var + 1.0e-12
             ),
-            "posterior_summary": "mean_minus_sd",
+            "posterior_summary": "beta_quantile",
+            "posterior_quantile": float(posterior_quantile_),
             "prior_fit_method": "weak_pooled_prior",
         }
 
@@ -2065,11 +2211,12 @@ def estimate_empirical_bayes_budgets(
     )
     shrunk = {}
     for idx, chrom in enumerate(chroms):
-        shrunk[chrom] = _conservative_beta_posterior_budget(
+        shrunk[chrom] = _beta_posterior_budget_quantile(
             successes[idx],
             totals[idx],
             alpha_hat,
             beta_hat,
+            posterior_quantile_,
             min_budget,
             max_budget,
         )
@@ -2086,6 +2233,7 @@ def estimate_empirical_bayes_budgets(
         "observed_raw_budget_var": float(observed_raw_budget_var),
         "theoretical_min_raw_budget_var": float(theoretical_min_raw_budget_var),
         "prior_dispersion_at_floor": bool(dispersion_at_floor),
-        "posterior_summary": "mean_minus_sd",
+        "posterior_summary": "beta_quantile",
+        "posterior_quantile": float(posterior_quantile_),
         "prior_fit_method": "beta_binomial_mle",
     }

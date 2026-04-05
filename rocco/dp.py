@@ -37,113 +37,13 @@ def objective_value(
 def build_switch_costs(
     scores: np.ndarray,
     gamma: float = 1.0,
-    scale_gamma: bool = False,
-    beta: Optional[float] = None,
-    denom_const: Optional[float] = None,
 ) -> np.ndarray:
     scores_ = np.asarray(scores, dtype=np.float64)
     if scores_.ndim != 1:
         raise ValueError("`scores` must be a one-dimensional array")
     if scores_.shape[0] <= 1:
         return np.zeros(0, dtype=np.float64)
-    if not scale_gamma:
-        return np.full(scores_.shape[0] - 1, float(gamma), dtype=np.float64)
-    beta_ = 0.5 if beta is None else float(beta)
-    denom_const_ = 1.0 if denom_const is None else float(denom_const)
-    return float(gamma) / ((np.abs(np.diff(scores_, 1)) + denom_const_) ** beta_)
-
-
-def _solve_penalized_chain_python(
-    scores: np.ndarray,
-    switch_costs: np.ndarray,
-    selection_penalty: float,
-) -> Tuple[np.ndarray, float, int]:
-    scores_ = np.ascontiguousarray(scores, dtype=np.float64)
-    switch_costs_ = np.ascontiguousarray(switch_costs, dtype=np.float64)
-    if scores_.ndim != 1:
-        raise ValueError("`scores` must be one-dimensional")
-    n = scores_.shape[0]
-    if n == 0:
-        raise ValueError("`scores` cannot be empty")
-    if n > 1 and switch_costs_.shape[0] != n - 1:
-        raise ValueError("`switch_costs` must have length len(scores) - 1")
-
-    # at locus i, we keep the best penalized objective ending in state 0 or 1.
-    # The value recursion only needs the previous locus, so the objective and
-    # selected-count updates stay O(1) in memory. We still keep one backpointer
-    # array per state so we can reconstruct the final binary chain.
-    bt0 = np.zeros(n, dtype=np.uint8)
-    bt1 = np.zeros(n, dtype=np.uint8)
-    prev0_val = 0.0
-    prev0_count = 0
-    prev1_val = float(scores_[0] - selection_penalty)
-    prev1_count = 1
-
-    # Move left to right and update the best penalized objective for each end state.
-    # Note, tie-breaks favor solutions with _fewer_ selected loci.
-    for i in range(1, n):
-
-        switch_cost = float(switch_costs_[i - 1])
-        stay0_val = prev0_val
-        stay0_count = prev0_count
-        # implicit: if previous state was 1, we pay to go to 0
-        switch0_val = prev1_val - switch_cost
-        switch0_count = prev1_count
-        if switch0_val > stay0_val or (
-            switch0_val == stay0_val and switch0_count < stay0_count
-        ):
-            new0_val = switch0_val
-            new0_count = switch0_count
-            bt0[i] = 1
-        else:
-            new0_val = stay0_val
-            new0_count = stay0_count
-
-        # add score_i - selection_penalty, then decide whether
-        # that 1-segment is continuing or starts exactly at this locus.
-        # If it starts here,
-        # we have to pay the fragmentation/TV cost. Otherwise, we just
-        # add the score and selection penalty to the previous state-1 value.
-        stay1_val = prev1_val + float(scores_[i] - selection_penalty)
-        stay1_count = prev1_count + 1
-        switch1_val = prev0_val - switch_cost + float(scores_[i] - selection_penalty)
-        switch1_count = prev0_count + 1
-
-        # store which previous state gave the best state-1 value, breaking ties toward fewer selected loci.
-        # backpointer array reconstructs the solution after the forward pass.
-        if switch1_val > stay1_val or (
-            switch1_val == stay1_val and switch1_count < stay1_count
-        ):
-            new1_val = switch1_val
-            new1_count = switch1_count
-            bt1[i] = 0
-        else:
-            new1_val = stay1_val
-            new1_count = stay1_count
-            bt1[i] = 1
-
-        prev0_val = new0_val
-        prev0_count = new0_count
-        prev1_val = new1_val
-        prev1_count = new1_count
-
-    # final state
-    if prev1_val > prev0_val or (prev1_val == prev0_val and prev1_count < prev0_count):
-        best_val = prev1_val
-        best_count = prev1_count
-        state = 1
-    else:
-        best_val = prev0_val
-        best_count = prev0_count
-        state = 0
-
-    # viterbi backtracking yields the solution
-    solution = np.zeros(n, dtype=np.uint8)
-    solution[-1] = state
-    for i in range(n - 1, 0, -1):
-        state = int(bt0[i]) if state == 0 else int(bt1[i])
-        solution[i - 1] = state
-    return solution, float(best_val), int(best_count)
+    return np.full(scores_.shape[0] - 1, float(gamma), dtype=np.float64)
 
 
 def solve_penalized_chain(
@@ -170,16 +70,10 @@ def solve_penalized_chain(
     Madrid Padilla et al. (2017, JMLR 18). For the broader chain-DP context,
     see Forney (1973, Proc. IEEE, doi:10.1109/PROC.1973.9030).
     """
+    if _chain_dp is None:
+        raise RuntimeError("Make sure native C extensions are built and available")
     scores_ = np.ascontiguousarray(scores, dtype=np.float64)
     switch_costs_ = np.ascontiguousarray(switch_costs, dtype=np.float64)
-    # use pure python if extension didn't build
-    if _chain_dp is None:
-        return _solve_penalized_chain_python(
-            scores_,
-            switch_costs_,
-            float(selection_penalty),
-        )
-    # fast backend, no python
     solution, penalized_objective, selected_count = _chain_dp.solve_penalized_chain(
         scores_,
         switch_costs_,
@@ -274,28 +168,22 @@ def solve_chrom_exact(
     scores: np.ndarray,
     budget: Optional[float] = None,
     gamma: float = 1.0,
-    beta: Optional[float] = None,
-    denom_const: Optional[float] = None,
-    scale_gamma: bool = False,
     selection_penalty: Optional[float] = None,
     return_details: bool = False,
 ) -> Tuple[np.ndarray, float] | Tuple[np.ndarray, float, Dict[str, float]]:
-    r"""Solve one chromosome with the exact penalized-chain DP.
+    r"""Solve one chromosome with the exact penalized-chain dynamic program.
 
     If ``selection_penalty`` is not supplied and ``budget`` is supplied, we
     find a penalty :math:`\lambda` that forces feasibility. Note that we
     do not have to saturate the budget entirely, only stay below it.
 
-    If ``selection_penalty`` is supplied, ROCCO skips that calibration step and
-    solves the penalized chain directly with the supplied value.
+    If ``selection_penalty`` is supplied, skip that calibration step and
+    solve the penalized chain directly with the supplied value.
     """
     scores_ = np.ascontiguousarray(scores, dtype=np.float64)
     switch_costs = build_switch_costs(
         scores_,
         gamma=gamma,
-        scale_gamma=scale_gamma,
-        beta=beta,
-        denom_const=denom_const,
     )
     if selection_penalty is None:
         if budget is None:

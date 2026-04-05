@@ -390,7 +390,10 @@ setup(
         "pandas",
         "pysam",
     ],
-    extras_require={"pytest": ["pytest>=6.0.1"]},
+    extras_require={
+        "pytest": ["pytest>=6.0.1"],
+        "bigwig": ["pyBigWig"],
+    },
     entry_points={"console_scripts": ["rocco = rocco.rocco:main"]},
     include_package_data=True,
     zip_safe=False,
