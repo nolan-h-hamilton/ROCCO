@@ -18,7 +18,7 @@ ROCCO models consensus peak calling as a constrained optimization problem with a
 
 ## Why
 
-1. **Consideration of enrichment and spatial characteristics** of open chromatin signals
+1. **Consideration of enrichment magnitude and spatial characteristics** of open chromatin signals
 2. **Scaling to large sample sizes (100+)**
 3. **Unsupervised** Does not require training data or a heuristically determined set of initial candidate peak regions
 4. **No rigid thresholds + less manual tuning** with respect to the minimum number/width of supporting samples/replicates.

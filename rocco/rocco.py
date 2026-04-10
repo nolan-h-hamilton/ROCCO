@@ -17,12 +17,12 @@ import logging
 import multiprocessing as mp
 import os
 import sys
+import tempfile
 import uuid
 from pprint import pformat
 from typing import Tuple
 
 import numpy as np
-import pandas as pd
 import scipy.stats as stats
 
 from rocco.constants import GENOME_DICT
@@ -31,8 +31,6 @@ from rocco.inference import (
     estimate_empirical_bayes_budgets,
     estimate_budget_nonnull_fraction_from_wild_bootstrap_null,
     estimate_budget_nonnull_fraction_from_score_track,
-    estimate_context_size,
-    estimate_gamma_from_scores,
     score_loci_wls,
 )
 from rocco._version import __version__
@@ -477,7 +475,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--genome",
         "-g",
         default=None,
-        help="Genome assembly. Invoking this argument with a supported assembly (hg38, hg19, mm10, mm39, dm6) will use default resources (`--chrom_sizes_file`), parameters (`--params`) and EGS (`--effective_genome_size`) specific to that assembly that come with the ROCCO package by default. If this argument is not invoked, you can just supply the required arguments manually with the command-line arguments.",
+        help="Genome assembly. Invoking this argument with a supported assembly (hg38, hg19, mm10, mm39, dm6) will use default `--chrom_sizes_file` and `--effective_genome_size` values specific to that assembly. If this argument is not invoked, you can supply those arguments manually.",
     )
     parser.add_argument(
         "--chrom_sizes_file",
@@ -503,7 +501,7 @@ def _build_parser() -> argparse.ArgumentParser:
         nargs="+",
         type=str,
         default=[],
-        help="Chromosomes to skip",
+        help="Chromosomes to skip altogether -- peaks in these chromosomes are effectively omitted",
     )
     parser.add_argument(
         "-v",
@@ -537,42 +535,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.01,
         help="Lower beta-posterior quantile used to summarize EB chromosome budgets. Smaller values are more conservative.",
     )
-    parser.add_argument("--gamma", type=float, default=None)
     parser.add_argument(
-        "--gamma_scale",
+        "--gamma",
         type=float,
-        default=0.5,
-        help="Scale factor used with the automatic gamma estimate.",
-    )
-    parser.add_argument(
-        "--gamma_context_min_span",
-        type=int,
-        default=3,
-        help="Minimum smoothing span used during width-based gamma estimation.",
-    )
-    parser.add_argument(
-        "--gamma_context_max_span",
-        type=int,
-        default=64,
-        help="Maximum candidate span, in loci, used during width-based gamma estimation.",
-    )
-    parser.add_argument(
-        "--gamma_context_band_z",
-        type=float,
-        default=1.0,
-        help="Controls the lower width bound used during gamma estimation.",
-    )
-    parser.add_argument(
-        "--gamma_context_max_order",
-        type=int,
-        default=5,
-        help="Maximum peak-separation order searched during width-based gamma estimation.",
-    )
-    parser.add_argument(
-        "--params",
-        type=str,
         default=None,
-        help="CSV file containing chromosome-specific optimization parameters.",
+        help="Boundary penalty used by the exact DP. If omitted, ROCCO derives a chromosome-level default from score scale and autocorrelation.",
     )
     parser.add_argument(
         "--threads",
@@ -727,8 +694,6 @@ def _prepare_args(parser: argparse.ArgumentParser) -> dict:
             ]
         if args["chrom_sizes_file"] is None:
             args["chrom_sizes_file"] = GENOME_DICT[args["genome"]]["sizes_file"]
-        if args["params"] is None:
-            args["params"] = GENOME_DICT[args["genome"]]["params"]
 
     input_types = {_get_input_type(file_) for file_ in args["input_files"]}
     if len(input_types) != 1:
@@ -783,44 +748,45 @@ def _resolve_chromosomes(args: dict) -> list:
     return chroms_to_process
 
 
-def _resolve_params_df(args: dict) -> pd.DataFrame | None:
-    if args["params"] is None:
-        return None
-    logger.info("Attempting to use custom parameters file: %s", args["params"])
-    return pd.read_csv(args["params"], sep=",")
-
-
 def _resolve_chrom_gamma(
     chrom: str,
-    params_df: pd.DataFrame | None,
     args: dict,
-    intervals: np.ndarray,
-) -> float:
-    params_gamma = None
-    if (
-        params_df is not None
-        and "chrom" in params_df.columns
-        and "gamma" in params_df.columns
-        and chrom in params_df["chrom"].values
-    ):
-        params_gamma = float(
-            params_df.loc[params_df["chrom"] == chrom]["gamma"].values[0]
-        )
-
+    chrom_scores: np.ndarray,
+    budget_rate_meta: dict,
+) -> tuple[float, dict | None]:
     if args["gamma"] is not None:
         chrom_gamma = float(args["gamma"])
-        gamma_source = "user"
-    else:
-        chrom_gamma = float(params_gamma if params_gamma is not None else 1.0)
-        gamma_source = "params" if params_gamma is not None else "default"
+        if not np.isfinite(chrom_gamma) or chrom_gamma < 0.0:
+            raise ValueError("`--gamma` must be finite and non-negative")
+        logger.info("%s fixed gamma value=%.6f", chrom, chrom_gamma)
+        return float(chrom_gamma), None
 
-    try:
-        step = float(intervals[1] - intervals[0])
-        chrom_gamma = (float(chrom_gamma) / step) * 50.0
-    except Exception as exc:
-        logger.info("Could not scale gamma based on step size: %s", exc)
-    logger.info("%s fixed gamma source=%s value=%.6f", chrom, gamma_source, chrom_gamma)
-    return float(chrom_gamma)
+    scores_ = np.asarray(chrom_scores, dtype=np.float64)
+    positive_scores = scores_[scores_ > 0.0]
+    if positive_scores.size == 0:
+        positive_scale = 1.0
+        positive_count = 0
+    else:
+        positive_scale = float(np.median(positive_scores))
+        positive_count = int(positive_scores.size)
+    autocorrelation_time = float(budget_rate_meta.get("autocorrelation_time", 1.0))
+    autocorrelation_time = max(1.0, autocorrelation_time)
+    characteristic_run = int(np.ceil(autocorrelation_time))
+    gamma_raw = 0.5 * float(characteristic_run) * float(positive_scale)
+    chrom_gamma = float(np.clip(gamma_raw, 0.5, 10.0))
+    gamma_meta = {
+        "method": "auto_score_autocorr",
+        "autocorrelation_time": float(autocorrelation_time),
+        "characteristic_run_length": int(characteristic_run),
+        "positive_score_median": float(positive_scale),
+        "positive_score_count": int(positive_count),
+        "gamma_raw": float(gamma_raw),
+        "gamma_clipped": float(chrom_gamma),
+        "gamma_clip_min": 0.5,
+        "gamma_clip_max": 10.0,
+    }
+    logger.info("%s auto gamma estimate: %s", chrom, gamma_meta)
+    return float(chrom_gamma), gamma_meta
 
 
 def _resolve_parallel_process_count(
@@ -840,89 +806,85 @@ def _resolve_parallel_process_count(
     return int(min(int(item_count), int(total_cores), 4))
 
 
-def _partially_pool_context_summaries(
-    chrom_context_summaries: dict[str, tuple[tuple[int, int, int], dict]],
-) -> tuple[dict[str, tuple[int, int, int]], dict[str, dict[str, float | int]]]:
-    if len(chrom_context_summaries) == 0:
-        return {}, {}
-
-    chroms = list(chrom_context_summaries.keys())
-    log_means = np.array(
-        [
-            float(
-                chrom_context_summaries[chrom][1].get(
-                    "context_log_mean",
-                    np.log(max(chrom_context_summaries[chrom][0][0], 1)),
-                )
-            )
-            for chrom in chroms
-        ],
-        dtype=np.float64,
+def _cpy_narrowpeak_summit_track(
+    chrom: str,
+    intervals: np.ndarray,
+    effect_mean: np.ndarray,
+) -> str | None:
+    intervals_ = np.asarray(intervals, dtype=np.int64)
+    effect_mean_ = np.asarray(effect_mean, dtype=np.float32)
+    usable = int(min(max(intervals_.shape[0] - 1, 0), effect_mean_.shape[0]))
+    if usable <= 0:
+        return None
+    starts = intervals_[:usable]
+    centers = (
+        intervals_[:usable].astype(np.int64)
+        + intervals_[1 : usable + 1].astype(np.int64)
+    ) // 2
+    fd, summit_track_file = tempfile.mkstemp(
+        prefix=f"rocco_summit_track_{chrom}_",
+        suffix=".npz",
     )
-    log_mean_vars = np.array(
-        [
-            max(
-                float(
-                    chrom_context_summaries[chrom][1].get("context_log_mean_var", 1.0)
-                ),
-                1.0e-6,
-            )
-            for chrom in chroms
-        ],
-        dtype=np.float64,
+    os.close(fd)
+    np.savez(
+        summit_track_file,
+        starts=starts.astype(np.int64, copy=False),
+        centers=centers.astype(np.int64, copy=False),
+        mean=effect_mean_[:usable].astype(np.float32, copy=False),
     )
-    inv_vars = 1.0 / log_mean_vars
-    global_log_mean = float(np.sum(inv_vars * log_means) / np.sum(inv_vars))
-    observed_log_var = float(np.var(log_means, ddof=1)) if len(chroms) > 1 else 0.0
-    mean_within_log_var = float(np.mean(log_mean_vars))
-    tau_sq_hat = float(max(0.0, observed_log_var - mean_within_log_var))
+    return summit_track_file
 
-    pooled_summaries: dict[str, tuple[int, int, int]] = {}
-    pooling_meta: dict[str, dict[str, float | int]] = {}
-    for chrom in chroms:
-        raw_summary, raw_meta = chrom_context_summaries[chrom]
-        raw_point = int(max(raw_summary[0], 1))
-        raw_log_point = float(np.log(raw_point))
-        log_mean = float(raw_meta.get("context_log_mean", raw_log_point))
-        log_mean_var = max(float(raw_meta.get("context_log_mean_var", 1.0)), 1.0e-6)
-        if tau_sq_hat > 1.0e-8:
-            shrinkage_weight = float(tau_sq_hat / (tau_sq_hat + log_mean_var))
-            pooled_log_mean = float(
-                (shrinkage_weight * log_mean)
-                + ((1.0 - shrinkage_weight) * global_log_mean)
+
+def _write_narrowpeak_summit_offsets(
+    peak_file: str,
+    chrom_cache: dict,
+    output_file: str,
+) -> str:
+    records, _ = _read_bed_records(peak_file)
+    loaded_tracks: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    with open(output_file, "w", encoding="utf-8") as handle:
+        for chrom, start, end in records:
+            peak_name = f"{chrom}_{start}_{end}"
+            summit_offset = -1
+            chrom_data = chrom_cache.get(chrom, {})
+            summit_track_file = chrom_data.get("summit_track_file")
+            peak_length = int(end) - int(start)
+            if summit_track_file is not None and peak_length > 0:
+                if chrom not in loaded_tracks:
+                    with np.load(summit_track_file) as summit_track:
+                        loaded_tracks[chrom] = (
+                            np.asarray(summit_track["starts"], dtype=np.int64),
+                            np.asarray(summit_track["centers"], dtype=np.int64),
+                            np.asarray(summit_track["mean"], dtype=np.float64),
+                        )
+                starts, centers, mean_track = loaded_tracks[chrom]
+                left = int(np.searchsorted(starts, int(start), side="left"))
+                right = int(np.searchsorted(starts, int(end), side="left"))
+                if right > left:
+                    local_mean = mean_track[left:right]
+                    if np.any(np.isfinite(local_mean)):
+                        local_idx = int(np.nanargmax(local_mean))
+                        summit_bp = int(centers[left + local_idx])
+                        summit_offset = int(
+                            np.clip(summit_bp - int(start), 0, max(peak_length - 1, 0))
+                        )
+            handle.write(f"{peak_name}\t{summit_offset}\n")
+    return output_file
+
+
+def _cleanup_narrowpeak_tempfiles(chrom_cache: dict):
+    for chrom_data in chrom_cache.values():
+        summit_track_file = chrom_data.pop("summit_track_file", None)
+        if summit_track_file is None:
+            continue
+        try:
+            os.remove(summit_track_file)
+        except Exception as exc:
+            logger.info(
+                "Could not remove narrowPeak summit temp. file %s\n%s",
+                summit_track_file,
+                exc,
             )
-        else:
-            shrinkage_weight = 0.0
-            pooled_log_mean = float(global_log_mean)
-        scale_factor = float(np.exp(pooled_log_mean - raw_log_point))
-        max_span = max(int(raw_meta.get("context_max_span", raw_summary[2])), 1)
-        pooled_lower = int(np.clip(np.rint(raw_summary[1] * scale_factor), 1, max_span))
-        pooled_upper = int(
-            np.clip(
-                np.rint(raw_summary[2] * scale_factor),
-                max(pooled_lower, 1),
-                max_span,
-            )
-        )
-        pooled_point = int(
-            np.clip(
-                np.rint(raw_summary[0] * scale_factor),
-                pooled_lower,
-                pooled_upper,
-            )
-        )
-        pooled_summaries[chrom] = (pooled_point, pooled_lower, pooled_upper)
-        pooling_meta[chrom] = {
-            "context_pooling": "log_width_partial",
-            "context_pooling_num_chromosomes": int(len(chroms)),
-            "context_pooling_tau_sq_hat": float(tau_sq_hat),
-            "context_pooling_global_log_mean": float(global_log_mean),
-            "context_pooling_weight": float(shrinkage_weight),
-            "raw_context_size_point": int(raw_summary[0]),
-            "raw_context_size_lower": int(raw_summary[1]),
-            "raw_context_size_upper": int(raw_summary[2]),
-        }
-    return pooled_summaries, pooling_meta
 
 
 def _solve_cached_chromosome(chrom_: str) -> tuple[str, float, dict, str]:
@@ -972,7 +934,6 @@ def _build_chrom_cache(
     chroms_to_process: list,
     signal_inputs: list,
     args: dict,
-    params_df: pd.DataFrame | None,
 ) -> dict:
     chrom_cache = {}
     low_memory = bool(args.get("low_memory", False))
@@ -1113,19 +1074,16 @@ def _build_chrom_cache(
             chrom_,
             budget_rate_meta,
         )
-        chrom_gamma = None
-        gamma_meta = None
+        chrom_gamma, gamma_meta = _resolve_chrom_gamma(
+            chrom_,
+            args,
+            chrom_scores,
+            budget_rate_meta,
+        )
         chrom_effect_mean = np.asarray(
             score_details.get("mean", chrom_scores),
             dtype=np.float64,
         )
-        if args["gamma"] is not None:
-            chrom_gamma = _resolve_chrom_gamma(
-                chrom_,
-                params_df,
-                args,
-                chrom_intervals,
-            )
         chrom_cache[chrom_] = {
             "intervals": chrom_intervals,
             "scores": chrom_scores,
@@ -1139,93 +1097,13 @@ def _build_chrom_cache(
             "num_loci": int(chrom_scores.shape[0]),
         }
 
-    if args["gamma"] is None and len(chrom_cache) > 0:
-        raw_context_summaries: dict[str, tuple[tuple[int, int, int], dict]] = {}
-        for chrom_ in chrom_cache:
-            try:
-                context_point, width_lower, width_upper, context_meta = (
-                    estimate_context_size(
-                        np.clip(
-                            np.asarray(
-                                chrom_cache[chrom_]["effect_mean"], dtype=np.float64
-                            ),
-                            0.0,
-                            None,
-                        ),
-                        min_span=args["gamma_context_min_span"],
-                        max_span=args["gamma_context_max_span"],
-                        band_z=args["gamma_context_band_z"],
-                        max_order=args["gamma_context_max_order"],
-                        return_details=True,
-                    )
-                )
-                raw_context_summaries[chrom_] = (
-                    (
-                        int(context_point),
-                        int(width_lower),
-                        int(width_upper),
-                    ),
-                    context_meta,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Could not estimate width-informed context for %s; falling back to fixed gamma. %s",
-                    chrom_,
-                    exc,
-                )
-                chrom_cache[chrom_]["gamma"] = _resolve_chrom_gamma(
-                    chrom_,
-                    params_df,
-                    args,
-                    chrom_cache[chrom_]["intervals"],
-                )
-                chrom_cache[chrom_]["gamma_meta"] = {
-                    "context_pooling_failed": 1,
-                    "gamma_fallback_reason": str(exc),
-                }
-
-        pooled_context_summaries, pooling_meta = _partially_pool_context_summaries(
-            raw_context_summaries
-        )
-        for chrom_, context_summary in pooled_context_summaries.items():
-            try:
-                chrom_gamma, gamma_meta = estimate_gamma_from_scores(
-                    chrom_cache[chrom_]["effect_mean"],
-                    gamma_scale=args["gamma_scale"],
-                    min_span=args["gamma_context_min_span"],
-                    max_span=args["gamma_context_max_span"],
-                    band_z=args["gamma_context_band_z"],
-                    max_order=args["gamma_context_max_order"],
-                    context_size_summary=context_summary,
-                )
-                gamma_meta = {
-                    **gamma_meta,
-                    **pooling_meta.get(chrom_, {}),
-                }
-                chrom_cache[chrom_]["gamma"] = float(chrom_gamma)
-                chrom_cache[chrom_]["gamma_meta"] = gamma_meta
-                logger.info(
-                    "%s width-informed gamma estimate: %s",
-                    chrom_,
-                    gamma_meta,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Could not estimate width-informed gamma for %s; falling back to fixed gamma. %s",
-                    chrom_,
-                    exc,
-                )
-                chrom_cache[chrom_]["gamma"] = _resolve_chrom_gamma(
-                    chrom_,
-                    params_df,
-                    args,
-                    chrom_cache[chrom_]["intervals"],
-                )
-                chrom_cache[chrom_]["gamma_meta"] = {
-                    **pooling_meta.get(chrom_, {}),
-                    "context_pooling_failed": 0,
-                    "gamma_fallback_reason": str(exc),
-                }
+    if args.get("narrowPeak", False) and args["input_track_type"] == "bam":
+        for chrom_, chrom_data in chrom_cache.items():
+            chrom_data["summit_track_file"] = _cpy_narrowpeak_summit_track(
+                chrom_,
+                chrom_data["intervals"],
+                chrom_data["effect_mean"],
+            )
 
     for chrom_data in chrom_cache.values():
         chrom_data.pop("effect_mean", None)
@@ -1234,7 +1112,6 @@ def _build_chrom_cache(
 
 def _resolve_budgets(
     chrom_cache: dict,
-    params_df: pd.DataFrame | None,
     args: dict,
 ) -> tuple[dict, dict]:
     chrom_budget_counts = {
@@ -1256,9 +1133,9 @@ def _resolve_budgets(
         chrom: min(
             max(
                 chrom_budgets[chrom] * rescale * float(args["scale_chrom_budgets"]),
-                1.0e-4,
+                0.005,
             ),
-            0.5,
+            0.1,
         )
         for chrom in chrom_budgets
     }
@@ -1319,7 +1196,11 @@ def _solve_cached_chromosomes(
     return tmp_chrom_bed_files
 
 
-def _generate_narrowpeak_if_requested(args: dict, final_output: str):
+def _generate_narrowpeak_if_requested(
+    args: dict,
+    final_output: str,
+    chrom_cache: dict,
+):
     if not args["narrowPeak"]:
         return
     if args.get("input_track_type") != "bam":
@@ -1327,6 +1208,7 @@ def _generate_narrowpeak_if_requested(args: dict, final_output: str):
             "Skipping narrowPeak generation because posthoc peak scoring requires BAM inputs."
         )
         return
+    summit_offsets_file = None
     try:
         output_root, output_ext = os.path.splitext(final_output)
         if output_ext.lower() == ".bed":
@@ -1334,6 +1216,16 @@ def _generate_narrowpeak_if_requested(args: dict, final_output: str):
         else:
             sidecar_root = final_output
         narrowpeak_filepath = f"{sidecar_root}.narrowPeak"
+        fd, summit_offsets_file = tempfile.mkstemp(
+            prefix="rocco_pointsource_",
+            suffix=".tsv",
+        )
+        os.close(fd)
+        _write_narrowpeak_summit_offsets(
+            final_output,
+            chrom_cache,
+            summit_offsets_file,
+        )
         posthoc_scores.score_peaks(
             args["input_files"],
             args["chrom_sizes_file"],
@@ -1343,6 +1235,7 @@ def _generate_narrowpeak_if_requested(args: dict, final_output: str):
             ecdf_nsamples=args["ecdf_samples"],
             seed=args["ecdf_seed"],
             proc=args["ecdf_proc"],
+            summit_offsets_file=summit_offsets_file,
         )
         logger.info("Final narrowPeak output: %s", narrowpeak_filepath)
     except Exception as exc:
@@ -1350,6 +1243,16 @@ def _generate_narrowpeak_if_requested(args: dict, final_output: str):
             "\nCould not generate narrowPeak-formatted output\n%s",
             exc,
         )
+    finally:
+        if summit_offsets_file is not None:
+            try:
+                os.remove(summit_offsets_file)
+            except Exception as exc:
+                logger.info(
+                    "Could not remove narrowPeak pointSource temp. file %s\n%s",
+                    summit_offsets_file,
+                    exc,
+                )
 
 
 def main():
@@ -1363,14 +1266,12 @@ def main():
 
     chroms_to_process = _resolve_chromosomes(args)
     logger.info("Chromosomes: %s", chroms_to_process)
-    params_df = _resolve_params_df(args)
     chrom_cache = _build_chrom_cache(
         chroms_to_process,
         signal_inputs,
         args,
-        params_df,
     )
-    chrom_budgets, _ = _resolve_budgets(chrom_cache, params_df, args)
+    chrom_budgets, _ = _resolve_budgets(chrom_cache, args)
     tmp_chrom_bed_files = _solve_cached_chromosomes(
         chrom_cache,
         chrom_budgets,
@@ -1398,7 +1299,10 @@ def main():
                 exc,
             )
 
-    _generate_narrowpeak_if_requested(args, final_output)
+    try:
+        _generate_narrowpeak_if_requested(args, final_output, chrom_cache)
+    finally:
+        _cleanup_narrowpeak_tempfiles(chrom_cache)
 
 
 if __name__ == "__main__":

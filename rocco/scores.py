@@ -395,6 +395,7 @@ def score_peaks(
     seed: int = None,
     proc: int = None,
     null_stat: Callable[[np.ndarray], float] = _null_stat,
+    summit_offsets_file: str | None = None,
 ):
     r"""Score ROCCO peaks and write narrowPeak-like output.
 
@@ -415,6 +416,9 @@ def score_peaks(
     :type pc: float
     :param ecdf_max_length_bins: Maximum number of length bins used for empirical-null fitting.
     :type ecdf_max_length_bins: int
+    :param summit_offsets_file: Optional TSV mapping `peak_name` to the narrowPeak `peak`
+        offset from `chromStart`. Missing peaks default to `-1`.
+    :type summit_offsets_file: str or None
     """
 
     threads_ = 1
@@ -588,6 +592,20 @@ def score_peaks(
     # ...to apply, e.g., yekutieli, bonferroni(FWER), etc.
     qvals = stats.false_discovery_control(pvals, method="bh")
 
+    summit_offsets = {}
+    if summit_offsets_file is not None:
+        with open(summit_offsets_file, encoding="utf-8") as handle:
+            for line_num, line in enumerate(handle, start=1):
+                line_ = line.strip()
+                if line_ == "":
+                    continue
+                fields = line_.split("\t")
+                if len(fields) < 2:
+                    raise ValueError(
+                        f"Summit offset row {line_num} in {summit_offsets_file} has fewer than 2 columns."
+                    )
+                summit_offsets[str(fields[0])] = int(fields[1])
+
     # Scale signal values, p-values, q-values according to narrowPeak convention
     bed6_scores = np.minimum(
         np.array(
@@ -605,8 +623,17 @@ def score_peaks(
 
     with open(output_file, "w") as f:
         for i, peak in enumerate(bed_strings):
+            summit_offset = int(summit_offsets.get(names[i], -1))
+            if summit_offset >= 0:
+                summit_offset = int(
+                    np.clip(
+                        summit_offset,
+                        0,
+                        max(int(lengths[i]) - 1, 0),
+                    )
+                )
             f.write(
-                f"{peak}\t{names[i]}\t{bed6_scores[i]}\t.\t{sig_vals[i]}\t{pvals_out[i]}\t{qvals_out[i]}\t-1\n"
+                f"{peak}\t{names[i]}\t{bed6_scores[i]}\t.\t{sig_vals[i]}\t{pvals_out[i]}\t{qvals_out[i]}\t{summit_offset}\n"
             )
         logger.info(f"Scored output: {output_file}")
     return scores, bed6_scores, pvals

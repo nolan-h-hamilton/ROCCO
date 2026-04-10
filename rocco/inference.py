@@ -2,7 +2,7 @@ r"""
 ROCCO: Inference
 ==================================================================================
 
-Functions for scoring loci and setting chromosome-specific budget and gamma values.
+Functions for scoring loci and setting chromosome-specific budgets.
 """
 
 from __future__ import annotations
@@ -10,11 +10,10 @@ from __future__ import annotations
 import logging
 import multiprocessing as mp
 import sys
-import warnings
 from typing import Any, Dict, Tuple
 
 import numpy as np
-from scipy import linalg, ndimage, optimize, signal, special, stats
+from scipy import linalg, optimize, signal, special, stats
 
 try:
     from . import _baseline as _baseline_native
@@ -487,8 +486,8 @@ def _estimate_effective_sample_size(
     acf = np.clip(acov[1:] / acov[0], -1.0, 1.0)
     tau_int = 1.0
     lags_used = 0
-    # Geyer's IPS keeps :math:`\tau_{\mathrm{int}}` on the valid side by
-    # summing adjacent autocorrelation pairs until the first nonpositive pair.
+    # Geyer keeps :math:`\tau_{\mathrm{int}}` on the valid side by
+    # summing adjacent autocorrelation pairs until the first nonpositive pair
     for lag_idx in range(0, int(acf.size), 2):
         rho_k = float(acf[lag_idx])
         rho_k1 = float(acf[lag_idx + 1]) if (lag_idx + 1) < acf.size else 0.0
@@ -1026,14 +1025,14 @@ def estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
     budget from above that fitted null threshold. If
     :math:`\hat p_{\mathrm{obs}} = n^{-1}\sum_j I(s_j > t_0)` and
     :math:`\hat p_0` is the bootstrap average of the same statistic under the
-    fitted null, with standard deviation :math:`\hat \sigma_{p_0}`,
+    fitted null,
     then ROCCO uses
 
     .. math::
 
        \hat \pi_1 =
        \operatorname{clip}(
-       \hat p_{\mathrm{obs}} - \hat p_0 - \hat \sigma_{p_0},
+       \hat p_{\mathrm{obs}} - \hat p_0,
        0,
        1)
 
@@ -1093,7 +1092,8 @@ def estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
     )
     nonnull_fraction = float(
         np.clip(
-            observed_tail_occupancy - null_tail_occupancy - null_tail_occupancy_sd,
+            observed_tail_occupancy
+            - null_tail_occupancy,  # removed silly `null_tail_occupancy_sd` subtraction
             0.0,
             1.0,
         )
@@ -1362,7 +1362,8 @@ def estimate_budget_nonnull_fraction_from_score_track(
     )
     nonnull_fraction = float(
         np.clip(
-            observed_tail_occupancy - null_tail_occupancy - null_tail_occupancy_sd,
+            observed_tail_occupancy
+            - null_tail_occupancy,  # removed silly `null_tail_occupancy_sd` subtraction here
             0.0,
             1.0,
         )
@@ -1482,509 +1483,6 @@ def estimate_budget_nonnull_fraction_from_resampled_null(
         num_processes=num_processes,
         return_details=return_details,
     )
-
-
-def _estimate_local_peak_width(
-    y_vals: np.ndarray,
-    peak_idx: int,
-    peak_search_radius: int = 2,
-) -> float | None:
-    n = int(y_vals.size)
-    if n < 3:
-        return None
-
-    left_idx = max(0, int(peak_idx) - int(max(0, peak_search_radius)))
-    right_idx = min(
-        n,
-        int(peak_idx) + int(max(0, peak_search_radius)) + 1,
-    )
-    if right_idx - left_idx < 1:
-        return None
-
-    local_peak_idx = left_idx + int(np.argmax(y_vals[left_idx:right_idx]))
-    if local_peak_idx <= 0 or local_peak_idx >= (n - 1):
-        return None
-
-    peak_height = float(y_vals[local_peak_idx])
-    if not np.isfinite(peak_height):
-        return None
-
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=RuntimeWarning)
-        warnings.filterwarnings("ignore", category=UserWarning)
-        widths, _, _, _ = signal.peak_widths(
-            y_vals,
-            np.array([local_peak_idx], dtype=np.int64),
-            rel_height=0.5,
-        )
-
-    if widths.size == 0:
-        return None
-
-    width_hat = float(widths[0])
-    if not np.isfinite(width_hat) or width_hat <= 0.0:
-        return None
-    return float(max(1.0, width_hat))
-
-
-def _estimate_local_peak_log_width_variance(
-    y_vals: np.ndarray,
-    peak_idx: int,
-    half_window: int,
-) -> tuple[float | None, float | None]:
-    r"""Estimate local log-width and its uncertainty from a small smoothing ensemble.
-
-    The width itself is measured with the heuristic ``scipy.signal.peak_widths`` after a local
-    peak re-centering step. We then evaluate the same local peak on a few nearby
-    smoothings of the local signal and use the spread of the resulting log-widths
-    as a heteroskedastic uncertainty estimate for the EB summary downstream.
-    """
-    n = int(y_vals.size)
-    if n < 8:
-        return None, None
-
-    # local window around the peak for width estimation and bootstrapping, with a minimum size of 5
-    local_left = max(0, int(peak_idx) - int(max(2, half_window)))
-    local_right = min(n, int(peak_idx) + int(max(2, half_window)) + 1)
-    local_y = np.asarray(y_vals[local_left:local_right], dtype=np.float64)
-    local_peak_idx = int(peak_idx) - local_left
-    width_hat = _estimate_local_peak_width(
-        local_y,
-        local_peak_idx,
-        peak_search_radius=2,
-    )
-    if width_hat is None:
-        return None, None
-
-    smooth_size = int(max(3, min(local_y.size - (1 - (local_y.size % 2)), 9)))
-    if smooth_size % 2 == 0:
-        smooth_size -= 1
-    smooth_size = max(3, smooth_size)
-    if smooth_size >= local_y.size:
-        smooth_size = local_y.size - 1 if local_y.size % 2 == 0 else local_y.size
-    smooth_size = max(3, smooth_size)
-    candidate_windows = sorted(
-        {
-            1,
-            smooth_size,
-            min(
-                local_y.size if (local_y.size % 2) == 1 else local_y.size - 1,
-                smooth_size + 2,
-            ),
-        }
-    )
-    log_widths: list[float] = []
-    for window_length in candidate_windows:
-        if window_length <= 1:
-            local_variant = local_y
-        else:
-            local_variant = signal.savgol_filter(
-                local_y,
-                window_length=window_length,
-                polyorder=min(2, window_length - 1),
-                mode="interp",
-            )
-        width_variant = _estimate_local_peak_width(
-            np.asarray(local_variant, dtype=np.float64),
-            local_peak_idx,
-            peak_search_radius=2,
-        )
-        if width_variant is None:
-            continue
-        # log-scale widths st rare/wide peaks do not unduly dominate the variance estimate for more typical peaks
-        log_widths.append(float(np.log(width_variant)))
-
-    if len(log_widths) == 0:
-        return None, None
-    log_width_arr = np.asarray(log_widths, dtype=np.float64)
-    log_width = float(np.median(log_width_arr))
-    if log_width_arr.size < 2:
-        return log_width, 1.0e-4
-    return log_width, float(max(1.0e-4, np.var(log_width_arr, ddof=1)))
-
-
-def _select_context_features(
-    vals: np.ndarray,
-    min_span: int | None = 3,
-    max_span: int | None = 64,
-    max_order: int = 5,
-) -> Dict[str, Any]:
-    r"""Detect stable local features for width and gamma initialization."""
-    y = np.asarray(vals, dtype=np.float64)
-    n = int(y.size)
-    if n < 100:
-        raise ValueError(
-            "Input signal is too small for width-based context estimation."
-        )
-
-    min_span_ = 3 if min_span is None else int(min_span)
-    max_span_ = (
-        int(max(10, min(50, np.floor(np.log2(n + 1) * 2))))
-        if max_span is None
-        else int(max_span)
-    )
-    if max_span_ <= 0:
-        raise ValueError("`max_span` must be positive.")
-
-    y_pos = np.clip(y, 0.0, None)
-    y_log = np.log1p(y_pos)
-    pos_log = y_log[y > 0]
-    if pos_log.size <= max(1, int(max_order)):
-        raise ValueError(
-            "Insufficient positive signal for width-based context estimation."
-        )
-
-    smooth_size = min(int(max(1, min_span_)), int(max_span_ / 2))
-    # smooth out log signal before prominence-based peaks in scipy.find_peaks
-    y_log_smooth = ndimage.uniform_filter1d(
-        y_log,
-        size=smooth_size,
-        mode="nearest",
-    )
-    min_feature_count = int(max(1, (2 * np.log2(n + 1))))
-    thr_log = float(np.mean(pos_log))
-    start_order = int(max(1, max_order))
-    best_order = 1
-    best_features = np.array([], dtype=np.int64)
-    best_score = -1.0
-
-    for order in range(start_order, 0, -1):
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=RuntimeWarning)
-            warnings.filterwarnings("ignore", category=UserWarning)
-            features, props = signal.find_peaks(
-                y_log_smooth,
-                distance=int(max(1, order * max(1, min_span_))),
-                prominence=1.0e-4,
-            )
-
-        prominences = props.get("prominences")
-        prom_masked: np.ndarray | None = None
-        if features.size:
-            feature_mask = y_log[features] > thr_log
-            if prominences is not None:
-                feature_mask &= prominences > 0.0
-            widths_half, _, _, _ = signal.peak_widths(
-                y_log_smooth,
-                features.astype(np.int64, copy=False),
-                rel_height=0.5,
-            )
-            feature_mask &= np.isfinite(widths_half)
-            feature_mask &= widths_half >= float(max(1, min_span_))
-            if max_span_ > 0:
-                feature_mask &= widths_half <= float(max_span_ * 2)
-            if prominences is not None:
-                prom_masked = prominences[feature_mask]
-            features = features[feature_mask]
-
-        if features.size == 0:
-            score = -np.inf
-        elif prom_masked is None:
-            logger.warning(
-                "Prominences missing during context-size estimation; using feature count as fallback score."
-            )
-            score = float(features.size)
-        else:
-            top_k = int(min(1000, prom_masked.size))
-            if top_k <= 0:
-                score = float(features.size)
-            else:
-                top = np.partition(prom_masked, -top_k)[-top_k:]
-                score = float(np.sum(np.log1p(top)) / np.sqrt(float(top_k)))
-
-        if score > best_score:
-            best_score = score
-            best_order = order
-            best_features = features.astype(np.int64, copy=False)
-
-    chosen_features = np.unique(best_features.astype(np.int64))
-    chosen_features.sort()
-    logger.info(
-        "Chose peak distance order=%s with num_features=%s (score=%.3f).",
-        best_order,
-        int(chosen_features.size),
-        best_score,
-    )
-    if chosen_features.size == 0:
-        raise ValueError(
-            "Could not identify stable features for width-based context estimation."
-        )
-
-    base_q = 0.05
-    feature_baselines = np.empty(chosen_features.size, dtype=np.float64)
-    for i, idx in enumerate(chosen_features):
-        left = max(0, idx - max_span_)
-        right = min(n - 1, idx + max_span_)
-        left_q = float(np.quantile(y_log[left : idx + 1], base_q))
-        right_q = float(np.quantile(y_log[idx : right + 1], base_q))
-        feature_baselines[i] = max(left_q, right_q)
-
-    feature_scores = y_log[chosen_features] - feature_baselines
-    keep_mask = feature_scores > 0.0
-    if np.any(keep_mask):
-        chosen_features = chosen_features[keep_mask]
-        feature_scores = feature_scores[keep_mask]
-
-    keep_count = int(
-        min(
-            1000,
-            feature_scores.size,
-            max(min_feature_count, n // max(8, max_span_)),
-        )
-    )
-    if keep_count <= 0:
-        raise ValueError(
-            "No informative features remained for width-based context estimation."
-        )
-
-    keep = np.argpartition(-feature_scores, keep_count - 1)[:keep_count]
-    feature_index_array = np.unique(chosen_features[keep].astype(np.int64))
-    feature_index_array.sort()
-    return {
-        "y_log": y_log.astype(np.float64, copy=False),
-        "max_span": int(max_span_),
-        "feature_indices": feature_index_array.astype(np.int64, copy=False),
-        "feature_scores_log": feature_scores.astype(np.float64, copy=False),
-        "num_features": int(feature_index_array.size),
-        "best_order": int(best_order),
-    }
-
-
-def estimate_context_size(
-    vals: np.ndarray,
-    min_span: int | None = 3,
-    max_span: int | None = 64,
-    band_z: float = 1.0,
-    max_order: int = 5,
-    return_details: bool = False,
-) -> tuple[int, int, int] | tuple[int, int, int, Dict[str, Any]]:
-    r"""Estimate a characteristic peak width from local half-height widths.
-
-    We detect prominent local features on a smoothed log-scale track, estimate a
-    half-height width for each feature with ``scipy.signal.peak_widths``, derive
-    a per-feature log-width uncertainty from a small smoothing ensemble, and then
-    shrink widths with a simple normal-normal EB approach on log scale.
-    """
-    feature_meta = _select_context_features(
-        vals,
-        min_span=min_span,
-        max_span=max_span,
-        max_order=max_order,
-    )
-    y_log = np.asarray(feature_meta["y_log"], dtype=np.float64)
-    max_span_ = int(feature_meta["max_span"])
-    feature_index_array = np.asarray(
-        feature_meta["feature_indices"],
-        dtype=np.int64,
-    )
-
-    noise_window = int(min(max_span_, 32))
-    s_hat_list: list[float] = []
-    sigma2_list: list[float] = []
-    for peak_idx in feature_index_array:
-        log_width, sigma_s2 = _estimate_local_peak_log_width_variance(
-            y_vals=y_log,
-            peak_idx=int(peak_idx),
-            half_window=noise_window,
-        )
-        if log_width is None or sigma_s2 is None:
-            continue
-        s_hat_list.append(log_width)
-        sigma2_list.append(sigma_s2)
-
-    if len(s_hat_list) == 0:
-        raise ValueError("Failed to estimate widths from the detected features.")
-
-    s_hat_arr = np.asarray(s_hat_list, dtype=np.float64)
-    sigma2_arr = np.asarray(sigma2_list, dtype=np.float64)
-    n_feat = int(s_hat_arr.size)
-    var_s = float(np.var(s_hat_arr, ddof=1)) if n_feat > 1 else 0.0
-    mean_sigma2 = float(np.mean(sigma2_arr))
-    tau2_mom = float(max(0.0, var_s - mean_sigma2))
-    tau2_max = float(max(1.0e-6, var_s + mean_sigma2) * 10.0)
-
-    def _negative_log_likelihood(between_feature_var: float) -> float:
-        tau_sq = float(max(0.0, between_feature_var))
-        total_var = np.maximum(sigma2_arr + tau_sq, 1.0e-12)
-        inv_total_var = 1.0 / total_var
-        mu_hat = float(np.sum(inv_total_var * s_hat_arr) / np.sum(inv_total_var))
-        residuals = s_hat_arr - mu_hat
-        return 0.5 * float(
-            np.sum(np.log(total_var)) + np.sum((residuals * residuals) * inv_total_var)
-        )
-
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=RuntimeWarning)
-        warnings.filterwarnings("ignore", category=UserWarning)
-        res = optimize.minimize_scalar(
-            _negative_log_likelihood,
-            bounds=(0.0, tau2_max),
-            method="bounded",
-            options={"xatol": 1.0e-4, "maxiter": 50},
-        )
-
-    if getattr(res, "success", False):
-        tau_sq_hat = float(res.x)
-        logger.info("Context-size tau^2 MLE plugin = %.6f", tau_sq_hat)
-    else:
-        tau_sq_hat = tau2_mom
-        logger.warning(
-            "Failed to optimize context-size tau^2; using MoM estimate tau^2=%.6f.",
-            tau2_mom,
-        )
-
-    v_hat = np.maximum(sigma2_arr + tau_sq_hat, 1.0e-12)
-    w_hat = 1.0 / v_hat
-    mu_hat = float(np.sum(w_hat * s_hat_arr) / np.sum(w_hat))
-    mu_var = float(1.0 / np.sum(w_hat))
-    pred_std = float(np.sqrt(max(0.0, tau_sq_hat + mu_var)))
-    log_lower = float(mu_hat - band_z * pred_std)
-    log_upper = float(mu_hat + band_z * pred_std)
-    point_estimate = float(np.exp(mu_hat))
-    width_lower = max(1.0, float(np.exp(log_lower)))
-    width_upper = max(1.0, float(np.exp(log_upper)), width_lower)
-
-    if max_span_ > 0:
-        point_estimate = min(point_estimate, float(max_span_))
-        width_lower = min(width_lower, float(max_span_))
-        width_upper = min(width_upper, float(max_span_))
-
-    details = {
-        "feature_indices": feature_index_array.astype(np.int64, copy=False),
-        "feature_scores_log": np.asarray(
-            feature_meta["feature_scores_log"],
-            dtype=np.float64,
-        ),
-        "num_features": int(feature_index_array.size),
-        "tau_sq_hat": float(tau_sq_hat),
-        "context_log_mean": float(mu_hat),
-        "context_log_mean_var": float(mu_var),
-        "context_max_span": int(max_span_),
-        "best_order": int(feature_meta["best_order"]),
-    }
-    logger.info(
-        "Estimated context size on natural scale: point=%.4f lower=%.4f upper=%.4f",
-        point_estimate,
-        width_lower,
-        width_upper,
-    )
-    if return_details:
-        return (
-            int(point_estimate),
-            int(width_lower),
-            int(width_upper),
-            details,
-        )
-    return int(point_estimate), int(width_lower), int(width_upper)
-
-
-def _estimate_gamma_signal_scale(
-    scores: np.ndarray,
-    feature_indices: np.ndarray,
-    context_width: int,
-) -> float:
-    r"""Estimate the local positive score scale used for ``gamma_hat`` initialization."""
-    scores_ = np.asarray(scores, dtype=np.float64)
-    positive_scores = np.clip(scores_, 0.0, None)
-    feature_indices_ = np.asarray(feature_indices, dtype=np.int64)
-    local_mean_excess = []
-    half_width = max(1, int(context_width))
-    for idx in feature_indices_:
-        left = max(0, int(idx) - half_width)
-        right = min(scores_.size, int(idx) + half_width + 1)
-        local_scores = positive_scores[left:right]
-        if local_scores.size == 0:
-            continue
-        # Use :math:`\mathbb{E}[(s - q_{0.1})_+]` to measure local positive mass.
-        baseline = float(np.quantile(local_scores, 0.1))
-        mean_excess = float(np.mean(np.maximum(local_scores - baseline, 0.0)))
-        if np.isfinite(mean_excess) and mean_excess > 0.0:
-            local_mean_excess.append(mean_excess)
-
-    if local_mean_excess:
-        local_mean_excess_arr = np.asarray(
-            local_mean_excess,
-            dtype=np.float64,
-        )
-        signal_scale = float(np.median(local_mean_excess_arr))
-        return signal_scale
-
-    positive = positive_scores[positive_scores > 0]
-    if positive.size == 0:
-        raise ValueError("Cannot estimate gamma from scores without positive signal.")
-    signal_scale = float(np.quantile(positive, 0.75))
-    return signal_scale
-
-
-def estimate_gamma_from_scores(
-    scores: np.ndarray,
-    gamma_scale: float = 0.5,
-    min_span: int | None = 3,
-    max_span: int | None = 64,
-    band_z: float = 1.0,
-    max_order: int = 5,
-    context_size_summary: tuple[int, int, int] | None = None,
-) -> tuple[float, Dict[str, float | int]]:
-    r"""Initialize ``gamma`` from peak width and local positive score scale.
-
-    The raw estimate is
-    ``gamma_hat = gamma_scale * context_size_point * signal_scale`` where
-    ``context_size_point`` is the point width estimate and
-    ``signal_scale`` is the median local positive score excess around detected
-    features.
-    """
-    scores_ = np.asarray(scores, dtype=np.float64)
-    positive_scores = np.clip(scores_, 0.0, None)
-    if context_size_summary is None:
-        context_point, width_lower, width_upper, context_meta = estimate_context_size(
-            positive_scores,
-            min_span=min_span,
-            max_span=max_span,
-            band_z=band_z,
-            max_order=max_order,
-            return_details=True,
-        )
-        feature_indices = np.asarray(
-            context_meta["feature_indices"],
-            dtype=np.int64,
-        )
-    else:
-        context_point = int(context_size_summary[0])
-        width_lower = int(context_size_summary[1])
-        width_upper = int(context_size_summary[2])
-        feature_meta = _select_context_features(
-            positive_scores,
-            min_span=min_span,
-            max_span=max_span,
-            max_order=max_order,
-        )
-        feature_indices = np.asarray(
-            feature_meta["feature_indices"],
-            dtype=np.int64,
-        )
-        context_meta = {
-            "best_order": int(feature_meta["best_order"]),
-            "num_features": int(feature_indices.size),
-        }
-
-    signal_scale = _estimate_gamma_signal_scale(
-        scores_,
-        feature_indices,
-        context_point,
-    )
-
-    gamma_hat = float(
-        max(1.0e-6, float(gamma_scale) * float(max(1, context_point)) * signal_scale)
-    )
-    return gamma_hat, {
-        "gamma_scale": float(gamma_scale),
-        "signal_scale": float(signal_scale),
-        "context_size_point": int(context_point),
-        "context_size_lower": int(width_lower),
-        "context_size_upper": int(width_upper),
-        "num_features": int(context_meta["num_features"]),
-        "feature_detection_order": int(context_meta["best_order"]),
-    }
 
 
 def fit_beta_prior_mle(

@@ -298,6 +298,37 @@ def test_score_loci_wls_low_memory_keeps_centered_matrix_in_float32():
 
 
 @pytest.mark.correctness
+def test_write_narrowpeak_summit_offsets_uses_wls_mean_centers(tmp_path):
+    peak_file = tmp_path / "peaks.bed"
+    peak_file.write_text(
+        "chr1\t100\t250\nchr1\t150\t250\nchr2\t0\t50\n",
+        encoding="utf-8",
+    )
+    summit_track_file = tmp_path / "chr1_summit_track.npz"
+    np.savez(
+        summit_track_file,
+        starts=np.array([100, 150, 200], dtype=np.int64),
+        centers=np.array([125, 175, 225], dtype=np.int64),
+        mean=np.array([1.0, 5.0, 2.0], dtype=np.float32),
+    )
+    chrom_cache = {
+        "chr1": {"summit_track_file": str(summit_track_file)},
+        "chr2": {"summit_track_file": None},
+    }
+    output_file = tmp_path / "pointsource.tsv"
+    ROCCO_IMPL._write_narrowpeak_summit_offsets(
+        str(peak_file),
+        chrom_cache,
+        str(output_file),
+    )
+    assert output_file.read_text(encoding="utf-8").splitlines() == [
+        "chr1_100_250\t75",
+        "chr1_150_250\t25",
+        "chr2_0_50\t-1",
+    ]
+
+
+@pytest.mark.correctness
 def test_native_wls_scores_tied_large_matrix():
     if ROCCO_INFERENCE._wls_native is None:
         pytest.skip("native _wls backend is not built in this environment")
@@ -502,39 +533,24 @@ def test_empirical_bayes_budget_lower_quantile_is_more_conservative():
 
 
 @pytest.mark.correctness
-def test_context_size_and_gamma_track_peak_width():
-    x = np.arange(512, dtype=float)
-    narrow = 4.0 * np.exp(-0.5 * ((x - 140.0) / 4.0) ** 2) + 3.5 * np.exp(
-        -0.5 * ((x - 340.0) / 5.0) ** 2
+def test_resolve_budgets_clips_final_budgets_to_fixed_range():
+    chrom_cache = {
+        "chr1": {"budget_count_hat": 0.0, "total_count": 1000.0},
+        "chr2": {"budget_count_hat": 2.0, "total_count": 1000.0},
+        "chr3": {"budget_count_hat": 120.0, "total_count": 1000.0},
+        "chr4": {"budget_count_hat": 400.0, "total_count": 1000.0},
+    }
+    budgets, meta = ROCCO_IMPL._resolve_budgets(
+        chrom_cache,
+        {
+            "budget_posterior_quantile": 0.01,
+            "budget": None,
+            "scale_chrom_budgets": 1.0,
+        },
     )
-    wide = 4.0 * np.exp(-0.5 * ((x - 140.0) / 11.0) ** 2) + 3.5 * np.exp(
-        -0.5 * ((x - 340.0) / 13.0) ** 2
-    )
-    narrow_ctx = estimate_context_size(narrow)
-    wide_ctx = estimate_context_size(wide)
-    narrow_gamma, narrow_meta = estimate_gamma_from_scores(narrow)
-    wide_gamma, wide_meta = estimate_gamma_from_scores(wide)
-
-    assert wide_ctx[0] > narrow_ctx[0]
-    assert narrow_gamma > 0
-    assert wide_gamma > narrow_gamma
-    assert wide_meta["context_size_point"] > narrow_meta["context_size_point"]
-
-
-@pytest.mark.correctness
-def test_context_size_is_stable_under_local_ripple():
-    x = np.arange(512, dtype=float)
-    wide = 4.0 * np.exp(-0.5 * ((x - 140.0) / 11.0) ** 2) + 3.5 * np.exp(
-        -0.5 * ((x - 340.0) / 13.0) ** 2
-    )
-    ripple = 0.35 * np.sin(x / 1.7) * np.exp(-0.5 * ((x - 340.0) / 18.0) ** 2)
-    wide_noisy = np.clip(wide + ripple, 0.0, None)
-
-    clean_ctx = estimate_context_size(wide)
-    noisy_ctx = estimate_context_size(wide_noisy)
-
-    assert noisy_ctx[0] > 0
-    assert abs(noisy_ctx[0] - clean_ctx[0]) <= 0.35 * clean_ctx[0]
+    assert meta["posterior_summary"] == "beta_quantile"
+    for chrom in chrom_cache:
+        assert 0.005 <= budgets[chrom] <= 0.1
 
 
 @pytest.mark.correctness
@@ -547,12 +563,8 @@ def test_length_bins_do_not_get_finer_than_100bp():
 
 
 @pytest.mark.correctness
-def test_build_chrom_cache_partially_pools_context_sizes(monkeypatch):
+def test_build_chrom_cache_uses_global_fixed_gamma(monkeypatch):
     chrom_lengths = {"chr_small": 120, "chr_big": 240}
-    context_calls = []
-    gamma_calls = []
-    context_edges = []
-    gamma_edges = []
 
     def fake_generate_chrom_matrix(chrom, *args, **kwargs):
         n = chrom_lengths[chrom]
@@ -570,44 +582,67 @@ def test_build_chrom_cache_partially_pools_context_sizes(monkeypatch):
     def fake_budget_estimator(centered_matrix, observed_scores, **kwargs):
         return 0.05, {"effective_total_count": float(observed_scores.shape[0])}
 
-    def fake_estimate_context_size(vals, **kwargs):
-        n = int(np.asarray(vals).shape[0])
-        context_calls.append(n)
-        context_edges.append((float(np.asarray(vals)[0]), float(np.asarray(vals)[-1])))
-        if n <= 120:
-            point, lower, upper = 6, 4, 8
-        else:
-            point, lower, upper = 24, 20, 28
-        return (
-            point,
-            lower,
-            upper,
-            {
-                "feature_indices": np.array([10, 20], dtype=np.int64),
-                "feature_scores_log": np.array([1.0, 0.8], dtype=float),
-                "num_features": 2,
-                "tau_sq_hat": 0.1,
-                "context_log_mean": float(np.log(point)),
-                "context_log_mean_var": 0.5,
-                "context_max_span": 64,
-                "best_order": 1,
-            },
-        )
+    monkeypatch.setattr(ROCCO_IMPL, "generate_chrom_matrix", fake_generate_chrom_matrix)
+    monkeypatch.setattr(ROCCO_IMPL, "score_loci_wls", fake_score_loci_wls)
+    monkeypatch.setattr(
+        ROCCO_IMPL,
+        "estimate_budget_nonnull_fraction_from_wild_bootstrap_null",
+        fake_budget_estimator,
+    )
 
-    def fake_estimate_gamma_from_scores(scores, **kwargs):
-        gamma_calls.append(kwargs.get("context_size_summary"))
-        gamma_edges.append(
-            (float(np.asarray(scores)[0]), float(np.asarray(scores)[-1]))
-        )
-        n = int(np.asarray(scores).shape[0])
-        return float(n), {
-            "gamma_scale": 0.5,
-            "signal_scale": 1.0,
-            "context_size_point": 12,
-            "context_size_lower": 10,
-            "context_size_upper": 14,
-            "num_features": 2,
-            "feature_detection_order": 1,
+    args = {
+        "chrom_sizes_file": None,
+        "step": 50,
+        "round_digits": 5,
+        "effective_genome_size": None,
+        "norm_method": "rpkm",
+        "min_mapping_score": 0,
+        "flag_include": None,
+        "flag_exclude": None,
+        "extend_reads": 0,
+        "center_reads": False,
+        "ignore_for_norm": [],
+        "scale_factor": 1.0,
+        "threads": 1,
+        "input_track_type": "bam",
+        "score_lower_bound_z": 1.0,
+        "score_prior_df": 5.0,
+        "score_precision_floor_ratio": 0.01,
+        "budget_null_draws": 4,
+        "gamma": 2.5,
+    }
+
+    chrom_cache = ROCCO_IMPL._build_chrom_cache(
+        ["chr_small", "chr_big"],
+        [],
+        args,
+    )
+
+    assert chrom_cache["chr_small"]["gamma"] == 2.5
+    assert chrom_cache["chr_big"]["gamma"] == 2.5
+    assert chrom_cache["chr_small"]["gamma_meta"] is None
+    assert chrom_cache["chr_big"]["gamma_meta"] is None
+
+
+@pytest.mark.correctness
+def test_build_chrom_cache_derives_auto_gamma_from_scores_and_autocorrelation(
+    monkeypatch,
+):
+    def fake_generate_chrom_matrix(chrom, *args, **kwargs):
+        return np.arange(5, dtype=float), np.zeros((2, 5), dtype=float)
+
+    def fake_score_loci_wls(chrom_matrix, **kwargs):
+        scores = np.array([-1.0, 0.5, 1.5, 2.5, 0.0], dtype=float)
+        return scores, {
+            "centered_matrix": np.zeros((2, 5), dtype=float),
+            "local_baseline_window": 101,
+            "mean": scores.copy(),
+        }
+
+    def fake_budget_estimator(centered_matrix, observed_scores, **kwargs):
+        return 0.05, {
+            "effective_total_count": float(observed_scores.shape[0]),
+            "autocorrelation_time": 3.2,
         }
 
     monkeypatch.setattr(ROCCO_IMPL, "generate_chrom_matrix", fake_generate_chrom_matrix)
@@ -616,16 +651,6 @@ def test_build_chrom_cache_partially_pools_context_sizes(monkeypatch):
         ROCCO_IMPL,
         "estimate_budget_nonnull_fraction_from_wild_bootstrap_null",
         fake_budget_estimator,
-    )
-    monkeypatch.setattr(
-        ROCCO_IMPL,
-        "estimate_context_size",
-        fake_estimate_context_size,
-    )
-    monkeypatch.setattr(
-        ROCCO_IMPL,
-        "estimate_gamma_from_scores",
-        fake_estimate_gamma_from_scores,
     )
 
     args = {
@@ -648,34 +673,20 @@ def test_build_chrom_cache_partially_pools_context_sizes(monkeypatch):
         "score_precision_floor_ratio": 0.01,
         "budget_null_draws": 4,
         "gamma": None,
-        "gamma_scale": 0.5,
-        "gamma_context_min_span": 3,
-        "gamma_context_max_span": 64,
-        "gamma_context_band_z": 1.0,
-        "gamma_context_max_order": 5,
     }
 
     chrom_cache = ROCCO_IMPL._build_chrom_cache(
-        ["chr_small", "chr_big"],
+        ["chr1"],
         [],
         args,
-        None,
     )
 
-    assert context_calls == [120, 240]
-    assert all(np.allclose(edge, (10.0, 13.0)) for edge in context_edges)
-    assert gamma_calls[0] != gamma_calls[1]
-    assert all(np.allclose(edge, (10.0, 13.0)) for edge in gamma_edges)
-    assert (
-        chrom_cache["chr_small"]["gamma_meta"]["context_pooling"] == "log_width_partial"
+    assert chrom_cache["chr1"]["gamma"] == pytest.approx(3.0)
+    assert chrom_cache["chr1"]["gamma_meta"]["method"] == "auto_score_autocorr"
+    assert chrom_cache["chr1"]["gamma_meta"]["characteristic_run_length"] == 4
+    assert chrom_cache["chr1"]["gamma_meta"]["positive_score_median"] == pytest.approx(
+        1.5
     )
-    assert (
-        chrom_cache["chr_big"]["gamma_meta"]["context_pooling"] == "log_width_partial"
-    )
-    assert chrom_cache["chr_small"]["gamma_meta"]["raw_context_size_point"] == 6
-    assert chrom_cache["chr_big"]["gamma_meta"]["raw_context_size_point"] == 24
-    assert 6 < chrom_cache["chr_small"]["gamma_meta"]["context_size_point"] < 24
-    assert 6 < chrom_cache["chr_big"]["gamma_meta"]["context_size_point"] < 24
 
 
 @pytest.mark.correctness
@@ -843,45 +854,12 @@ def test_build_chrom_cache_uses_bigwig_scores_directly(monkeypatch):
         direct_budget_calls.append(np.asarray(scores, dtype=float))
         return 0.05, {"effective_total_count": float(len(scores))}
 
-    def fake_estimate_context_size(vals, **kwargs):
-        return 6, 4, 8, {
-            "feature_indices": np.array([1, 2], dtype=np.int64),
-            "feature_scores_log": np.array([1.0, 0.8], dtype=float),
-            "num_features": 2,
-            "tau_sq_hat": 0.1,
-            "context_log_mean": float(np.log(6.0)),
-            "context_log_mean_var": 0.5,
-            "context_max_span": 64,
-            "best_order": 1,
-        }
-
-    def fake_estimate_gamma_from_scores(scores, **kwargs):
-        return 3.0, {
-            "gamma_scale": float(kwargs["gamma_scale"]),
-            "signal_scale": 1.0,
-            "context_size_point": int(kwargs["context_size_summary"][0]),
-            "context_size_lower": int(kwargs["context_size_summary"][1]),
-            "context_size_upper": int(kwargs["context_size_summary"][2]),
-            "num_features": 2,
-            "feature_detection_order": 1,
-        }
-
     monkeypatch.setattr(ROCCO_IMPL, "generate_chrom_matrix", fake_generate_chrom_matrix)
     monkeypatch.setattr(ROCCO_IMPL, "score_loci_wls", fail_score_loci_wls)
     monkeypatch.setattr(
         ROCCO_IMPL,
         "estimate_budget_nonnull_fraction_from_score_track",
         fake_budget_estimator,
-    )
-    monkeypatch.setattr(
-        ROCCO_IMPL,
-        "estimate_context_size",
-        fake_estimate_context_size,
-    )
-    monkeypatch.setattr(
-        ROCCO_IMPL,
-        "estimate_gamma_from_scores",
-        fake_estimate_gamma_from_scores,
     )
 
     args = {
@@ -904,19 +882,13 @@ def test_build_chrom_cache_uses_bigwig_scores_directly(monkeypatch):
         "score_min_effect": None,
         "score_precision_floor_ratio": 0.01,
         "budget_null_draws": 4,
-        "gamma": None,
-        "gamma_scale": 0.5,
-        "gamma_context_min_span": 3,
-        "gamma_context_max_span": 64,
-        "gamma_context_band_z": 1.0,
-        "gamma_context_max_order": 5,
+        "gamma": 3.0,
     }
 
     chrom_cache = ROCCO_IMPL._build_chrom_cache(
         ["chr1"],
         ["track1.bw", "track2.bw"],
         args,
-        None,
     )
 
     assert len(direct_budget_calls) == 1
