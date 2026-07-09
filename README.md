@@ -10,24 +10,24 @@ ROCCO is an efficient algorithm for detection of "consensus peaks" in large data
 ### Input/Output
 
 * *Input*: Samples' BAM alignments (`-i`) or a bigWig file, and a reference genome assembly (`-g`) for chromosome sizes and annotation of blacklisted regions (if available)
-* *Output*: BED file of consensus peak regions (Default format is BED3: `chrom,start,end`), with optional peak sidecars via `--peak_mode narrow`, `--peak_mode broad`, or `--peak_mode both`.
+* *Output*: BED file of consensus peak regions (Default format is BED3: `chrom,start,end`). Use `--peak_mode both` to obtain both narrow and broad peak calls.
 
 ## How
 
-ROCCO models consensus peak calling as a constrained optimization problem with an upper-bound on the total proportion of the genome selected as enriched and a fragmentation penalty (TV) to promote spatial consistency in active regions and sparsity elsewhere.
+ROCCO models consensus peak calling as a constrained optimization problem with constraints/penalties for the total proportion of the genome selected as enriched and a fragmentation penalty (TV) to promote spatial consistency in active regions and sparsity elsewhere.
 
 ## Why
 
 1. **Consideration of enrichment magnitude and spatial characteristics** of open chromatin signals
 2. **Scaling to large sample sizes (100+)**
 3. **Unsupervised** Does not require training data or a heuristically determined set of initial candidate peak regions
-4. **No rigid thresholds + less manual tuning** with respect to the minimum number/width of supporting samples/replicates.
+4. **Less rigid thresholds** with respect to the minimum number/width of supporting samples/replicates.
 5. **Mathematically tractable model** permitting worst-case analysis of runtime and performance
 
 ## Usage
 
   ```shell
-  rocco -i <bam files, Consenrich-generated bigWig file> -g <hg38, hg19, mm10, mm39, dm6, ...> -o <output_file.bed>
+  rocco -i <bam files, or a single aggregate bigWig file> -g <hg38, hg19, mm10, mm39, dm6, ...> -o <output_file.bed> [--peak_mode both]
   ```
 
 for example:
@@ -66,7 +66,7 @@ If preferred, ROCCO can easily be built from source:
 * Clone or download this repository
 
   ```shell
-  git clone https://github.com/nolan-h-hamilton/ROCCO.git
+  git clone https://github.com/nolan-h-hamilton/ROCCO.
   cd ROCCO
   python setup.py sdist bdist_wheel
   python -m pip install -e .
