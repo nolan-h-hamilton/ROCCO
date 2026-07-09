@@ -53,8 +53,8 @@ def solve_penalized_chain(
 ) -> Tuple[np.ndarray, float, int]:
     r"""Solve the penalized binary chain problem for one chromosome.
 
-    Note this replaces the lp-based approach for a slightly relaxed problem and achieves linear time complexity and integral solutions.
-    We still have to bisect for a suitable selection penalty if we want to meet a budget constraint, but that is cheap.
+    This dynamic program solves the penalized binary chain problem in linear time
+    and returns integral solutions.
 
     .. math::
 
@@ -86,96 +86,17 @@ def solve_penalized_chain(
     )
 
 
-def calibrate_selection_penalty(
-    scores: np.ndarray,
-    switch_costs: np.ndarray,
-    target_count: int,
-    max_iter: int = 60,
-) -> Tuple[float, np.ndarray, float, int]:
-    r"""Find a selection penalty that yields a solution with an acceptable number of selected loci by bisection on DP solutions."""
-    scores_ = np.ascontiguousarray(scores, dtype=np.float64)
-    switch_costs_ = np.ascontiguousarray(switch_costs, dtype=np.float64)
-    n = scores_.shape[0]
-    if n == 0:
-        raise ValueError("`scores` cannot be empty")
-    target_count_ = int(max(0, min(target_count, n)))
-    if target_count_ == n:
-        solution, penalized_objective, selected_count = solve_penalized_chain(
-            scores_,
-            switch_costs_,
-            0.0,
-        )
-        return 0.0, solution, penalized_objective, selected_count
-
-    lower = float(np.min(scores_) - np.sum(switch_costs_) - 1.0)
-    upper = float(np.max(scores_) + np.sum(switch_costs_) + 1.0)
-
-    lower_solution, lower_value, lower_count = solve_penalized_chain(
-        scores_,
-        switch_costs_,
-        lower,
-    )
-    # find bounds before bisecting
-    while lower_count <= target_count_:
-        lower -= max(1.0, abs(lower))
-        lower_solution, lower_value, lower_count = solve_penalized_chain(
-            scores_,
-            switch_costs_,
-            lower,
-        )
-    # skip
-    best_solution, best_value, best_count = solve_penalized_chain(
-        scores_,
-        switch_costs_,
-        upper,
-    )
-    while best_count > target_count_:
-        upper += max(1.0, abs(upper))
-        best_solution, best_value, best_count = solve_penalized_chain(
-            scores_,
-            switch_costs_,
-            upper,
-        )
-
-    # bisection
-    for _ in range(max_iter):
-        # solve @ midpoint
-        midpoint = (lower + upper) / 2.0
-        solution, penalized_objective, selected_count = solve_penalized_chain(
-            scores_,
-            switch_costs_,
-            midpoint,
-        )
-
-        # ---pick side---
-
-        if selected_count > target_count_:
-            lower = midpoint
-            lower_solution = solution
-            lower_value = penalized_objective
-            lower_count = selected_count
-
-        else:
-            upper = midpoint
-            best_solution = solution
-            best_value = penalized_objective
-            best_count = selected_count
-
-    return upper, best_solution, best_value, best_count
-
-
 def solve_chrom_exact(
     scores: np.ndarray,
     budget: Optional[float] = None,
-    gamma: float = 1.0,
+    gamma: float = 0.25,
     selection_penalty: Optional[float] = None,
     return_details: bool = False,
 ) -> Tuple[np.ndarray, float] | Tuple[np.ndarray, float, Dict[str, float]]:
     r"""Solve one chromosome with the exact penalized-chain dynamic program.
 
-    If ``selection_penalty`` is not supplied and ``budget`` is supplied, we
-    find a penalty :math:`\lambda` that forces feasibility. Note that we
-    do not have to saturate the budget entirely, only stay below it.
+    If ``selection_penalty`` is not supplied and ``budget`` is supplied, use a
+    quantile-derived soft penalty :math:`\lambda`.
 
     If ``selection_penalty`` is supplied, skip that calibration step and
     solve the penalized chain directly with the supplied value.
@@ -185,28 +106,36 @@ def solve_chrom_exact(
         scores_,
         gamma=gamma,
     )
-    if selection_penalty is None:
-        if budget is None:
-            selection_penalty_ = 0.0
-            solution, penalized_objective, selected_count = solve_penalized_chain(
-                scores_,
-                switch_costs,
-                selection_penalty_,
-            )
-        else:
-            target_count = int(np.floor(len(scores_) * float(budget)))
-            (
-                selection_penalty_,
-                solution,
-                penalized_objective,
-                selected_count,
-            ) = calibrate_selection_penalty(
-                scores_,
-                switch_costs,
-                target_count=target_count,
-            )
+    budget_mode = "unpenalized"
+    budget_ = None
+    target_count = None
+    if selection_penalty is None and budget is not None:
+        budget_ = float(budget)
+        if not np.isfinite(budget_) or budget_ < 0.0 or budget_ > 1.0:
+            raise ValueError("`budget` must be finite and lie in [0, 1]")
+        target_count = int(np.floor(len(scores_) * budget_))
+        penalty_quantile = float(np.clip(1.0 - budget_, 0.0, 1.0))
+        selection_penalty_ = float(
+            max(0.0, np.quantile(scores_, penalty_quantile))
+        )
+        budget_mode = "soft_selection_penalty"
+        solution, penalized_objective, selected_count = solve_penalized_chain(
+            scores_,
+            switch_costs,
+            selection_penalty_,
+        )
+    elif selection_penalty is None:
+        selection_penalty_ = 0.0
+        solution, penalized_objective, selected_count = solve_penalized_chain(
+            scores_,
+            switch_costs,
+            selection_penalty_,
+        )
     else:
         selection_penalty_ = float(selection_penalty)
+        if not np.isfinite(selection_penalty_):
+            raise ValueError("`selection_penalty` must be finite")
+        budget_mode = "manual_selection_penalty"
         solution, penalized_objective, selected_count = solve_penalized_chain(
             scores_,
             switch_costs,
@@ -216,13 +145,19 @@ def solve_chrom_exact(
     objective = objective_value(solution, scores_, switch_costs)
     if not return_details:
         return solution.astype(np.uint8, copy=False), objective
+    details = {
+        "penalized_objective": float(penalized_objective),
+        "selected_count": int(selected_count),
+        "selected_fraction": float(selected_count / len(scores_)),
+        "selection_penalty": float(selection_penalty_),
+        "budget_mode": budget_mode,
+        "soft_budget_penalty": float(selection_penalty_),
+    }
+    if budget_ is not None:
+        details["budget"] = float(budget_)
+        details["budget_target_count"] = int(target_count)
     return (
         solution.astype(np.uint8, copy=False),
         objective,
-        {
-            "penalized_objective": float(penalized_objective),
-            "selected_count": int(selected_count),
-            "selected_fraction": float(selected_count / len(scores_)),
-            "selection_penalty": float(selection_penalty_),
-        },
+        details,
     )

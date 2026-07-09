@@ -10,7 +10,7 @@ ROCCO is an efficient algorithm for detection of "consensus peaks" in large data
 ### Input/Output
 
 * *Input*: Samples' BAM alignments (`-i`) or a bigWig file, and a reference genome assembly (`-g`) for chromosome sizes and annotation of blacklisted regions (if available)
-* *Output*: BED file of consensus peak regions (Default format is BED3: `chrom,start,end`), optional narrowPeak format (`--narrowPeak`) with additional columns for peak scores, p-values, q-values, etc.
+* *Output*: BED file of consensus peak regions (Default format is BED3: `chrom,start,end`), with optional peak sidecars via `--peak_mode narrow`, `--peak_mode broad`, or `--peak_mode both`.
 
 ## How
 
@@ -33,7 +33,7 @@ ROCCO models consensus peak calling as a constrained optimization problem with a
 for example:
 
   ```shell
-  rocco -i sample1.bam sample2.bam sample3.bam -g hg38 -o consensus_peaks.bed --narrowPeak
+  rocco -i sample1.bam sample2.bam sample3.bam -g hg38 -o consensus_peaks.bed --peak_mode both
   ```
 
 See `rocco --help` for more options and details.

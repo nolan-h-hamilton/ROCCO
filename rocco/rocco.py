@@ -31,6 +31,7 @@ from rocco.inference import (
     estimate_empirical_bayes_budgets,
     estimate_budget_nonnull_fraction_from_wild_bootstrap_null,
     estimate_budget_nonnull_fraction_from_score_track,
+    estimate_correlation_length,
     score_loci_wls,
 )
 from rocco._version import __version__
@@ -170,19 +171,19 @@ def chrom_solution_to_bed(
     if check_gaps_intervals:
         if len(set(np.diff(intervals))) > 1:
             raise ValueError(f"Intervals must be contiguous: {set(np.diff(intervals))}")
-    step_ = intervals[1] - intervals[0]
+    step_ = int(intervals[1] - intervals[0]) if len(intervals) > 1 else 1
     if ID is None:
         output_file = f"rocco_{chromosome}.bed"
     else:
         output_file = f"rocco_{ID}_{chromosome}.bed"
 
     selected_records: list[tuple[str, int, int]] = []
-    for i in range(len(intervals) - 1):
+    for i in range(len(intervals)):
         # At this point, solutions should be binary. Keep a 0.50 cutoff
         # here so tied or float-valued solutions still behave sensibly.
         if solution[i] > 0.50:
             selected_records.append(
-                (str(chromosome), int(intervals[i]), int(intervals[i + 1]))
+                (str(chromosome), int(intervals[i]), int(intervals[i] + step_))
             )
     merged_records = _merge_bed_records(
         selected_records,
@@ -538,8 +539,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--gamma",
         type=float,
-        default=None,
-        help="Boundary penalty used by the exact DP. If omitted, ROCCO derives a chromosome-level default from score scale and autocorrelation.",
+        default=0.25,
+        help="Boundary penalty used by the exact DP.",
     )
     parser.add_argument(
         "--threads",
@@ -563,8 +564,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--score_lower_bound_z",
         type=float,
-        default=1.0,
+        default=2.0,
         help="Direct floor subtracted from the moderated standardized score when `--score_min_effect` is not supplied.",
+    )
+    parser.add_argument(
+        "--broad_score_lower_bound_z",
+        type=float,
+        default=1.2816,
+        help="Weaker score floor used to build broad peak parents.",
     )
     parser.add_argument(
         "--score_prior_df",
@@ -643,7 +650,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--min_length_bp", type=int, default=None)
     parser.add_argument("--config", type=str, default=None)
-    parser.add_argument("--narrowPeak", action="store_true", default=False)
+    parser.add_argument(
+        "--peak_mode",
+        choices=["narrow", "broad", "both"],
+        default=None,
+    )
+    parser.add_argument("--min_peak_score", type=float, default=0.1)
+    parser.add_argument("--broad_max_gap_bp", type=int, default=None)
+    parser.add_argument("--broad_min_peak_bp", type=int, default=1000)
+    parser.add_argument("--dependence_span", type=int, default=None)
     parser.add_argument(
         "--ecdf_samples",
         type=int,
@@ -656,7 +671,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         dest="ecdf_proc",
-        help="Number of processes used to fit the binned empirical null for `--narrowPeak`.",
+        help="Number of processes used to fit the binned empirical null for peak sidecars.",
     )
     return parser
 
@@ -699,6 +714,41 @@ def _prepare_args(parser: argparse.ArgumentParser) -> dict:
     if len(input_types) != 1:
         raise ValueError("All input files must share the same type.")
     args["input_track_type"] = next(iter(input_types))
+    if not np.isfinite(float(args["gamma"])) or float(args["gamma"]) < 0.0:
+        raise ValueError("`--gamma` must be finite and non-negative")
+    if (
+        not np.isfinite(float(args["score_lower_bound_z"]))
+        or float(args["score_lower_bound_z"]) < 0.0
+    ):
+        raise ValueError("`--score_lower_bound_z` must be finite and non-negative")
+    if (
+        not np.isfinite(float(args["broad_score_lower_bound_z"]))
+        or float(args["broad_score_lower_bound_z"]) < 0.0
+    ):
+        raise ValueError("`--broad_score_lower_bound_z` must be finite and non-negative")
+    if (
+        args["peak_mode"] in {"broad", "both"}
+        and float(args["broad_score_lower_bound_z"])
+        > float(args["score_lower_bound_z"])
+    ):
+        raise ValueError(
+            "`--broad_score_lower_bound_z` cannot exceed `--score_lower_bound_z`"
+        )
+    if args["min_peak_score"] is not None and (
+        not np.isfinite(float(args["min_peak_score"]))
+        or float(args["min_peak_score"]) < 0.0
+    ):
+        raise ValueError("`--min_peak_score` must be finite and non-negative")
+    if args["broad_max_gap_bp"] is not None and int(args["broad_max_gap_bp"]) <= 0:
+        raise ValueError("`--broad_max_gap_bp` must be positive")
+    if int(args["broad_min_peak_bp"]) <= 0:
+        raise ValueError("`--broad_min_peak_bp` must be positive")
+    if args["dependence_span"] is not None and int(args["dependence_span"]) <= 0:
+        raise ValueError("`--dependence_span` must be positive")
+    if args["peak_mode"] is not None and args["input_track_type"] != "bam":
+        raise ValueError("`--peak_mode` sidecars require BAM inputs")
+    if args["peak_mode"] in {"broad", "both"} and args.get("score_min_effect") is not None:
+        raise ValueError("Broad peak mode requires z-score optimization")
 
     if args["chrom_sizes_file"] is None:
         raise ValueError(
@@ -746,47 +796,6 @@ def _resolve_chromosomes(args: dict) -> list:
             chrom for chrom in chroms_to_process if chrom not in args["skip_chroms"]
         ]
     return chroms_to_process
-
-
-def _resolve_chrom_gamma(
-    chrom: str,
-    args: dict,
-    chrom_scores: np.ndarray,
-    budget_rate_meta: dict,
-) -> tuple[float, dict | None]:
-    if args["gamma"] is not None:
-        chrom_gamma = float(args["gamma"])
-        if not np.isfinite(chrom_gamma) or chrom_gamma < 0.0:
-            raise ValueError("`--gamma` must be finite and non-negative")
-        logger.info("%s fixed gamma value=%.6f", chrom, chrom_gamma)
-        return float(chrom_gamma), None
-
-    scores_ = np.asarray(chrom_scores, dtype=np.float64)
-    positive_scores = scores_[scores_ > 0.0]
-    if positive_scores.size == 0:
-        positive_scale = 1.0
-        positive_count = 0
-    else:
-        positive_scale = float(np.median(positive_scores))
-        positive_count = int(positive_scores.size)
-    autocorrelation_time = float(budget_rate_meta.get("autocorrelation_time", 1.0))
-    autocorrelation_time = max(1.0, autocorrelation_time)
-    characteristic_run = int(np.ceil(autocorrelation_time))
-    gamma_raw = 0.5 * float(characteristic_run) * float(positive_scale)
-    chrom_gamma = float(np.clip(gamma_raw, 0.5, 10.0))
-    gamma_meta = {
-        "method": "auto_score_autocorr",
-        "autocorrelation_time": float(autocorrelation_time),
-        "characteristic_run_length": int(characteristic_run),
-        "positive_score_median": float(positive_scale),
-        "positive_score_count": int(positive_count),
-        "gamma_raw": float(gamma_raw),
-        "gamma_clipped": float(chrom_gamma),
-        "gamma_clip_min": 0.5,
-        "gamma_clip_max": 10.0,
-    }
-    logger.info("%s auto gamma estimate: %s", chrom, gamma_meta)
-    return float(chrom_gamma), gamma_meta
 
 
 def _resolve_parallel_process_count(
@@ -887,7 +896,7 @@ def _cleanup_narrowpeak_tempfiles(chrom_cache: dict):
             )
 
 
-def _solve_cached_chromosome(chrom_: str) -> tuple[str, float, dict, str]:
+def _solve_cached_chromosome(chrom_: str) -> tuple[str, float, dict, np.ndarray, str]:
     state = _CHROM_SOLVE_PROCESS_STATE
     if state is None:
         raise RuntimeError("Chromosome solve state is not initialized")
@@ -927,7 +936,7 @@ def _solve_cached_chromosome(chrom_: str) -> tuple[str, float, dict, str]:
         check_gaps_intervals=True,
         min_length_bp=state["min_length_bp"],
     )
-    return chrom_, float(chrom_obj), chrom_meta, chrom_outfile
+    return chrom_, float(chrom_obj), chrom_meta, chrom_sol, chrom_outfile
 
 
 def _build_chrom_cache(
@@ -973,6 +982,7 @@ def _build_chrom_cache(
         logger.info("Chromosome %s matrix: %s", chrom_, chrom_matrix.shape)
         if not np.all(np.isfinite(chrom_matrix)):
             raise ValueError(f"{chrom_} matrix contains non-finite values")
+        centered_matrix = None
         # skip WLS, note that multiple bigwigs really should _not_ be supplied unless it makes sense to aggregate via central tendency
         if args["input_track_type"] == "bigwig":
             if chrom_matrix.shape[0] > 1:
@@ -994,18 +1004,6 @@ def _build_chrom_cache(
             score_details = {
                 "mean": chrom_scores.astype(np.float64, copy=False),
             }
-            budget_fraction_hat, budget_rate_meta = (
-                estimate_budget_nonnull_fraction_from_score_track(
-                    chrom_scores,
-                    num_null_draws=args["budget_null_draws"],
-                    progress_label=f"Budget null {chrom_}",
-                    num_processes=min(
-                        int(args["budget_null_draws"]),
-                        int(budget_null_processes),
-                    ),
-                    return_details=True,
-                )
-            )
         else:
             chrom_scores, score_details = score_loci_wls(
                 chrom_matrix,
@@ -1024,6 +1022,34 @@ def _build_chrom_cache(
             )
             if not np.all(np.isfinite(centered_matrix)):
                 raise ValueError(f"{chrom_} centered matrix contains non-finite values")
+        interval_diffs = np.diff(np.asarray(chrom_intervals, dtype=np.int64))
+        positive_diffs = interval_diffs[interval_diffs > 0]
+        interval_bp = (
+            int(np.median(positive_diffs))
+            if positive_diffs.size > 0
+            else int(args["step"])
+        )
+        correlation_length, _ = estimate_correlation_length(
+            chrom_scores,
+            step_bp=interval_bp,
+            dependence_span=args.get("dependence_span"),
+        )
+        if centered_matrix is None:
+            budget_fraction_hat, budget_rate_meta = (
+                estimate_budget_nonnull_fraction_from_score_track(
+                    chrom_scores,
+                    correlation_length=correlation_length,
+                    step_bp=interval_bp,
+                    num_null_draws=args["budget_null_draws"],
+                    progress_label=f"Budget null {chrom_}",
+                    num_processes=min(
+                        int(args["budget_null_draws"]),
+                        int(budget_null_processes),
+                    ),
+                    return_details=True,
+                )
+            )
+        else:
             budget_fraction_hat, budget_rate_meta = (
                 estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
                     centered_matrix,
@@ -1032,10 +1058,8 @@ def _build_chrom_cache(
                     prior_df=args["score_prior_df"],
                     min_effect=args.get("score_min_effect"),
                     precision_floor_ratio=args["score_precision_floor_ratio"],
-                    dependence_lag_hint=max(
-                        25,
-                        int(score_details.get("local_baseline_window", 101)),
-                    ),
+                    correlation_length=correlation_length,
+                    step_bp=interval_bp,
                     num_null_draws=args["budget_null_draws"],
                     progress_label=f"Budget null {chrom_}",
                     num_processes=min(
@@ -1069,17 +1093,24 @@ def _build_chrom_cache(
             else "WLS scores"
         )
         logger.info("%s %s:%s", chrom_, score_label, cscores_quantiles(chrom_scores))
+        dwb_bandwidth = int(budget_rate_meta.get("dwb_bandwidth", correlation_length))
+        num_null_draws = int(
+            budget_rate_meta.get("num_null_draws", args["budget_null_draws"])
+        )
+        lean_budget_meta = {
+            "budget_fraction_hat": float(budget_fraction_hat),
+            "budget_count_hat": float(budget_count_hat),
+            "effective_total_count": float(budget_total_count_hat),
+            "correlation_length_intervals": int(correlation_length),
+            "dwb_bandwidth": int(dwb_bandwidth),
+            "num_null_draws": int(num_null_draws),
+        }
         logger.info(
             "%s raw budget estimate: %s",
             chrom_,
-            budget_rate_meta,
+            lean_budget_meta,
         )
-        chrom_gamma, gamma_meta = _resolve_chrom_gamma(
-            chrom_,
-            args,
-            chrom_scores,
-            budget_rate_meta,
-        )
+        chrom_gamma = float(args["gamma"])
         chrom_effect_mean = np.asarray(
             score_details.get("mean", chrom_scores),
             dtype=np.float64,
@@ -1088,16 +1119,20 @@ def _build_chrom_cache(
             "intervals": chrom_intervals,
             "scores": chrom_scores,
             "effect_mean": chrom_effect_mean,
+            "z_scores": score_details.get("z_scores"),
             "gamma": chrom_gamma,
-            "gamma_meta": gamma_meta,
             "budget_count_hat": float(budget_count_hat),
             "budget_fraction_hat": float(budget_fraction_hat),
-            "budget_rate_meta": budget_rate_meta,
+            "budget_rate_meta": lean_budget_meta,
+            "correlation_length_intervals": int(correlation_length),
+            "dwb_bandwidth": int(dwb_bandwidth),
+            "num_null_draws": int(num_null_draws),
+            "interval_bp": int(interval_bp),
             "total_count": float(budget_total_count_hat),
             "num_loci": int(chrom_scores.shape[0]),
         }
 
-    if args.get("narrowPeak", False) and args["input_track_type"] == "bam":
+    if args.get("peak_mode") in {"narrow", "both"} and args["input_track_type"] == "bam":
         for chrom_, chrom_data in chrom_cache.items():
             chrom_data["summit_track_file"] = _cpy_narrowpeak_summit_track(
                 chrom_,
@@ -1133,9 +1168,9 @@ def _resolve_budgets(
         chrom: min(
             max(
                 chrom_budgets[chrom] * rescale * float(args["scale_chrom_budgets"]),
-                0.005,
+                0.001,
             ),
-            0.1,
+            0.25,
         )
         for chrom in chrom_budgets
     }
@@ -1183,7 +1218,24 @@ def _solve_cached_chromosomes(
     finally:
         _CHROM_SOLVE_PROCESS_STATE = None
 
-    for chrom_, chrom_obj, chrom_meta, chrom_outfile in solve_results:
+    for chrom_, chrom_obj, chrom_meta, chrom_solution, chrom_outfile in solve_results:
+        chrom_cache[chrom_]["solution"] = np.asarray(chrom_solution, dtype=np.uint8)
+        chrom_cache[chrom_]["solve_meta"] = {
+            "peak_mode": args.get("peak_mode"),
+            "score_lower_bound_z": float(args["score_lower_bound_z"]),
+            "broad_score_lower_bound_z": float(args["broad_score_lower_bound_z"]),
+            "min_peak_score": float(args["min_peak_score"]),
+            "gamma": float(chrom_cache[chrom_]["gamma"]),
+            "budget_mode": str(chrom_meta["budget_mode"]),
+            "soft_budget_penalty": float(chrom_meta["soft_budget_penalty"]),
+            "budget": float(chrom_budgets[chrom_]),
+            "selected_count": int(chrom_meta["selected_count"]),
+            "correlation_length_intervals": int(
+                chrom_cache[chrom_]["correlation_length_intervals"]
+            ),
+            "dwb_bandwidth": int(chrom_cache[chrom_]["dwb_bandwidth"]),
+            "num_null_draws": int(chrom_cache[chrom_]["num_null_draws"]),
+        }
         logger.info(
             "%s solve: selected=%s (%.6f), selection_penalty=%.6f, objective=%.4f",
             chrom_,
@@ -1196,63 +1248,339 @@ def _solve_cached_chromosomes(
     return tmp_chrom_bed_files
 
 
-def _generate_narrowpeak_if_requested(
+def _peak_sidecar_root(final_output: str) -> str:
+    output_root, output_ext = os.path.splitext(final_output)
+    if output_ext.lower() == ".bed":
+        return output_root
+    return final_output
+
+
+def _filter_scored_peak_file_by_signal(
+    peak_file: str,
+    min_peak_score: float,
+) -> int:
+    kept_lines = []
+    with open(peak_file, "r", encoding="utf-8") as handle:
+        for line_num, line in enumerate(handle, start=1):
+            line_ = line.rstrip("\n")
+            if line_.strip() == "":
+                continue
+            fields = line_.split("\t")
+            if len(fields) < 7:
+                raise ValueError(
+                    f"Scored peak row {line_num} in {peak_file} has fewer than 7 columns."
+                )
+            if float(fields[6]) >= float(min_peak_score):
+                kept_lines.append(line_)
+    with open(peak_file, "w", encoding="utf-8") as handle:
+        for line_ in kept_lines:
+            handle.write(f"{line_}\n")
+    return int(len(kept_lines))
+
+
+def _solution_runs(
+    solution: np.ndarray,
+    intervals: np.ndarray,
+) -> list[tuple[int, int, int, int]]:
+    intervals_ = np.asarray(intervals, dtype=np.int64)
+    solution_ = np.asarray(solution)
+    usable = int(min(solution_.shape[0], intervals_.shape[0]))
+    if usable <= 0:
+        return []
+    if usable == 1:
+        step_bp = 1
+    else:
+        interval_diffs = np.diff(intervals_[:usable])
+        positive_diffs = interval_diffs[interval_diffs > 0]
+        if positive_diffs.size == 0:
+            raise ValueError("Intervals must contain increasing bin starts")
+        step_bp = int(np.median(positive_diffs))
+    selected = np.asarray(solution_[:usable] > 0.5, dtype=np.int8)
+    if not np.any(selected):
+        return []
+    padded = np.zeros(usable + 2, dtype=np.int8)
+    padded[1 : usable + 1] = selected
+    edges = np.diff(padded)
+    starts = np.flatnonzero(edges == 1)
+    stops = np.flatnonzero(edges == -1)
+    return [
+        (
+            int(start_idx),
+            int(stop_idx),
+            int(intervals_[start_idx]),
+            int(intervals_[stop_idx - 1] + step_bp),
+        )
+        for start_idx, stop_idx in zip(starts, stops)
+        if int(intervals_[stop_idx - 1] + step_bp) > int(intervals_[start_idx])
+    ]
+
+
+def _build_broad_parent_records(
+    chrom_cache: dict,
+    chrom_budgets: dict,
+    args: dict,
+) -> tuple[list[tuple[str, int, int]], dict[tuple[str, int, int], list[tuple[int, int]]]]:
+    records: list[tuple[str, int, int]] = []
+    block_map: dict[tuple[str, int, int], list[tuple[int, int]]] = {}
+    for chrom_, chrom_data in chrom_cache.items():
+        strong_runs = _solution_runs(
+            chrom_data["solution"],
+            chrom_data["intervals"],
+        )
+        if len(strong_runs) == 0:
+            continue
+        z_scores = chrom_data.get("z_scores")
+        if z_scores is None:
+            raise ValueError("Broad peak mode requires stored z-scores")
+        weak_scores = (
+            np.asarray(z_scores, dtype=np.float64)
+            - float(args["broad_score_lower_bound_z"])
+        )
+        weak_solution, _, weak_meta = solve_chrom_exact(
+            weak_scores,
+            budget=None,
+            gamma=float(chrom_data["gamma"]),
+            selection_penalty=0.0,
+            return_details=True,
+        )
+        chrom_data["broad_solution"] = weak_solution.astype(np.uint8, copy=False)
+        chrom_data["broad_solve_meta"] = {
+            "budget_mode": str(weak_meta["budget_mode"]),
+            "soft_budget_penalty": float(weak_meta["soft_budget_penalty"]),
+            "selected_count": int(weak_meta["selected_count"]),
+            "budget": float(chrom_budgets[chrom_]),
+        }
+        weak_runs = _solution_runs(weak_solution, chrom_data["intervals"])
+        if len(weak_runs) == 0:
+            continue
+
+        strong_starts = np.asarray([run[2] for run in strong_runs], dtype=np.int64)
+        strong_ends = np.asarray([run[3] for run in strong_runs], dtype=np.int64)
+        prefix_strong_ends = np.maximum.accumulate(strong_ends)
+        candidate_runs = []
+        for run in weak_runs:
+            _, _, run_start, run_end = run
+            strong_idx = int(np.searchsorted(strong_starts, run_end, side="left") - 1)
+            if strong_idx >= 0 and int(prefix_strong_ends[strong_idx]) > int(run_start):
+                candidate_runs.append(run)
+        if len(candidate_runs) == 0:
+            continue
+
+        interval_bp = int(max(1, chrom_data["interval_bp"]))
+        if args["broad_max_gap_bp"] is None:
+            max_gap_bp = int(
+                max(
+                    interval_bp,
+                    2 * int(chrom_data["correlation_length_intervals"]) * interval_bp,
+                )
+            )
+        else:
+            max_gap_bp = int(args["broad_max_gap_bp"])
+        merged: list[list[int]] = []
+        for _, _, run_start, run_end in candidate_runs:
+            if len(merged) == 0 or int(run_start) - int(merged[-1][1]) > max_gap_bp:
+                merged.append([int(run_start), int(run_end)])
+            else:
+                merged[-1][1] = max(int(merged[-1][1]), int(run_end))
+
+        for parent_start, parent_end in merged:
+            if int(parent_end) - int(parent_start) < int(args["broad_min_peak_bp"]):
+                continue
+            blocks = []
+            for _, _, strong_start, strong_end in strong_runs:
+                block_start = int(max(strong_start, parent_start))
+                block_end = int(min(strong_end, parent_end))
+                if block_end > block_start:
+                    blocks.append((block_start, block_end))
+            if len(blocks) == 0:
+                continue
+            key = (chrom_, int(parent_start), int(parent_end))
+            records.append(key)
+            block_map[key] = blocks
+    return records, block_map
+
+
+def _write_gapped_peak_file(
+    scored_parent_file: str,
+    output_file: str,
+    block_map: dict[tuple[str, int, int], list[tuple[int, int]]],
+    min_peak_score: float,
+) -> int:
+    written = 0
+    with open(scored_parent_file, "r", encoding="utf-8") as src, open(
+        output_file,
+        "w",
+        encoding="utf-8",
+    ) as dst:
+        for line_num, line in enumerate(src, start=1):
+            line_ = line.strip()
+            if line_ == "":
+                continue
+            fields = line_.split("\t")
+            if len(fields) < 9:
+                raise ValueError(
+                    f"Scored broad row {line_num} in {scored_parent_file} has fewer than 9 columns."
+                )
+            chrom = str(fields[0])
+            start = int(fields[1])
+            end = int(fields[2])
+            signal_value = float(fields[6])
+            if signal_value < float(min_peak_score):
+                continue
+            blocks = block_map[(chrom, start, end)]
+            block_sizes = ",".join(
+                str(int(block_end) - int(block_start))
+                for block_start, block_end in blocks
+            )
+            block_starts = ",".join(
+                str(int(block_start) - start)
+                for block_start, _ in blocks
+            )
+            thick_start = int(blocks[0][0])
+            thick_end = int(blocks[-1][1])
+            dst.write(
+                "\t".join(
+                    [
+                        chrom,
+                        str(start),
+                        str(end),
+                        str(fields[3]),
+                        str(fields[4]),
+                        str(fields[5]),
+                        str(thick_start),
+                        str(thick_end),
+                        "0",
+                        str(len(blocks)),
+                        block_sizes,
+                        block_starts,
+                        str(fields[6]),
+                        str(fields[7]),
+                        str(fields[8]),
+                    ]
+                )
+                + "\n"
+            )
+            written += 1
+    return int(written)
+
+
+def _generate_peak_mode_outputs(
     args: dict,
     final_output: str,
     chrom_cache: dict,
+    chrom_budgets: dict,
 ):
-    if not args["narrowPeak"]:
+    peak_mode = args.get("peak_mode")
+    if peak_mode is None:
         return
     if args.get("input_track_type") != "bam":
-        logger.info(
-            "Skipping narrowPeak generation because posthoc peak scoring requires BAM inputs."
-        )
-        return
-    summit_offsets_file = None
-    try:
-        output_root, output_ext = os.path.splitext(final_output)
-        if output_ext.lower() == ".bed":
-            sidecar_root = output_root
-        else:
-            sidecar_root = final_output
-        narrowpeak_filepath = f"{sidecar_root}.narrowPeak"
-        fd, summit_offsets_file = tempfile.mkstemp(
-            prefix="rocco_pointsource_",
-            suffix=".tsv",
-        )
-        os.close(fd)
-        _write_narrowpeak_summit_offsets(
-            final_output,
+        raise ValueError("Peak sidecars require BAM inputs")
+
+    sidecar_root = _peak_sidecar_root(final_output)
+    if peak_mode in {"narrow", "both"}:
+        summit_offsets_file = None
+        try:
+            fd, summit_offsets_file = tempfile.mkstemp(
+                prefix="rocco_pointsource_",
+                suffix=".tsv",
+            )
+            os.close(fd)
+            _write_narrowpeak_summit_offsets(
+                final_output,
+                chrom_cache,
+                summit_offsets_file,
+            )
+            narrowpeak_filepath = f"{sidecar_root}.narrowPeak"
+            posthoc_scores.score_peaks(
+                args["input_files"],
+                args["chrom_sizes_file"],
+                final_output,
+                count_matrix_file=f"{sidecar_root}.counts.tsv",
+                output_file=narrowpeak_filepath,
+                ecdf_nsamples=args["ecdf_samples"],
+                seed=args["ecdf_seed"],
+                proc=args["ecdf_proc"],
+                summit_offsets_file=summit_offsets_file,
+            )
+            kept_count = _filter_scored_peak_file_by_signal(
+                narrowpeak_filepath,
+                float(args["min_peak_score"]),
+            )
+            logger.info(
+                "Final narrowPeak output: %s (%s peaks)",
+                narrowpeak_filepath,
+                kept_count,
+            )
+        finally:
+            if summit_offsets_file is not None:
+                try:
+                    os.remove(summit_offsets_file)
+                except Exception as exc:
+                    logger.info(
+                        "Could not remove narrowPeak pointSource temp. file %s\n%s",
+                        summit_offsets_file,
+                        exc,
+                    )
+
+    if peak_mode in {"broad", "both"}:
+        broad_records, block_map = _build_broad_parent_records(
             chrom_cache,
-            summit_offsets_file,
+            chrom_budgets,
+            args,
         )
-        posthoc_scores.score_peaks(
-            args["input_files"],
-            args["chrom_sizes_file"],
-            final_output,
-            count_matrix_file=f"{sidecar_root}.counts.tsv",
-            output_file=narrowpeak_filepath,
-            ecdf_nsamples=args["ecdf_samples"],
-            seed=args["ecdf_seed"],
-            proc=args["ecdf_proc"],
-            summit_offsets_file=summit_offsets_file,
-        )
-        logger.info("Final narrowPeak output: %s", narrowpeak_filepath)
-    except Exception as exc:
-        logger.info(
-            "\nCould not generate narrowPeak-formatted output\n%s",
-            exc,
-        )
-    finally:
-        if summit_offsets_file is not None:
-            try:
-                os.remove(summit_offsets_file)
-            except Exception as exc:
-                logger.info(
-                    "Could not remove narrowPeak pointSource temp. file %s\n%s",
-                    summit_offsets_file,
-                    exc,
-                )
+        gappedpeak_filepath = f"{sidecar_root}.gappedPeak"
+        if len(broad_records) == 0:
+            open(gappedpeak_filepath, "w", encoding="utf-8").close()
+            logger.info("Final gappedPeak output: %s (0 peaks)", gappedpeak_filepath)
+            return
+
+        parent_bed_file = None
+        scored_parent_file = None
+        try:
+            fd, parent_bed_file = tempfile.mkstemp(
+                prefix="rocco_broad_parent_",
+                suffix=".bed",
+            )
+            os.close(fd)
+            fd, scored_parent_file = tempfile.mkstemp(
+                prefix="rocco_broad_scored_",
+                suffix=".narrowPeak",
+            )
+            os.close(fd)
+            _write_bed_records(broad_records, parent_bed_file, name_features=True)
+            posthoc_scores.score_peaks(
+                args["input_files"],
+                args["chrom_sizes_file"],
+                parent_bed_file,
+                count_matrix_file=f"{sidecar_root}.broad.counts.tsv",
+                output_file=scored_parent_file,
+                ecdf_nsamples=args["ecdf_samples"],
+                seed=args["ecdf_seed"],
+                proc=args["ecdf_proc"],
+            )
+            kept_count = _write_gapped_peak_file(
+                scored_parent_file,
+                gappedpeak_filepath,
+                block_map,
+                float(args["min_peak_score"]),
+            )
+            logger.info(
+                "Final gappedPeak output: %s (%s peaks)",
+                gappedpeak_filepath,
+                kept_count,
+            )
+        finally:
+            for tmp_file in (parent_bed_file, scored_parent_file):
+                if tmp_file is None:
+                    continue
+                try:
+                    os.remove(tmp_file)
+                except Exception as exc:
+                    logger.info(
+                        "Could not remove peak sidecar temp. file %s\n%s",
+                        tmp_file,
+                        exc,
+                    )
 
 
 def main():
@@ -1300,7 +1628,7 @@ def main():
             )
 
     try:
-        _generate_narrowpeak_if_requested(args, final_output, chrom_cache)
+        _generate_peak_mode_outputs(args, final_output, chrom_cache, chrom_budgets)
     finally:
         _cleanup_narrowpeak_tempfiles(chrom_cache)
 

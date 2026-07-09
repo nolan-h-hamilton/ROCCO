@@ -501,33 +501,108 @@ def _estimate_effective_sample_size(
     return effective_n, float(tau_int), int(lags_used)
 
 
+def estimate_correlation_length(
+    values: np.ndarray,
+    step_bp: int = 50,
+    dependence_span: int | None = None,
+    min_context_bp: int = 2500,
+    max_context_bp: int = 100000,
+    acf_point_threshold: float = 0.1,
+    acf_required_crossings: int = 5,
+    acf_min_evidence_nats: float = 250.0,
+) -> tuple[int, dict[str, float | int | str | bool]]:
+    if dependence_span is not None:
+        span = int(dependence_span)
+        if span <= 0:
+            raise ValueError("`dependence_span` must be positive")
+        return span, {
+            "correlation_length_intervals": int(span),
+            "correlation_length_bp": int((2 * span * max(int(step_bp), 1)) + 1),
+            "correlation_length_method": "fixed",
+        }
+
+    values_ = np.asarray(values, dtype=np.float64)
+    if values_.ndim != 1:
+        raise ValueError("`values` must be one-dimensional")
+    n_loci = int(values_.size)
+    required = int(max(1, acf_required_crossings))
+    if n_loci < max(32, required + 2):
+        raise ValueError("Automatic correlation length needs more loci")
+    threshold = float(acf_point_threshold)
+    if not np.isfinite(threshold) or threshold <= 0.0 or threshold >= 1.0:
+        raise ValueError("`acf_point_threshold` must lie in (0, 1)")
+    step_bp_ = max(int(step_bp), 1)
+    min_span = max(1, int(np.ceil((max(int(min_context_bp), 1) - 1) / (2 * step_bp_))))
+    max_span = int(np.floor((max(int(max_context_bp), 1) - 1) / (2 * step_bp_)))
+    max_span = max(min_span, max_span)
+    max_lag = int(min(n_loci - 1, max_span))
+    if max_lag < required:
+        raise ValueError("Automatic correlation length has too few usable lags")
+
+    centered = values_ - float(np.mean(values_))
+    variance = float(np.mean(centered * centered))
+    if not np.isfinite(variance) or variance <= 1.0e-12:
+        raise ValueError("Automatic correlation length needs nonconstant scores")
+    n_fft = 1 << int(np.ceil(np.log2((2 * n_loci) - 1)))
+    spectrum = np.fft.rfft(centered, n=n_fft)
+    acov = np.fft.irfft(spectrum * np.conjugate(spectrum), n=n_fft)[: max_lag + 1]
+    acov /= np.arange(n_loci, n_loci - max_lag - 1, -1, dtype=np.float64)
+    if not np.isfinite(acov[0]) or acov[0] <= 1.0e-12:
+        raise ValueError("Automatic correlation length produced invalid variance")
+    acf_abs = np.abs(np.clip(acov[1:] / acov[0], -1.0, 1.0))
+    crossing_lag = None
+    for lag_idx in range(0, int(acf_abs.size) - required + 1):
+        if np.all(acf_abs[lag_idx : lag_idx + required] < threshold):
+            crossing_lag = int(lag_idx + 1)
+            break
+    if crossing_lag is None:
+        raw_span = int(max_lag)
+    else:
+        raw_span = int(crossing_lag)
+
+    evidence_lag = int(min(max_lag, max(required, raw_span + required - 1)))
+    excess = np.maximum(acf_abs[:evidence_lag] - threshold, 0.0)
+    acf_evidence_nats = float(n_loci * np.sum(excess * excess))
+    if crossing_lag is None and acf_evidence_nats < float(acf_min_evidence_nats):
+        raise ValueError("Automatic correlation length lacks ACF evidence")
+
+    width_correction = 3.0 / float(np.sqrt(-np.log(threshold)))
+    span = int(round(float(raw_span) * width_correction))
+    span = int(max(min_span, min(max_span, span)))
+    return span, {
+        "correlation_length_intervals": int(span),
+        "correlation_length_bp": int((2 * span * step_bp_) + 1),
+        "correlation_length_method": "acf_crossing",
+        "crossing_lag": -1 if crossing_lag is None else int(crossing_lag),
+        "acf_evidence_nats": float(acf_evidence_nats),
+    }
+
+
 def _resolve_budget_ess_max_lag(
     n_loci: int,
-    dependence_lag_hint: int | None = None,
+    correlation_length: int | None = None,
 ) -> int:
     r"""Resolve the ESS autocorrelation lag cap from a broad background scale."""
     n_loci_ = int(max(1, n_loci))
-    if dependence_lag_hint is None:
-        return int(min(n_loci_ - 1, max(16, 4 * min(n_loci_, 101))))
     return int(
         min(
             n_loci_ - 1,
-            max(16, 4 * max(1, min(n_loci_, int(dependence_lag_hint)))),
+            max(1, 4 * max(1, min(n_loci_, int(correlation_length or 1)))),
         )
     )
 
 
 def _resolve_budget_bootstrap_bandwidth(
     n_loci: int,
-    dependence_lag_hint: int | None = None,
+    correlation_length: int | None = None,
 ) -> int:
     r"""Resolve the dependent-multiplier bandwidth for the budget null (DWB)."""
     n_loci_ = int(max(1, n_loci))
     if n_loci_ <= 1:
         return 1
-    if dependence_lag_hint is None:
-        return int(min(n_loci_ - 1, max(8, round(n_loci_ ** (1.0 / 3.0)))))
-    return int(min(n_loci_ - 1, max(8, int(dependence_lag_hint))))
+    if correlation_length is None:
+        raise ValueError("DWB bandwidth requires a correlation length")
+    return int(min(n_loci_ - 1, max(1, int(correlation_length))))
 
 
 def _build_budget_bootstrap_kernel(
@@ -723,7 +798,8 @@ def _estimate_wild_bootstrap_score_null(
     min_effect: float | None = None,
     precision_floor_ratio: float = 0.01,
     observed_scores: np.ndarray | None = None,
-    dependence_lag_hint: int | None = None,
+    correlation_length: int | None = None,
+    step_bp: int = 50,
     num_null_draws: int = 25,
     random_seed: int = 0,
     progress_label: str | None = None,
@@ -792,9 +868,14 @@ def _estimate_wild_bootstrap_score_null(
     null_threshold = float(null_center + (2.0 * null_scale))
 
     n_samples, n_loci = centered.shape
+    if correlation_length is None:
+        correlation_length, _ = estimate_correlation_length(
+            observed_scores_,
+            step_bp=step_bp,
+        )
     bandwidth = _resolve_budget_bootstrap_bandwidth(
         n_loci,
-        dependence_lag_hint=dependence_lag_hint,
+        correlation_length=correlation_length,
     )
     kernel = _build_budget_bootstrap_kernel(bandwidth)
     num_draws = int(max(1, num_null_draws))
@@ -978,6 +1059,7 @@ def _estimate_wild_bootstrap_score_null(
         "max_null_draws": int(num_draws),
         "adaptive_stop": bool(draws_used < num_draws),
         "wild_bandwidth": int(bandwidth),
+        "correlation_length_intervals": int(correlation_length),
         "wild_process": "bartlett_multiplier",
         "null_method": "dependent_wild_residual_bootstrap",
         "null_reference_mean_positive_consensus": float(np.mean(positive_consensus)),
@@ -992,7 +1074,8 @@ def estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
     prior_df: float = 5.0,
     min_effect: float | None = None,
     precision_floor_ratio: float = 0.01,
-    dependence_lag_hint: int | None = None,
+    correlation_length: int | None = None,
+    step_bp: int = 50,
     num_null_draws: int = 25,
     random_seed: int = 0,
     progress_label: str | None = None,
@@ -1055,7 +1138,8 @@ def estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
         min_effect=min_effect,
         precision_floor_ratio=precision_floor_ratio,
         observed_scores=observed_scores,
-        dependence_lag_hint=dependence_lag_hint,
+        correlation_length=correlation_length,
+        step_bp=step_bp,
         num_null_draws=num_null_draws,
         random_seed=random_seed,
         progress_label=progress_label,
@@ -1084,7 +1168,7 @@ def estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
     null_tail_occupancy_sd = float(null_meta["null_tail_occupancy_sd"])
     ess_max_lag = _resolve_budget_ess_max_lag(
         n_loci,
-        dependence_lag_hint=dependence_lag_hint,
+        correlation_length=int(null_meta["correlation_length_intervals"]),
     )
     effective_total_count, tau_int, ess_lags_used = _estimate_effective_sample_size(
         observed_soft_counts,
@@ -1134,6 +1218,10 @@ def estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
         "max_null_draws": float(null_meta["max_null_draws"]),
         "adaptive_stop": bool(null_meta["adaptive_stop"]),
         "wild_bandwidth": float(null_meta["wild_bandwidth"]),
+        "dwb_bandwidth": float(null_meta["wild_bandwidth"]),
+        "correlation_length_intervals": float(
+            null_meta["correlation_length_intervals"]
+        ),
         "wild_process": str(null_meta["wild_process"]),
         "null_method": str(null_meta["null_method"]),
         "null_reference_mean_positive_consensus": float(
@@ -1150,7 +1238,8 @@ def estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
 
 def _estimate_wild_bootstrap_direct_score_null(
     score_track: np.ndarray,
-    dependence_lag_hint: int | None = None,
+    correlation_length: int | None = None,
+    step_bp: int = 50,
     num_null_draws: int = 25,
     random_seed: int = 0,
     progress_label: str | None = None,
@@ -1185,9 +1274,14 @@ def _estimate_wild_bootstrap_direct_score_null(
     null_soft_scale = float(max(null_scale, 1.0e-6))
     null_threshold = float(null_center + (2.0 * null_scale))
 
+    if correlation_length is None:
+        correlation_length, _ = estimate_correlation_length(
+            observed_scores,
+            step_bp=step_bp,
+        )
     bandwidth = _resolve_budget_bootstrap_bandwidth(
         observed_scores.size,
-        dependence_lag_hint=dependence_lag_hint,
+        correlation_length=correlation_length,
     )
     kernel = _build_budget_bootstrap_kernel(bandwidth)
     num_draws = int(max(1, num_null_draws))
@@ -1302,6 +1396,7 @@ def _estimate_wild_bootstrap_direct_score_null(
         "max_null_draws": int(num_draws),
         "adaptive_stop": bool(draws_used < num_draws),
         "wild_bandwidth": int(bandwidth),
+        "correlation_length_intervals": int(correlation_length),
         "wild_process": "bartlett_multiplier",
         "null_method": "dependent_wild_score_bootstrap",
         "null_reference_mean_positive_consensus": float(np.mean(positive_consensus)),
@@ -1311,7 +1406,8 @@ def _estimate_wild_bootstrap_direct_score_null(
 
 def estimate_budget_nonnull_fraction_from_score_track(
     score_track: np.ndarray,
-    dependence_lag_hint: int | None = None,
+    correlation_length: int | None = None,
+    step_bp: int = 50,
     num_null_draws: int = 25,
     random_seed: int = 0,
     progress_label: str | None = None,
@@ -1328,7 +1424,8 @@ def estimate_budget_nonnull_fraction_from_score_track(
 
     null_meta = _estimate_wild_bootstrap_direct_score_null(
         scores,
-        dependence_lag_hint=dependence_lag_hint,
+        correlation_length=correlation_length,
+        step_bp=step_bp,
         num_null_draws=num_null_draws,
         random_seed=random_seed,
         progress_label=progress_label,
@@ -1354,7 +1451,7 @@ def estimate_budget_nonnull_fraction_from_score_track(
     null_tail_occupancy_sd = float(null_meta["null_tail_occupancy_sd"])
     ess_max_lag = _resolve_budget_ess_max_lag(
         scores.size,
-        dependence_lag_hint=dependence_lag_hint,
+        correlation_length=int(null_meta["correlation_length_intervals"]),
     )
     effective_total_count, tau_int, ess_lags_used = _estimate_effective_sample_size(
         observed_soft_counts,
@@ -1407,6 +1504,10 @@ def estimate_budget_nonnull_fraction_from_score_track(
         "max_null_draws": float(null_meta["max_null_draws"]),
         "adaptive_stop": bool(null_meta["adaptive_stop"]),
         "wild_bandwidth": float(null_meta["wild_bandwidth"]),
+        "dwb_bandwidth": float(null_meta["wild_bandwidth"]),
+        "correlation_length_intervals": float(
+            null_meta["correlation_length_intervals"]
+        ),
         "wild_process": str(null_meta["wild_process"]),
         "null_method": str(null_meta["null_method"]),
         "null_reference_mean_positive_consensus": float(
@@ -1419,70 +1520,6 @@ def estimate_budget_nonnull_fraction_from_score_track(
     if return_details:
         return nonnull_fraction, details
     return nonnull_fraction
-
-
-def estimate_budget_nonnull_fraction_from_empirical_null(
-    centered_matrix: np.ndarray,
-    observed_scores: np.ndarray | None = None,
-    lower_bound_z: float = 1.0,
-    prior_df: float = 5.0,
-    min_effect: float | None = None,
-    precision_floor_ratio: float = 0.01,
-    dependence_lag_hint: int | None = None,
-    num_null_draws: int = 25,
-    random_seed: int = 0,
-    progress_label: str | None = None,
-    num_processes: int = 1,
-    return_details: bool = False,
-) -> float | Tuple[float, Dict[str, Any]]:
-    r"""Wrapper for the wild-bootstrap budget estimator."""
-    return estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
-        centered_matrix,
-        observed_scores=observed_scores,
-        lower_bound_z=lower_bound_z,
-        prior_df=prior_df,
-        min_effect=min_effect,
-        precision_floor_ratio=precision_floor_ratio,
-        dependence_lag_hint=dependence_lag_hint,
-        num_null_draws=num_null_draws,
-        random_seed=random_seed,
-        progress_label=progress_label,
-        num_processes=num_processes,
-        return_details=return_details,
-    )
-
-
-def estimate_budget_nonnull_fraction_from_resampled_null(
-    centered_matrix: np.ndarray,
-    observed_scores: np.ndarray | None = None,
-    lower_bound_z: float = 1.0,
-    prior_df: float = 5.0,
-    min_effect: float | None = None,
-    precision_floor_ratio: float = 0.01,
-    num_null_draws: int = 25,
-    mean_block_length: int | None = None,
-    null_threshold_scale: float = 1.0,
-    random_seed: int = 0,
-    progress_label: str | None = None,
-    num_processes: int = 1,
-    return_details: bool = False,
-) -> float | Tuple[float, Dict[str, Any]]:
-    r"""Wrapper for the wild-bootstrap budget estimator."""
-    _ = (null_threshold_scale,)
-    return estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
-        centered_matrix,
-        observed_scores=observed_scores,
-        lower_bound_z=lower_bound_z,
-        prior_df=prior_df,
-        min_effect=min_effect,
-        precision_floor_ratio=precision_floor_ratio,
-        dependence_lag_hint=mean_block_length,
-        num_null_draws=num_null_draws,
-        random_seed=random_seed,
-        progress_label=progress_label,
-        num_processes=num_processes,
-        return_details=return_details,
-    )
 
 
 def fit_beta_prior_mle(
