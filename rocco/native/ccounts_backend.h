@@ -32,9 +32,7 @@ extern "C"
     {
         const char *path;
         ccounts_sourceKind sourceKind;
-        const char *barcodeTag;
         const char *barcodeAllowListFile;
-        const char *barcodeGroupMapFile;
     } ccounts_sourceConfig;
 
     /**
@@ -71,7 +69,6 @@ extern "C"
         int64_t minTemplateLength;
         int64_t maxInsertSize;
         int64_t pairedEndMode;
-        int64_t inferFragmentLength;
     } ccounts_countOptions;
 
     typedef struct ccounts_result
@@ -81,12 +78,6 @@ extern "C"
     } ccounts_result;
 
     typedef struct ccounts_sourceHandle ccounts_sourceHandle;
-
-    ccounts_result ccounts_checkAlignmentFile(
-        const ccounts_sourceConfig *sourceConfig,
-        int buildIndex,
-        int threadCount,
-        int *hasIndexOut);
 
     ccounts_result ccounts_isPairedEnd(
         const ccounts_sourceConfig *sourceConfig,
@@ -133,10 +124,6 @@ extern "C"
         uint8_t oneReadPerBin,
         uint64_t *mappedReadCountOut,
         uint64_t *unmappedReadCountOut);
-
-    ccounts_result ccounts_getCellCount(
-        const ccounts_sourceConfig *sourceConfig,
-        uint64_t *cellCountOut);
 
     ccounts_result ccounts_openSource(
         const ccounts_sourceConfig *sourceConfig,

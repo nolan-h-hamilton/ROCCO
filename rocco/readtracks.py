@@ -26,20 +26,9 @@ except ImportError:  # pragma: no cover - exercised in build environments
     _hts_counts = None
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(module)s.%(funcName)s -  %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 _BAM_COUNT_METADATA_CACHE: dict[tuple, Dict[str, float | int | bool]] = {}
-
-
-def get_shape(matrix: np.ndarray) -> Tuple:
-    r"""Helper function to get the shape of a 1D/2D numpy array"""
-    if len(matrix.shape) == 1:
-        return 1, len(matrix)
-    return matrix.shape
 
 
 def _resolve_num_processors(num_processors: int) -> int:
@@ -80,14 +69,14 @@ def _require_pybigwig():
     return pyBigWig
 
 
-def _get_track_type(track_file: str) -> str:
-    ext = os.path.splitext(track_file)[1].lower().lstrip(".")
-    if ext == "bam":
+def get_track_type(track_file: str) -> str:
+    ext = os.path.splitext(track_file)[1]
+    if ext == ".bam":
         return "bam"
-    if ext in {"bw", "bigwig"}:
+    if ext == ".bw":
         return "bigwig"
     raise ValueError(
-        f"Unsupported input file type for `{track_file}`. Expected BAM or bigWig."
+        f"Unsupported input file type for `{track_file}`. Expected `.bam` or `.bw`."
     )
 
 
@@ -215,11 +204,10 @@ def _compute_native_scale_factor(
     norm_read_length: int,
     scale_factor: float = 1.0,
 ) -> float:
-    norm_method_ = clean_string(norm_method).upper()
     mapped_reads_ = max(int(mapped_reads), 1)
     tile_len_kb = float(step) / 1000.0
     scale = float(scale_factor)
-    if norm_method_ == "RPGC":
+    if norm_method == "RPGC":
         if effective_genome_size is None or float(effective_genome_size) <= 0:
             raise ValueError(
                 "Effective genome size must be positive for RPGC normalization."
@@ -228,10 +216,10 @@ def _compute_native_scale_factor(
             float(mapped_reads_) * float(max(int(norm_read_length), 1))
         ) / float(effective_genome_size)
         return float(scale * (1.0 / max(current_coverage, 1.0e-12)))
-    if norm_method_ == "RPKM":
+    if norm_method == "RPKM":
         million_reads_mapped = float(mapped_reads_) / 1.0e6
         return float(scale * (1.0 / max(million_reads_mapped * tile_len_kb, 1.0e-12)))
-    if norm_method_ in {"CPM", "BPM"}:
+    if norm_method in {"CPM", "BPM"}:
         million_reads_mapped = float(mapped_reads_) / 1.0e6
         return float(scale * (1.0 / max(million_reads_mapped, 1.0e-12)))
     raise ValueError(
@@ -255,7 +243,7 @@ def _get_bam_count_metadata(
     cache_key = (
         bam_file,
         int(step),
-        clean_string(norm_method).upper(),
+        norm_method,
         float(effective_genome_size if effective_genome_size is not None else -1.0),
         ignore_for_norm_,
         int(flag_exclude),
@@ -352,13 +340,6 @@ def _get_bam_count_metadata(
     _BAM_COUNT_METADATA_CACHE[cache_key] = metadata
     return metadata
 
-
-def clean_string(string_input):
-    if string_input is None:
-        return ""
-    return string_input.lower().replace(" ", "")
-
-
 def get_chroms_and_sizes(chrom_sizes_file):
     r"""Parse a chromosome sizes file and return a dictionary of chromosome names and sizes.
     :param chrom_sizes_file: Path to the chromosome sizes file.
@@ -374,8 +355,7 @@ def get_chroms_and_sizes(chrom_sizes_file):
             f"Sizes file, {chrom_sizes_file}, not found or is `None`"
         )
     try:
-        chrom_names = pd.read_csv(chrom_sizes_file, sep="\t", header=None)[0]
-        chrom_sizes = pd.read_csv(chrom_sizes_file, sep="\t", header=None)[1]
+        chrom_sizes_df = pd.read_csv(chrom_sizes_file, sep="\t", header=None)
     except Exception as e:
         logger.info(
             f"Error reading chromosome sizes file: {chrom_sizes_file}.\
@@ -383,7 +363,7 @@ def get_chroms_and_sizes(chrom_sizes_file):
             \nchr1\t248956422\nchr2\t242193529\n..."
         )
         raise
-    return dict(zip(chrom_names, chrom_sizes))
+    return dict(zip(chrom_sizes_df[0], chrom_sizes_df[1]))
 
 
 def get_bam_chrom_reads(
@@ -445,7 +425,7 @@ def get_bam_chrom_reads(
             flag_exclude=max(0, int(flag_exclude)),
         )
     except RuntimeError as exc:
-        if "chromosome not found" in str(exc).lower():
+        if "chromosome not found" in str(exc):
             logger.warning(
                 "Chromosome %s not found in BAM file: %s. Returning (None,None).",
                 chromosome,
@@ -542,7 +522,7 @@ def generate_chrom_matrix(
 
     interval_matrix = []
     vals_matrix = []
-    track_types = {_get_track_type(input_file) for input_file in input_files}
+    track_types = {get_track_type(input_file) for input_file in input_files}
     if len(track_types) != 1:
         raise ValueError("All input files must share the same type.")
     track_type = next(iter(track_types))
@@ -626,9 +606,6 @@ def generate_chrom_matrix(
     for i, (intervals_, vals_) in enumerate(zip(interval_matrix, vals_matrix)):
         idx = np.searchsorted(common_intervals, intervals_)
         count_matrix[i, idx] = np.asarray(vals_, dtype=matrix_dtype)
-
-    if get_shape(count_matrix)[0] == 1:
-        count_matrix = count_matrix.reshape(1, -1)
 
     return np.array(common_intervals).astype(int), count_matrix
 

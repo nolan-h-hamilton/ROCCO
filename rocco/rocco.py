@@ -20,7 +20,6 @@ import sys
 import tempfile
 import uuid
 from pprint import pformat
-from typing import Tuple
 
 import numpy as np
 import scipy.stats as stats
@@ -28,25 +27,21 @@ import scipy.stats as stats
 from rocco.constants import GENOME_DICT
 from rocco.dp import solve_chrom_exact
 from rocco.inference import (
-    estimate_empirical_bayes_budgets,
-    estimate_budget_nonnull_fraction_from_wild_bootstrap_null,
     estimate_budget_nonnull_fraction_from_score_track,
+    estimate_budget_nonnull_fraction_from_wild_bootstrap_null,
+    estimate_empirical_bayes_budgets,
     estimate_correlation_length,
     score_loci_wls,
 )
 from rocco._version import __version__
-from rocco.readtracks import *
+from rocco.readtracks import (
+    generate_chrom_matrix,
+    get_chroms_and_sizes,
+    get_track_type,
+)
 import rocco.scores as posthoc_scores
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(module)s.%(funcName)s -  %(levelname)s - %(message)s",
-)
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s - %(module)s.%(funcName)s -  %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 _CHROM_SOLVE_PROCESS_STATE: dict | None = None
 
@@ -109,32 +104,6 @@ def _write_bed_records(
             else:
                 handle.write(f"{chrom}\t{start}\t{end}\n")
     return output_file
-
-
-def _get_input_type(input_file: str) -> str:
-    r"""Determine the supported ROCCO input type from the filename extension.
-
-    The file type is determined by the file extension: '.bam', etc. and is not robust
-    to incorrectly labelled files.
-
-    :raises ValueError: If file extension is not supported
-    :return: a string representing the file type
-    :rtype: str
-
-    """
-    file_type = None
-    file_ext = str(os.path.splitext(input_file.lower())[1][1:]).lower()
-
-    if file_ext in ["bam"]:
-        file_type = "bam"
-    elif file_ext in ["bw", "bigwig"]:
-        file_type = "bigwig"
-    elif file_ext in ["bed", "bedgraph", "bg", "wig", "wiggle"]:
-        bedgraph_notice = "\nBedGraph and wiggle-like inputs are not supported. Input files must be BAM alignments or bigWig tracks.\n"
-        raise ValueError(bedgraph_notice)
-    if file_type is None:
-        raise ValueError("Input file must be a BAM alignment file or bigWig track")
-    return file_type
 
 
 def chrom_solution_to_bed(
@@ -255,10 +224,9 @@ def score_central_tendency_chrom(
     if chrom_matrix.shape[0] == 1:
         return np.power(chrom_matrix[0, :], power)
 
-    method_ = str(method).strip().lower().replace("-", "").replace("_", "")
     central_tendency = None
 
-    if method_ == "quantile":
+    if method == "quantile":
         if not 0.0 <= quantile <= 1.0:
             logger.warning("`quantile` must be in [0, 1]. Using the median instead.")
             quantile = 0.50
@@ -271,7 +239,7 @@ def score_central_tendency_chrom(
                 axis=0,
                 method="nearest",
             )
-    elif method_ == "tmean":
+    elif method == "tmean":
         # Trim each column to :math:`[q_{\alpha}, q_{1-\alpha}]` before averaging.
         lower_limit = np.quantile(
             chrom_matrix,
@@ -296,64 +264,13 @@ def score_central_tendency_chrom(
             ],
             dtype=float,
         )
-    elif method_ == "mean":
+    elif method == "mean":
         central_tendency = np.mean(chrom_matrix, axis=0)
 
     if central_tendency is None:
         raise ValueError(f"Central tendency method not recognized: {method}")
 
     return np.power(central_tendency, power)
-
-
-def score_dispersion_chrom(
-    chrom_matrix: np.ndarray,
-    method: str = "mad",
-    rng: Tuple[int, int] = (25, 75),
-    tprop: float = 0.05,
-    power: float = 1.0,
-) -> np.ndarray:
-    r"""Return a column-wise dispersion summary across samples."""
-    chrom_matrix = np.asarray(chrom_matrix, dtype=float)
-    if chrom_matrix.ndim != 2:
-        raise ValueError("`chrom_matrix` must be a 2D array.")
-    if chrom_matrix.shape[0] == 1:
-        return np.power(np.zeros_like(chrom_matrix[0, :]), power)
-
-    method_ = str(method).strip().lower().replace("-", "").replace("_", "")
-    dispersion = None
-
-    if method_ == "mad":
-        dispersion = stats.median_abs_deviation(chrom_matrix, axis=0)
-    elif method_ == "iqr":
-        dispersion = stats.iqr(chrom_matrix, rng=rng, axis=0)
-    elif method_ == "std":
-        dispersion = np.std(chrom_matrix, axis=0)
-    elif method_ == "tstd":
-        lower_limit = np.quantile(
-            chrom_matrix,
-            tprop,
-            axis=0,
-            method="nearest",
-        )
-        upper_limit = np.quantile(
-            chrom_matrix,
-            1.0 - tprop,
-            axis=0,
-            method="nearest",
-        )
-        dispersion = stats.tstd(
-            chrom_matrix,
-            limits=(lower_limit, upper_limit),
-            inclusive=(True, True),
-            axis=0,
-        )
-
-    if dispersion is None:
-        raise ValueError(
-            f"Dispersion method not recognized or could not execute: {method}"
-        )
-
-    return np.power(dispersion, power)
 
 
 def cscores_quantiles(
@@ -451,6 +368,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="ROCCO Consensus Peak Detection Algorithm for Multisample HTS Datasets",
         add_help=True,
+        allow_abbrev=False,
         formatter_class=argparse.RawTextHelpFormatter,
         epilog=epilog_cli_help,
     )
@@ -467,7 +385,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output",
-        "--outfile",
         "-o",
         type=str,
         default=f"rocco_peaks_output_{str(int(uuid.uuid4().hex[:5], base=16))}.bed",
@@ -523,6 +440,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=25,
         help="Maximum number of null draws used when initializing chromosome budgets. Default is 25.",
+    )
+    parser.add_argument(
+        "--num_null_blocks",
+        type=int,
+        default=4,
+        help="Number of contiguous blocks used for budget initialization. A value of 1 uses chromosome-wide budgets.",
     )
     parser.add_argument(
         "--scale_chrom_budgets",
@@ -602,7 +525,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--norm_method",
         default="RPGC",
-        choices=["RPGC", "CPM", "RPKM", "BPM", "rpgc", "cpm", "rpkm", "bpm"],
+        choices=["RPGC", "CPM", "RPKM", "BPM"],
         help="Normalization method for BAM inputs. Default is RPGC (Reads Per Genomic Content), for which the `--effective_genome_size` argument is required (default EGS values supplied automatically for supported genomes).",
     )
     parser.add_argument(
@@ -687,7 +610,10 @@ def _prepare_args(parser: argparse.ArgumentParser) -> dict:
         parser.print_help(sys.stdout)
         sys.exit(0)
 
-    args["norm_method"] = clean_string(args["norm_method"]).upper()
+    if args["norm_method"] not in {"RPGC", "CPM", "RPKM", "BPM"}:
+        raise ValueError(
+            f"`--norm_method` must be one of RPGC, CPM, RPKM, or BPM, not `{args['norm_method']}`"
+        )
     if args["low_memory"]:
         if int(args["threads"]) <= 0:
             total_cores = max(1, os.cpu_count() or 1)
@@ -697,8 +623,11 @@ def _prepare_args(parser: argparse.ArgumentParser) -> dict:
         ) == int(parser.get_default("budget_null_draws")):
             args["budget_null_draws"] = 16
 
+    args["num_null_blocks"] = int(args["num_null_blocks"])
+    if args["num_null_blocks"] <= 0:
+        raise ValueError("`--num_null_blocks` must be positive")
+
     if args["genome"] is not None:
-        args["genome"] = clean_string(args["genome"])
         if args["genome"] not in GENOME_DICT:
             raise ValueError(
                 f"Genome not found: {args['genome']}. Available genomes: {list(GENOME_DICT.keys())}"
@@ -710,7 +639,7 @@ def _prepare_args(parser: argparse.ArgumentParser) -> dict:
         if args["chrom_sizes_file"] is None:
             args["chrom_sizes_file"] = GENOME_DICT[args["genome"]]["sizes_file"]
 
-    input_types = {_get_input_type(file_) for file_ in args["input_files"]}
+    input_types = {get_track_type(file_) for file_ in args["input_files"]}
     if len(input_types) != 1:
         raise ValueError("All input files must share the same type.")
     args["input_track_type"] = next(iter(input_types))
@@ -765,24 +694,21 @@ def _prepare_args(parser: argparse.ArgumentParser) -> dict:
     return args
 
 
-def _prepare_inputs(args: dict) -> tuple[list, list]:
-    bam_files = []
+def _prepare_inputs(args: dict) -> list:
     signal_inputs = []
-    expected_input_type = str(args.get("input_track_type", "")).strip().lower()
+    expected_input_type = args.get("input_track_type", "")
     for file_ in args["input_files"]:
         if not os.path.exists(file_):
             raise FileNotFoundError(f"File not found: {file_}")
-        input_type = _get_input_type(file_)
+        input_type = get_track_type(file_)
         if expected_input_type != "" and input_type != expected_input_type:
             raise ValueError("All input files must share the same type.")
-        if input_type == "bam":
-            bam_files.append(file_)
         signal_inputs.append(file_)
 
     if args["ignore_for_norm"] is None or len(args["ignore_for_norm"]) == 0:
         args["ignore_for_norm"] = ["chrX", "chrY", "chrM"]
 
-    return bam_files, signal_inputs
+    return signal_inputs
 
 
 def _resolve_chromosomes(args: dict) -> list:
@@ -896,34 +822,143 @@ def _cleanup_narrowpeak_tempfiles(chrom_cache: dict):
             )
 
 
+def _make_null_blocks(num_loci: int, num_blocks: int) -> list[tuple[int, int]]:
+    num_loci_ = int(num_loci)
+    num_blocks_ = int(num_blocks)
+    if num_loci_ <= 0:
+        raise ValueError("`num_loci` must be positive")
+    if num_blocks_ <= 0:
+        raise ValueError("`num_null_blocks` must be positive")
+    block_count = int(min(num_blocks_, num_loci_))
+    edges = np.linspace(0, num_loci_, block_count + 1, dtype=np.int64)
+    return [
+        (int(edges[idx]), int(edges[idx + 1]))
+        for idx in range(block_count)
+        if int(edges[idx + 1]) > int(edges[idx])
+    ]
+
+
+def _budget_block_record(
+    block_id: int,
+    start_idx: int,
+    stop_idx: int,
+    chrom_intervals: np.ndarray,
+    interval_bp: int,
+    budget_fraction_hat: float,
+    budget_rate_meta: dict,
+    correlation_length: int,
+    budget_null_draws: int,
+) -> dict:
+    block_length = int(stop_idx) - int(start_idx)
+    if block_length <= 0:
+        raise ValueError("Budget blocks must be non-empty")
+    if not np.isfinite(float(budget_fraction_hat)):
+        raise ValueError("Budget estimate is not finite")
+    budget_total_count_hat = float(
+        np.clip(
+            budget_rate_meta.get("effective_total_count", block_length),
+            1.0,
+            block_length,
+        )
+    )
+    budget_count_hat = float(
+        np.clip(
+            budget_rate_meta.get(
+                "budget_count_hat",
+                float(budget_fraction_hat) * budget_total_count_hat,
+            ),
+            0.0,
+            budget_total_count_hat,
+        )
+    )
+    return {
+        "block_id": int(block_id),
+        "start_idx": int(start_idx),
+        "stop_idx": int(stop_idx),
+        "start_bp": int(chrom_intervals[int(start_idx)]),
+        "stop_bp": int(chrom_intervals[int(stop_idx) - 1] + int(interval_bp)),
+        "num_loci": int(block_length),
+        "budget_fraction_hat": float(budget_fraction_hat),
+        "budget_count_hat": float(budget_count_hat),
+        "total_count": float(budget_total_count_hat),
+        "effective_total_count": float(budget_total_count_hat),
+        "correlation_length_intervals": int(
+            budget_rate_meta.get("correlation_length_intervals", correlation_length)
+        ),
+        "dwb_bandwidth": int(budget_rate_meta.get("dwb_bandwidth", correlation_length)),
+        "num_null_draws": int(
+            budget_rate_meta.get("num_null_draws", budget_null_draws)
+        ),
+        "requested_num_null_draws": int(budget_null_draws),
+    }
+
+
+def _budget_value(chrom_budget) -> float:
+    if isinstance(chrom_budget, dict):
+        return float(chrom_budget["budget"])
+    budget_arr = np.asarray(chrom_budget, dtype=np.float64)
+    if budget_arr.ndim == 0:
+        return float(budget_arr)
+    if budget_arr.ndim == 2 and budget_arr.shape[1] == 3:
+        lengths = budget_arr[:, 1] - budget_arr[:, 0]
+        return float(np.average(budget_arr[:, 2], weights=lengths))
+    raise ValueError("Chromosome budget has an unsupported shape")
+
+
+def _solver_budget_blocks(chrom_budget) -> np.ndarray | None:
+    if isinstance(chrom_budget, dict):
+        if chrom_budget.get("mode") != "block":
+            return None
+        bounds = np.asarray(chrom_budget["block_bounds"], dtype=np.float64)
+        budgets = np.asarray(chrom_budget["block_budgets"], dtype=np.float64)
+    else:
+        budget_arr = np.asarray(chrom_budget, dtype=np.float64)
+        if budget_arr.ndim != 2 or budget_arr.shape[1] != 3:
+            return None
+        return np.ascontiguousarray(budget_arr, dtype=np.float64)
+    if bounds.ndim != 2 or bounds.shape[1] != 2:
+        raise ValueError("Block budget bounds must have start and stop columns")
+    if budgets.ndim != 1 or budgets.shape[0] != bounds.shape[0]:
+        raise ValueError("Block budget values must match block bounds")
+    return np.column_stack((bounds, budgets))
+
+
 def _solve_cached_chromosome(chrom_: str) -> tuple[str, float, dict, np.ndarray, str]:
     state = _CHROM_SOLVE_PROCESS_STATE
     if state is None:
         raise RuntimeError("Chromosome solve state is not initialized")
     chrom_data = state["chrom_cache"][chrom_]
-    chrom_budget = state["chrom_budgets"][chrom_]
     chrom_gamma = chrom_data["gamma"]
     if not np.all(np.isfinite(chrom_data["scores"])):
         raise ValueError(f"{chrom_} scores contain non-finite values")
-    try:
-        chrom_budget = float(chrom_budget)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"{chrom_} budget could not be read as a finite number"
-        ) from exc
     try:
         chrom_gamma = float(chrom_gamma)
     except (TypeError, ValueError) as exc:
         raise ValueError(
             f"{chrom_} gamma could not be read as a finite number"
         ) from exc
-    if not np.isfinite(chrom_budget) or chrom_budget < 0.0:
-        raise ValueError(f"{chrom_} budget must be finite and non-negative")
     if not np.isfinite(chrom_gamma) or chrom_gamma < 0.0:
         raise ValueError(f"{chrom_} gamma must be finite and non-negative")
+    chrom_budget = None
+    chrom_budget_blocks = None
+    if state["selection_penalty"] is None:
+        chrom_budget_spec = state["chrom_budgets"][chrom_]
+        chrom_budget_blocks = _solver_budget_blocks(chrom_budget_spec)
+        if chrom_budget_blocks is None:
+            chrom_budget = _budget_value(chrom_budget_spec)
+            if not np.isfinite(chrom_budget) or chrom_budget < 0.0:
+                raise ValueError(f"{chrom_} budget must be finite and non-negative")
+        else:
+            if np.any(~np.isfinite(chrom_budget_blocks[:, 2])) or np.any(
+                chrom_budget_blocks[:, 2] < 0.0
+            ):
+                raise ValueError(
+                    f"{chrom_} block budgets must be finite and non-negative"
+                )
     chrom_sol, chrom_obj, chrom_meta = solve_chrom_exact(
         chrom_data["scores"],
         budget=chrom_budget,
+        budget_blocks=chrom_budget_blocks,
         gamma=chrom_gamma,
         selection_penalty=state["selection_penalty"],
         return_details=True,
@@ -1034,57 +1069,77 @@ def _build_chrom_cache(
             step_bp=interval_bp,
             dependence_span=args.get("dependence_span"),
         )
-        if centered_matrix is None:
-            budget_fraction_hat, budget_rate_meta = (
-                estimate_budget_nonnull_fraction_from_score_track(
-                    chrom_scores,
-                    correlation_length=correlation_length,
-                    step_bp=interval_bp,
-                    num_null_draws=args["budget_null_draws"],
-                    progress_label=f"Budget null {chrom_}",
-                    num_processes=min(
-                        int(args["budget_null_draws"]),
-                        int(budget_null_processes),
-                    ),
-                    return_details=True,
+        num_null_blocks = int(args.get("num_null_blocks", 4))
+        if num_null_blocks <= 0:
+            raise ValueError("`--num_null_blocks` must be positive")
+        budget_blocks = []
+        block_slices = _make_null_blocks(chrom_scores.shape[0], num_null_blocks)
+        chrom_interval_arr = np.asarray(chrom_intervals, dtype=np.int64)
+        for block_id, (start_idx, stop_idx) in enumerate(block_slices):
+            block_scores = chrom_scores[start_idx:stop_idx]
+            progress_label = (
+                f"Budget null {chrom_} block {block_id + 1}/{len(block_slices)}"
+            )
+            if centered_matrix is None:
+                block_fraction_hat, block_rate_meta = (
+                    estimate_budget_nonnull_fraction_from_score_track(
+                        block_scores,
+                        correlation_length=correlation_length,
+                        step_bp=interval_bp,
+                        num_null_draws=args["budget_null_draws"],
+                        random_seed=1009 * int(block_id),
+                        progress_label=progress_label,
+                        return_details=True,
+                    )
+                )
+            else:
+                block_fraction_hat, block_rate_meta = (
+                    estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
+                        centered_matrix[:, start_idx:stop_idx],
+                        observed_scores=block_scores,
+                        lower_bound_z=args["score_lower_bound_z"],
+                        prior_df=args["score_prior_df"],
+                        min_effect=args.get("score_min_effect"),
+                        precision_floor_ratio=args["score_precision_floor_ratio"],
+                        correlation_length=correlation_length,
+                        step_bp=interval_bp,
+                        num_null_draws=args["budget_null_draws"],
+                        random_seed=1009 * int(block_id),
+                        progress_label=progress_label,
+                        num_processes=min(
+                            int(args["budget_null_draws"]),
+                            int(budget_null_processes),
+                        ),
+                        return_details=True,
+                    )
+                )
+            budget_blocks.append(
+                _budget_block_record(
+                    block_id,
+                    start_idx,
+                    stop_idx,
+                    chrom_interval_arr,
+                    interval_bp,
+                    block_fraction_hat,
+                    block_rate_meta,
+                    correlation_length,
+                    args["budget_null_draws"],
                 )
             )
-        else:
-            budget_fraction_hat, budget_rate_meta = (
-                estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
-                    centered_matrix,
-                    observed_scores=chrom_scores,
-                    lower_bound_z=args["score_lower_bound_z"],
-                    prior_df=args["score_prior_df"],
-                    min_effect=args.get("score_min_effect"),
-                    precision_floor_ratio=args["score_precision_floor_ratio"],
-                    correlation_length=correlation_length,
-                    step_bp=interval_bp,
-                    num_null_draws=args["budget_null_draws"],
-                    progress_label=f"Budget null {chrom_}",
-                    num_processes=min(
-                        int(args["budget_null_draws"]),
-                        int(budget_null_processes),
-                    ),
-                    return_details=True,
-                )
-            )
+        if centered_matrix is not None:
             del centered_matrix
         del chrom_matrix
-        if not np.isfinite(budget_fraction_hat):
-            raise ValueError(f"{chrom_} budget estimate is not finite")
         budget_total_count_hat = float(
-            np.clip(
-                budget_rate_meta.get("effective_total_count", chrom_scores.shape[0]),
-                1.0,
-                chrom_scores.shape[0],
-            )
+            sum(float(block["total_count"]) for block in budget_blocks)
         )
         budget_count_hat = float(
+            sum(float(block["budget_count_hat"]) for block in budget_blocks)
+        )
+        budget_fraction_hat = float(
             np.clip(
-                budget_fraction_hat * budget_total_count_hat,
+                budget_count_hat / max(budget_total_count_hat, 1.0),
                 0.0,
-                budget_total_count_hat,
+                1.0,
             )
         )
         score_label = (
@@ -1093,9 +1148,9 @@ def _build_chrom_cache(
             else "WLS scores"
         )
         logger.info("%s %s:%s", chrom_, score_label, cscores_quantiles(chrom_scores))
-        dwb_bandwidth = int(budget_rate_meta.get("dwb_bandwidth", correlation_length))
-        num_null_draws = int(
-            budget_rate_meta.get("num_null_draws", args["budget_null_draws"])
+        dwb_bandwidth = int(max(int(block["dwb_bandwidth"]) for block in budget_blocks))
+        total_null_draws = int(
+            sum(int(block["num_null_draws"]) for block in budget_blocks)
         )
         lean_budget_meta = {
             "budget_fraction_hat": float(budget_fraction_hat),
@@ -1103,7 +1158,11 @@ def _build_chrom_cache(
             "effective_total_count": float(budget_total_count_hat),
             "correlation_length_intervals": int(correlation_length),
             "dwb_bandwidth": int(dwb_bandwidth),
-            "num_null_draws": int(num_null_draws),
+            "num_null_draws_per_block": int(args["budget_null_draws"]),
+            "total_null_draws": int(total_null_draws),
+            "num_null_blocks": int(len(budget_blocks)),
+            "requested_num_null_blocks": int(num_null_blocks),
+            "budget_blocks": budget_blocks,
         }
         logger.info(
             "%s raw budget estimate: %s",
@@ -1126,7 +1185,8 @@ def _build_chrom_cache(
             "budget_rate_meta": lean_budget_meta,
             "correlation_length_intervals": int(correlation_length),
             "dwb_bandwidth": int(dwb_bandwidth),
-            "num_null_draws": int(num_null_draws),
+            "num_null_draws_per_block": int(args["budget_null_draws"]),
+            "total_null_draws": int(total_null_draws),
             "interval_bp": int(interval_bp),
             "total_count": float(budget_total_count_hat),
             "num_loci": int(chrom_scores.shape[0]),
@@ -1149,31 +1209,105 @@ def _resolve_budgets(
     chrom_cache: dict,
     args: dict,
 ) -> tuple[dict, dict]:
-    chrom_budget_counts = {
-        chrom: chrom_cache[chrom]["budget_count_hat"] for chrom in chrom_cache
-    }
-    chrom_total_counts = {
-        chrom: chrom_cache[chrom]["total_count"] for chrom in chrom_cache
-    }
-    chrom_budgets, budget_meta = estimate_empirical_bayes_budgets(
-        chrom_budget_counts,
-        chrom_total_counts,
+    num_null_blocks = int(args.get("num_null_blocks", 4))
+    budget_unit_counts: dict[str, float] = {}
+    budget_unit_totals: dict[str, float] = {}
+    block_units: list[tuple[str, str, dict]] = []
+    for chrom, chrom_data in chrom_cache.items():
+        budget_blocks = chrom_data.get("budget_rate_meta", {}).get("budget_blocks", [])
+        if len(budget_blocks) == 0:
+            budget_unit_counts[chrom] = chrom_data["budget_count_hat"]
+            budget_unit_totals[chrom] = chrom_data["total_count"]
+            continue
+        for block in budget_blocks:
+            block_id = int(block["block_id"])
+            unit_key = f"{chrom}:{block_id}"
+            budget_unit_counts[unit_key] = float(block["budget_count_hat"])
+            budget_unit_totals[unit_key] = float(block["total_count"])
+            block_units.append((unit_key, chrom, block))
+
+    unit_budgets, budget_meta = estimate_empirical_bayes_budgets(
+        budget_unit_counts,
+        budget_unit_totals,
         posterior_quantile=args["budget_posterior_quantile"],
     )
-    if args["budget"] is not None and budget_meta["genome_wide_budget"] > 0:
+    manual_selection_penalty = args.get("selection_penalty") is not None
+    if (
+        not manual_selection_penalty
+        and args["budget"] is not None
+        and budget_meta["genome_wide_budget"] > 0
+    ):
         rescale = float(args["budget"]) / budget_meta["genome_wide_budget"]
     else:
         rescale = 1.0
-    chrom_budgets = {
-        chrom: min(
+    unit_budgets = {
+        unit_key: min(
             max(
-                chrom_budgets[chrom] * rescale * float(args["scale_chrom_budgets"]),
+                unit_budgets[unit_key]
+                * rescale
+                * float(args["scale_chrom_budgets"]),
                 0.001,
             ),
             0.25,
         )
-        for chrom in chrom_budgets
+        for unit_key in unit_budgets
     }
+    chrom_budgets = {}
+    for chrom, chrom_data in chrom_cache.items():
+        budget_blocks = chrom_data.get("budget_rate_meta", {}).get("budget_blocks", [])
+        if len(budget_blocks) == 0:
+            chrom_budgets[chrom] = float(unit_budgets[chrom])
+            continue
+        resolved_blocks = []
+        for block in budget_blocks:
+            block_id = int(block["block_id"])
+            start_idx = int(block["start_idx"])
+            stop_idx = int(block["stop_idx"])
+            start_bp = int(block["start_bp"])
+            stop_bp = int(block["stop_bp"])
+            unit_key = f"{chrom}:{block_id}"
+            resolved_budget = float(unit_budgets[unit_key])
+            resolved_blocks.append(
+                {
+                    "block_id": int(block_id),
+                    "start_idx": int(start_idx),
+                    "stop_idx": int(stop_idx),
+                    "start_bp": int(start_bp),
+                    "stop_bp": int(stop_bp),
+                    "num_loci": int(block["num_loci"]),
+                    "raw_budget_fraction_hat": float(block["budget_fraction_hat"]),
+                    "raw_budget_count_hat": float(block["budget_count_hat"]),
+                    "total_count": float(block["total_count"]),
+                    "budget": resolved_budget,
+                }
+            )
+        block_bounds = np.asarray(
+            [
+                (int(block["start_idx"]), int(block["stop_idx"]))
+                for block in resolved_blocks
+            ],
+            dtype=np.float64,
+        )
+        block_budgets = np.asarray(
+            [float(block["budget"]) for block in resolved_blocks],
+            dtype=np.float64,
+        )
+        block_lengths = block_bounds[:, 1] - block_bounds[:, 0]
+        chrom_budgets[chrom] = {
+            "mode": "block",
+            "budget": float(np.average(block_budgets, weights=block_lengths)),
+            "block_bounds": block_bounds,
+            "block_budgets": block_budgets,
+            "blocks": resolved_blocks,
+        }
+    budget_meta = dict(budget_meta)
+    budget_meta["num_null_blocks"] = int(num_null_blocks)
+    budget_meta["manual_selection_penalty"] = bool(manual_selection_penalty)
+    budget_meta["budget_rescale"] = float(rescale)
+    budget_meta["budget_unit_count"] = int(len(budget_unit_counts))
+    budget_meta["budget_unit_scope"] = (
+        "chromosome_blocks" if len(block_units) > 0 else "chromosomes"
+    )
     logger.info("Empirical-Bayes budget prior: %s", budget_meta)
     return chrom_budgets, budget_meta
 
@@ -1195,7 +1329,7 @@ def _solve_cached_chromosomes(
         logger.info(
             "%s: budget=%s gamma=%s",
             chrom_,
-            round(chrom_budget, 6),
+            round(_budget_value(chrom_budget), 6),
             round(chrom_gamma, 6),
         )
     global _CHROM_SOLVE_PROCESS_STATE
@@ -1220,7 +1354,7 @@ def _solve_cached_chromosomes(
 
     for chrom_, chrom_obj, chrom_meta, chrom_solution, chrom_outfile in solve_results:
         chrom_cache[chrom_]["solution"] = np.asarray(chrom_solution, dtype=np.uint8)
-        chrom_cache[chrom_]["solve_meta"] = {
+        solve_meta = {
             "peak_mode": args.get("peak_mode"),
             "score_lower_bound_z": float(args["score_lower_bound_z"]),
             "broad_score_lower_bound_z": float(args["broad_score_lower_bound_z"]),
@@ -1228,14 +1362,33 @@ def _solve_cached_chromosomes(
             "gamma": float(chrom_cache[chrom_]["gamma"]),
             "budget_mode": str(chrom_meta["budget_mode"]),
             "soft_budget_penalty": float(chrom_meta["soft_budget_penalty"]),
-            "budget": float(chrom_budgets[chrom_]),
+            "budget": float(_budget_value(chrom_budgets[chrom_])),
             "selected_count": int(chrom_meta["selected_count"]),
             "correlation_length_intervals": int(
                 chrom_cache[chrom_]["correlation_length_intervals"]
             ),
             "dwb_bandwidth": int(chrom_cache[chrom_]["dwb_bandwidth"]),
-            "num_null_draws": int(chrom_cache[chrom_]["num_null_draws"]),
+            "num_null_draws_per_block": int(
+                chrom_cache[chrom_]["num_null_draws_per_block"]
+            ),
+            "total_null_draws": int(chrom_cache[chrom_]["total_null_draws"]),
         }
+        if "budget_block_count" in chrom_meta:
+            solve_meta["budget_blocks"] = [
+                {
+                    "start_idx": int(start_idx),
+                    "stop_idx": int(stop_idx),
+                    "budget": float(block_budget),
+                    "selection_penalty": float(block_penalty),
+                }
+                for start_idx, stop_idx, block_budget, block_penalty in zip(
+                    chrom_meta["budget_block_starts"],
+                    chrom_meta["budget_block_ends"],
+                    chrom_meta["budget_block_fractions"],
+                    chrom_meta["budget_block_penalties"],
+                )
+            ]
+        chrom_cache[chrom_]["solve_meta"] = solve_meta
         logger.info(
             "%s solve: selected=%s (%.6f), selection_penalty=%.6f, objective=%.4f",
             chrom_,
@@ -1250,7 +1403,7 @@ def _solve_cached_chromosomes(
 
 def _peak_sidecar_root(final_output: str) -> str:
     output_root, output_ext = os.path.splitext(final_output)
-    if output_ext.lower() == ".bed":
+    if output_ext == ".bed":
         return output_root
     return final_output
 
@@ -1348,7 +1501,7 @@ def _build_broad_parent_records(
             "budget_mode": str(weak_meta["budget_mode"]),
             "soft_budget_penalty": float(weak_meta["soft_budget_penalty"]),
             "selected_count": int(weak_meta["selected_count"]),
-            "budget": float(chrom_budgets[chrom_]),
+            "budget": float(_budget_value(chrom_budgets[chrom_])),
         }
         weak_runs = _solution_runs(weak_solution, chrom_data["intervals"])
         if len(weak_runs) == 0:
@@ -1584,12 +1737,16 @@ def _generate_peak_mode_outputs(
 
 
 def main():
-    run_id = str(int(uuid.uuid4().hex[:5], base=16))
-    logger.info("\nID: %s", run_id)
     parser = _build_parser()
     args = _prepare_args(parser)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(module)s.%(funcName)s -  %(levelname)s - %(message)s",
+    )
+    run_id = str(int(uuid.uuid4().hex[:5], base=16))
+    logger.info("\nID: %s", run_id)
 
-    bam_files, signal_inputs = _prepare_inputs(args)
+    signal_inputs = _prepare_inputs(args)
     logger.info("Signal inputs: %s", signal_inputs)
 
     chroms_to_process = _resolve_chromosomes(args)

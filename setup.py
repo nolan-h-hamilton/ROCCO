@@ -381,7 +381,6 @@ setup(
         "ChIP-seq",
     ],
     python_requires=">=3.10, <4",
-    setup_requires=["numpy"],
     ext_modules=extensions,
     cmdclass={"build_ext": build_rocco_ext},
     install_requires=[

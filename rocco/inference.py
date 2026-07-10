@@ -346,8 +346,9 @@ def score_loci_wls(
         min_effect=min_effect,
         precision_floor_ratio=precision_floor_ratio,
     )
-    if not np.all(np.isfinite(scores)):
-        raise ValueError("Locus scoring produced non-finite values")
+    if not return_details:
+        return scores.astype(np.float64)
+
     centered_out = centered.astype(
         np.float32 if low_memory else np.float64,
         copy=False,
@@ -374,30 +375,7 @@ def score_loci_wls(
         ),
         "centered_matrix": centered_out,
     }
-    if return_details:
-        return scores.astype(np.float64), details
-    return scores.astype(np.float64)
-
-
-def benjamini_hochberg(
-    p_values: np.ndarray,
-    fdr: float = 0.01,
-) -> np.ndarray:
-    p_values_ = np.asarray(p_values, dtype=np.float64)
-    if p_values_.ndim != 1:
-        raise ValueError("`p_values` must be one-dimensional")
-    m = p_values_.shape[0]
-    if m == 0:
-        return np.zeros(0, dtype=bool)
-    order = np.argsort(p_values_)
-    ranked = p_values_[order]
-    thresholds = float(fdr) * (np.arange(1, m + 1) / float(m))
-    passing = ranked <= thresholds
-    mask = np.zeros(m, dtype=bool)
-    if np.any(passing):
-        cutoff = np.max(np.where(passing)[0])
-        mask[order[: cutoff + 1]] = True
-    return mask
+    return scores.astype(np.float64), details
 
 
 def _standardize_wls_z_scores(
@@ -1130,7 +1108,6 @@ def estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
     _, n_loci = centered.shape
     if n_loci <= 0:
         raise ValueError("`centered_matrix` must contain at least one locus")
-
     null_meta = _estimate_wild_bootstrap_score_null(
         centered,
         lower_bound_z=lower_bound_z,
@@ -1411,17 +1388,14 @@ def estimate_budget_nonnull_fraction_from_score_track(
     num_null_draws: int = 25,
     random_seed: int = 0,
     progress_label: str | None = None,
-    num_processes: int = 1,
     return_details: bool = False,
 ) -> float | Tuple[float, Dict[str, Any]]:
     r"""Estimate a conservative enriched fraction directly from a score track."""
-    _ = int(max(1, num_processes))
     scores = np.asarray(score_track, dtype=np.float64)
     if scores.ndim != 1:
         raise ValueError("`score_track` must be one-dimensional")
     if scores.size == 0:
         raise ValueError("`score_track` must contain at least one locus")
-
     null_meta = _estimate_wild_bootstrap_direct_score_null(
         scores,
         correlation_length=correlation_length,
@@ -1520,7 +1494,6 @@ def estimate_budget_nonnull_fraction_from_score_track(
     if return_details:
         return nonnull_fraction, details
     return nonnull_fraction
-
 
 def fit_beta_prior_mle(
     successes: np.ndarray,

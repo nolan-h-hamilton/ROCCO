@@ -1,7 +1,6 @@
 #include "ccounts_backend.h"
 
 #include <htslib/hts.h>
-#include <htslib/khash.h>
 #include <htslib/sam.h>
 #include <htslib/kstring.h>
 #include <htslib/tbx.h>
@@ -35,8 +34,6 @@ typedef struct ccounts_scoredIndex
     double value;
     int index;
 } ccounts_scoredIndex;
-
-KHASH_SET_INIT_STR(ccounts_barcodeSet)
 
 static ccounts_result ccounts_makeResult(int32_t errorCode, const char *errorMessage)
 {
@@ -393,25 +390,6 @@ static int ccounts_parseInt64Field(
     return 1;
 }
 
-static char *ccounts_copyStringField(
-    const char *fieldStart,
-    size_t fieldLength)
-{
-    char *fieldCopy = NULL;
-    if (fieldStart == NULL || fieldLength == 0U)
-    {
-        return NULL;
-    }
-    fieldCopy = (char *)malloc(fieldLength + 1U);
-    if (fieldCopy == NULL)
-    {
-        return NULL;
-    }
-    memcpy(fieldCopy, fieldStart, fieldLength);
-    fieldCopy[fieldLength] = '\0';
-    return fieldCopy;
-}
-
 static ccounts_result ccounts_openFragmentsSource(
     const ccounts_sourceConfig *sourceConfig,
     ccounts_sourceHandle *sourceHandle)
@@ -522,77 +500,6 @@ static void ccounts_closeAlignmentFile(samFile *fileHandle, sam_hdr_t *header)
     {
         sam_close(fileHandle);
     }
-}
-
-ccounts_result ccounts_checkAlignmentFile(
-    const ccounts_sourceConfig *sourceConfig,
-    int buildIndex,
-    int threadCount,
-    int *hasIndexOut)
-{
-    samFile *fileHandle = NULL;
-    sam_hdr_t *header = NULL;
-    hts_idx_t *indexHandle = NULL;
-    htsFile *fragmentsHandle = NULL;
-    tbx_t *tbxHandle = NULL;
-    ccounts_result result;
-
-    if (hasIndexOut != NULL)
-    {
-        *hasIndexOut = 0;
-    }
-
-    if (ccounts_isAlignmentKind(sourceConfig->sourceKind))
-    {
-        result = ccounts_openAlignmentFile(sourceConfig, threadCount, &fileHandle, &header);
-        if (result.errorCode != 0)
-        {
-            return result;
-        }
-
-        indexHandle = sam_index_load((htsFile *)fileHandle, sourceConfig->path);
-        if (indexHandle == NULL && buildIndex)
-        {
-            ccounts_closeAlignmentFile(fileHandle, header);
-            if (sam_index_build3(sourceConfig->path, NULL, 0, threadCount > 0 ? threadCount : 1) < 0)
-            {
-                return ccounts_makeResult(-1, "failed to build alignment index");
-            }
-            result = ccounts_openAlignmentFile(sourceConfig, threadCount, &fileHandle, &header);
-            if (result.errorCode != 0)
-            {
-                return result;
-            }
-            indexHandle = sam_index_load((htsFile *)fileHandle, sourceConfig->path);
-        }
-        if (hasIndexOut != NULL)
-        {
-            *hasIndexOut = indexHandle != NULL ? 1 : 0;
-        }
-        if (indexHandle != NULL)
-        {
-            hts_idx_destroy(indexHandle);
-        }
-        ccounts_closeAlignmentFile(fileHandle, header);
-        return ccounts_makeOk();
-    }
-
-    fragmentsHandle = hts_open(sourceConfig->path, "r");
-    if (fragmentsHandle == NULL)
-    {
-        return ccounts_makeResult(-1, "failed to open fragments source");
-    }
-    tbxHandle = tbx_index_load(sourceConfig->path);
-    if (hasIndexOut != NULL)
-    {
-        *hasIndexOut = tbxHandle != NULL ? 1 : 0;
-    }
-    if (tbxHandle != NULL)
-    {
-        tbx_destroy(tbxHandle);
-    }
-    hts_close(fragmentsHandle);
-    return ccounts_makeOk();
 }
 
 ccounts_result ccounts_isPairedEnd(
@@ -1887,165 +1794,6 @@ ccounts_result ccounts_getMappedReadCount(
     return ccounts_makeOk();
 }
 
-/**
- * @brief get the number of unique cell barcodes observed in a tabix/fragments file
- */
-ccounts_result ccounts_getCellCount(
-    const ccounts_sourceConfig *sourceConfig,
-    uint64_t *cellCountOut)
-{
-    ccounts_sourceHandle *sourceHandle = NULL;
-    ccounts_result result;
-    kstring_t lineBuffer = {0, 0, NULL};
-    khash_t(ccounts_barcodeSet) *barcodeSet = NULL;
-    int iteratorCode = 0;
-    const char *cursor = NULL;
-    const char *fieldStart = NULL;
-    size_t fieldLength = 0U;
-    int fieldIndex = 0;
-    const char *barcodeStart = NULL;
-    size_t barcodeLength = 0U;
-
-    if (cellCountOut != NULL)
-    {
-        *cellCountOut = 0;
-    }
-
-    result = ccounts_openSource(sourceConfig, &sourceHandle);
-    if (result.errorCode != 0)
-    {
-        return result;
-    }
-    if (sourceHandle == NULL)
-    {
-        return ccounts_makeResult(-1, "failed to initialize source handle");
-    }
-    if (sourceHandle->sourceKind != ccounts_sourceKindFragments ||
-        sourceHandle->fragmentsHandle == NULL)
-    {
-        ccounts_closeSource(sourceHandle);
-        return ccounts_makeResult(-1, "cell count is only supported for fragments sources");
-    }
-
-    barcodeSet = kh_init(ccounts_barcodeSet);
-    if (barcodeSet == NULL)
-    {
-        ccounts_closeSource(sourceHandle);
-        return ccounts_makeResult(-1, "failed to initialize barcode set");
-    }
-    // iterate through the fragments file, collect specified barcodes
-    while ((iteratorCode = hts_getline(sourceHandle->fragmentsHandle, '\n', &lineBuffer)) >= 0)
-    {
-        cursor = lineBuffer.s;
-        fieldIndex = 0;
-        barcodeStart = NULL;
-        barcodeLength = 0U;
-        while (*cursor != '\0' && *cursor != '\n' && *cursor != '\r')
-        {
-            fieldStart = cursor;
-            while (*cursor != '\0' && *cursor != '\t' && *cursor != '\n' && *cursor != '\r')
-            {
-                ++cursor;
-            }
-            fieldLength = (size_t)(cursor - fieldStart);
-            if (fieldIndex == 3)
-            {
-                barcodeStart = fieldStart;
-                barcodeLength = fieldLength;
-                break;
-            }
-            // move after hitting barcode
-            if (*cursor == '\t')
-            {
-                ++cursor;
-            }
-            ++fieldIndex;
-        }
-        if (barcodeLength == 0U)
-        {
-            continue;
-        }
-        if (!ccounts_barcodeAllowed(
-                sourceHandle->barcodeAllowList,
-                sourceHandle->barcodeAllowCount,
-                barcodeStart,
-                barcodeLength))
-        {
-            continue;
-        }
-        {
-            char *barcodeCopy = ccounts_copyStringField(barcodeStart, barcodeLength);
-            /* hash for O(1) lookup */
-            khiter_t barcodeIndex;
-            int absent = 0;
-            if (barcodeCopy == NULL)
-            {
-                if (lineBuffer.s != NULL)
-                {
-                    free(lineBuffer.s);
-                }
-                for (barcodeIndex = kh_begin(barcodeSet); barcodeIndex != kh_end(barcodeSet); ++barcodeIndex)
-                {
-                    if (kh_exist(barcodeSet, barcodeIndex))
-                    {
-                        free((char *)kh_key(barcodeSet, barcodeIndex));
-                    }
-                }
-                kh_destroy(ccounts_barcodeSet, barcodeSet);
-                ccounts_closeSource(sourceHandle);
-                return ccounts_makeResult(-1, "failed to store barcode value");
-            }
-            // keep only distinct allowed barcodes
-            barcodeIndex = kh_put(ccounts_barcodeSet, barcodeSet, barcodeCopy, &absent);
-            if (absent < 0)
-            {
-                free(barcodeCopy);
-                if (lineBuffer.s != NULL)
-                {
-                    free(lineBuffer.s);
-                }
-                for (barcodeIndex = kh_begin(barcodeSet); barcodeIndex != kh_end(barcodeSet); ++barcodeIndex)
-                {
-                    if (kh_exist(barcodeSet, barcodeIndex))
-                    {
-                        free((char *)kh_key(barcodeSet, barcodeIndex));
-                    }
-                }
-                kh_destroy(ccounts_barcodeSet, barcodeSet);
-                ccounts_closeSource(sourceHandle);
-                return ccounts_makeResult(-1, "failed to add barcode to set");
-            }
-            if (absent == 0)
-            {
-                free(barcodeCopy);
-            }
-        }
-    }
-
-    if (cellCountOut != NULL)
-    {
-        *cellCountOut = (uint64_t)kh_size(barcodeSet);
-    }
-    if (lineBuffer.s != NULL)
-    {
-        free(lineBuffer.s);
-    }
-    if (barcodeSet != NULL)
-    {
-        khiter_t barcodeIndex;
-        for (barcodeIndex = kh_begin(barcodeSet); barcodeIndex != kh_end(barcodeSet); ++barcodeIndex)
-        {
-            if (kh_exist(barcodeSet, barcodeIndex))
-            {
-                free((char *)kh_key(barcodeSet, barcodeIndex));
-            }
-        }
-        kh_destroy(ccounts_barcodeSet, barcodeSet);
-    }
-    ccounts_closeSource(sourceHandle);
-    return ccounts_makeOk();
-}
-
 ccounts_result ccounts_openSource(
     const ccounts_sourceConfig *sourceConfig,
     ccounts_sourceHandle **sourceHandleOut)
@@ -2368,11 +2116,6 @@ ccounts_result ccounts_countRegion(
     {
         return ccounts_makeResult(-1, "alignment index is required for region counting");
     }
-    if (countOptions->inferFragmentLength > 0 && countOptions->extendBP <= 0)
-    {
-        return ccounts_makeResult(-1, "native fragment length inference is not wired yet");
-    }
-
     if (countOptions->threadCount > 1)
     {
         hts_set_threads((htsFile *)sourceHandle->fileHandle, countOptions->threadCount);

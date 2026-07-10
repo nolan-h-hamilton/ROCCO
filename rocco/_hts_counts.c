@@ -14,9 +14,7 @@ static ccounts_sourceConfig make_source_config(const char *alignment_path)
     ccounts_sourceConfig source_config;
     source_config.path = alignment_path;
     source_config.sourceKind = ccounts_sourceKindBAM;
-    source_config.barcodeTag = NULL;
     source_config.barcodeAllowListFile = NULL;
-    source_config.barcodeGroupMapFile = NULL;
     return source_config;
 }
 
@@ -41,43 +39,54 @@ static int parse_count_mode(const char *count_mode, uint8_t *count_mode_out)
         PyErr_SetString(PyExc_ValueError, "count mode is invalid");
         return 0;
     }
-    if (
-        strcmp(count_mode, "coverage") == 0 ||
-        strcmp(count_mode, "cov") == 0 ||
-        strcmp(count_mode, "0") == 0)
+    if (strcmp(count_mode, "coverage") == 0)
     {
         *count_mode_out = (uint8_t)ccounts_countModeCoverage;
         return 1;
     }
-    if (
-        strcmp(count_mode, "cutsite") == 0 ||
-        strcmp(count_mode, "cut") == 0 ||
-        strcmp(count_mode, "cutsites") == 0 ||
-        strcmp(count_mode, "1") == 0)
-    {
-        *count_mode_out = (uint8_t)ccounts_countModeCutSite;
-        return 1;
-    }
-    if (
-        strcmp(count_mode, "fiveprime") == 0 ||
-        strcmp(count_mode, "five_prime") == 0 ||
-        strcmp(count_mode, "5p") == 0 ||
-        strcmp(count_mode, "2") == 0)
-    {
-        *count_mode_out = (uint8_t)ccounts_countModeFivePrime;
-        return 1;
-    }
-    if (
-        strcmp(count_mode, "center") == 0 ||
-        strcmp(count_mode, "centre") == 0 ||
-        strcmp(count_mode, "midpoint") == 0 ||
-        strcmp(count_mode, "3") == 0)
-    {
-        *count_mode_out = (uint8_t)ccounts_countModeCenter;
-        return 1;
-    }
     PyErr_Format(PyExc_ValueError, "unsupported count mode `%s`", count_mode);
     return 0;
+}
+
+static int make_count_options(
+    ccounts_countOptions *count_options,
+    int thread_count,
+    int flag_include,
+    int flag_exclude,
+    uint8_t count_mode_code,
+    int one_read_per_bin,
+    int shift_forward_strand53,
+    int shift_reverse_strand53,
+    int read_length,
+    int extend_bp,
+    int min_mapping_quality,
+    int min_template_length,
+    int max_insert_size,
+    int paired_end_mode,
+    int infer_fragment_length)
+{
+    if (infer_fragment_length != 0)
+    {
+        PyErr_SetString(
+            PyExc_ValueError,
+            "`infer_fragment_length` is not supported by this native counting path");
+        return 0;
+    }
+    memset(count_options, 0, sizeof(ccounts_countOptions));
+    count_options->threadCount = (uint16_t)((thread_count > 0) ? thread_count : 0);
+    count_options->flagInclude = (uint16_t)((flag_include > 0) ? flag_include : 0);
+    count_options->flagExclude = (uint16_t)((flag_exclude > 0) ? flag_exclude : 0);
+    count_options->countMode = count_mode_code;
+    count_options->oneReadPerBin = (uint8_t)(one_read_per_bin != 0);
+    count_options->shiftForwardStrand53 = (int64_t)shift_forward_strand53;
+    count_options->shiftReverseStrand53 = (int64_t)shift_reverse_strand53;
+    count_options->readLength = (int64_t)read_length;
+    count_options->extendBP = (int64_t)extend_bp;
+    count_options->minMappingQuality = (int64_t)min_mapping_quality;
+    count_options->minTemplateLength = (int64_t)min_template_length;
+    count_options->maxInsertSize = (int64_t)max_insert_size;
+    count_options->pairedEndMode = (int64_t)paired_end_mode;
+    return 1;
 }
 
 static PyObject *is_alignment_paired_end(PyObject *self, PyObject *args, PyObject *kwargs)
@@ -525,21 +534,26 @@ static PyObject *count_alignment_region(PyObject *self, PyObject *args, PyObject
     region.start = (uint32_t)start;
     region.end = (uint32_t)end;
     region.intervalSizeBP = (uint32_t)interval_size_bp;
-    memset(&count_options, 0, sizeof(ccounts_countOptions));
-    count_options.threadCount = (uint16_t)((thread_count > 0) ? thread_count : 0);
-    count_options.flagInclude = (uint16_t)((flag_include > 0) ? flag_include : 0);
-    count_options.flagExclude = (uint16_t)((flag_exclude > 0) ? flag_exclude : 0);
-    count_options.countMode = count_mode_code;
-    count_options.oneReadPerBin = (uint8_t)(one_read_per_bin != 0);
-    count_options.shiftForwardStrand53 = (int64_t)shift_forward_strand53;
-    count_options.shiftReverseStrand53 = (int64_t)shift_reverse_strand53;
-    count_options.readLength = (int64_t)read_length;
-    count_options.extendBP = (int64_t)extend_bp;
-    count_options.minMappingQuality = (int64_t)min_mapping_quality;
-    count_options.minTemplateLength = (int64_t)min_template_length;
-    count_options.maxInsertSize = (int64_t)max_insert_size;
-    count_options.pairedEndMode = (int64_t)paired_end_mode;
-    count_options.inferFragmentLength = (int64_t)infer_fragment_length;
+    if (!make_count_options(
+            &count_options,
+            thread_count,
+            flag_include,
+            flag_exclude,
+            count_mode_code,
+            one_read_per_bin,
+            shift_forward_strand53,
+            shift_reverse_strand53,
+            read_length,
+            extend_bp,
+            min_mapping_quality,
+            min_template_length,
+            max_insert_size,
+            paired_end_mode,
+            infer_fragment_length))
+    {
+        Py_DECREF(counts_arr);
+        return NULL;
+    }
 
     Py_BEGIN_ALLOW_THREADS
     result = ccounts_openSource(&source_config, &source_handle);
@@ -667,23 +681,17 @@ static PyObject *count_alignment_intervals(PyObject *self, PyObject *args, PyObj
         "`ends` must be a sequence of integers");
     if (chrom_seq == NULL || start_seq == NULL || end_seq == NULL)
     {
-        Py_XDECREF(chrom_seq);
-        Py_XDECREF(start_seq);
-        Py_XDECREF(end_seq);
-        return NULL;
+        goto fail;
     }
 
     interval_count = PySequence_Fast_GET_SIZE(chrom_seq);
     if (PySequence_Fast_GET_SIZE(start_seq) != interval_count ||
         PySequence_Fast_GET_SIZE(end_seq) != interval_count)
     {
-        Py_DECREF(chrom_seq);
-        Py_DECREF(start_seq);
-        Py_DECREF(end_seq);
         PyErr_SetString(
             PyExc_ValueError,
             "`chromosomes`, `starts`, and `ends` must have the same length");
-        return NULL;
+        goto fail;
     }
 
     count_dims[0] = (npy_intp)interval_count;
@@ -694,39 +702,36 @@ static PyObject *count_alignment_intervals(PyObject *self, PyObject *args, PyObj
         0);
     if (counts_arr == NULL)
     {
-        Py_DECREF(chrom_seq);
-        Py_DECREF(start_seq);
-        Py_DECREF(end_seq);
-        return NULL;
+        goto fail;
+    }
+
+    if (!make_count_options(
+            &count_options,
+            thread_count,
+            flag_include,
+            flag_exclude,
+            count_mode_code,
+            one_read_per_bin,
+            shift_forward_strand53,
+            shift_reverse_strand53,
+            read_length,
+            extend_bp,
+            min_mapping_quality,
+            min_template_length,
+            max_insert_size,
+            paired_end_mode,
+            infer_fragment_length))
+    {
+        goto fail;
     }
 
     source_config = make_source_config(alignment_path);
     result = ccounts_openSource(&source_config, &source_handle);
     if (result.errorCode != 0)
     {
-        Py_DECREF(counts_arr);
-        Py_DECREF(chrom_seq);
-        Py_DECREF(start_seq);
-        Py_DECREF(end_seq);
         raise_native_error(result);
-        return NULL;
+        goto fail;
     }
-
-    memset(&count_options, 0, sizeof(ccounts_countOptions));
-    count_options.threadCount = (uint16_t)((thread_count > 0) ? thread_count : 0);
-    count_options.flagInclude = (uint16_t)((flag_include > 0) ? flag_include : 0);
-    count_options.flagExclude = (uint16_t)((flag_exclude > 0) ? flag_exclude : 0);
-    count_options.countMode = count_mode_code;
-    count_options.oneReadPerBin = (uint8_t)(one_read_per_bin != 0);
-    count_options.shiftForwardStrand53 = (int64_t)shift_forward_strand53;
-    count_options.shiftReverseStrand53 = (int64_t)shift_reverse_strand53;
-    count_options.readLength = (int64_t)read_length;
-    count_options.extendBP = (int64_t)extend_bp;
-    count_options.minMappingQuality = (int64_t)min_mapping_quality;
-    count_options.minTemplateLength = (int64_t)min_template_length;
-    count_options.maxInsertSize = (int64_t)max_insert_size;
-    count_options.pairedEndMode = (int64_t)paired_end_mode;
-    count_options.inferFragmentLength = (int64_t)infer_fragment_length;
     count_data = (float *)PyArray_DATA(counts_arr);
 
     for (interval_index = 0; interval_index < interval_count; ++interval_index)
@@ -741,68 +746,38 @@ static PyObject *count_alignment_intervals(PyObject *self, PyObject *args, PyObj
         chromosome = PyUnicode_AsUTF8(chrom_obj);
         if (chromosome == NULL)
         {
-            ccounts_closeSource(source_handle);
-            Py_DECREF(counts_arr);
-            Py_DECREF(chrom_seq);
-            Py_DECREF(start_seq);
-            Py_DECREF(end_seq);
-            return NULL;
+            goto fail;
         }
         start_val = PyLong_AsUnsignedLongLong(start_obj);
         if (PyErr_Occurred())
         {
-            ccounts_closeSource(source_handle);
-            Py_DECREF(counts_arr);
-            Py_DECREF(chrom_seq);
-            Py_DECREF(start_seq);
-            Py_DECREF(end_seq);
-            return NULL;
+            goto fail;
         }
         end_val = PyLong_AsUnsignedLongLong(end_obj);
         if (PyErr_Occurred())
         {
-            ccounts_closeSource(source_handle);
-            Py_DECREF(counts_arr);
-            Py_DECREF(chrom_seq);
-            Py_DECREF(start_seq);
-            Py_DECREF(end_seq);
-            return NULL;
+            goto fail;
         }
         if (start_val > (unsigned long long)UINT32_MAX)
         {
-            ccounts_closeSource(source_handle);
-            Py_DECREF(counts_arr);
-            Py_DECREF(chrom_seq);
-            Py_DECREF(start_seq);
-            Py_DECREF(end_seq);
             PyErr_SetString(
                 PyExc_ValueError,
                 "interval start exceeds uint32 range");
-            return NULL;
+            goto fail;
         }
         if (end_val <= start_val)
         {
-            ccounts_closeSource(source_handle);
-            Py_DECREF(counts_arr);
-            Py_DECREF(chrom_seq);
-            Py_DECREF(start_seq);
-            Py_DECREF(end_seq);
             PyErr_SetString(
                 PyExc_ValueError,
                 "each interval must satisfy end > start");
-            return NULL;
+            goto fail;
         }
         if (end_val > (unsigned long long)UINT32_MAX)
         {
-            ccounts_closeSource(source_handle);
-            Py_DECREF(counts_arr);
-            Py_DECREF(chrom_seq);
-            Py_DECREF(start_seq);
-            Py_DECREF(end_seq);
             PyErr_SetString(
                 PyExc_ValueError,
                 "interval end exceeds uint32 range");
-            return NULL;
+            goto fail;
         }
 
         region.chromosome = chromosome;
@@ -818,13 +793,8 @@ static PyObject *count_alignment_intervals(PyObject *self, PyObject *args, PyObj
             1U);
         if (result.errorCode != 0)
         {
-            ccounts_closeSource(source_handle);
-            Py_DECREF(counts_arr);
-            Py_DECREF(chrom_seq);
-            Py_DECREF(start_seq);
-            Py_DECREF(end_seq);
             raise_native_error(result);
-            return NULL;
+            goto fail;
         }
     }
 
@@ -833,6 +803,17 @@ static PyObject *count_alignment_intervals(PyObject *self, PyObject *args, PyObj
     Py_DECREF(start_seq);
     Py_DECREF(end_seq);
     return (PyObject *)counts_arr;
+
+fail:
+    if (source_handle != NULL)
+    {
+        ccounts_closeSource(source_handle);
+    }
+    Py_XDECREF(counts_arr);
+    Py_XDECREF(chrom_seq);
+    Py_XDECREF(start_seq);
+    Py_XDECREF(end_seq);
+    return NULL;
 }
 
 static PyMethodDef hts_counts_methods[] = {

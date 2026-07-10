@@ -41,7 +41,6 @@ def test_setup():
     return {
         "chromosomes": chromosomes,
         "chrom_ref_results": chrom_ref_results,
-        "combined_ref_file": str(TEST_DIR / "combined_ref.bed"),
         "matrices": matrices,
         "intervals": intervals,
     }
@@ -50,16 +49,21 @@ def test_setup():
 def _bruteforce_penalized(scores, switch_costs, selection_penalty):
     scores = np.asarray(scores, dtype=float)
     switch_costs = np.asarray(switch_costs, dtype=float)
+    selection_penalty = np.asarray(selection_penalty, dtype=float)
     n = len(scores)
     best_sol = None
     best_val = -np.inf
     best_count = None
     for bits in itertools.product([0, 1], repeat=n):
         sol = np.asarray(bits, dtype=np.uint8)
+        if selection_penalty.ndim == 0:
+            selected_penalty = float(selection_penalty) * np.sum(sol)
+        else:
+            selected_penalty = selection_penalty @ sol
         penalized = (
             scores @ sol
             - np.sum(switch_costs * np.abs(np.diff(sol)))
-            - (selection_penalty * np.sum(sol))
+            - selected_penalty
         )
         if penalized > best_val or (
             np.isclose(penalized, best_val) and np.sum(sol) < best_count
@@ -220,10 +224,13 @@ def test_combine_chrom_results_no_names(test_setup):
         output_file="test_combined.bed",
     )
     assert os.path.exists(combined_outfile)
+    expected_records = []
+    for ref_file in test_setup["chrom_ref_results"].values():
+        expected_records.extend(_load_bed_records(ref_file))
     combined_jaccard = round(
         _interval_jaccard(
             _load_bed_records(combined_outfile),
-            _load_bed_records(test_setup["combined_ref_file"]),
+            expected_records,
         ),
         5,
     )
@@ -419,13 +426,19 @@ def test_exact_dp_matches_bruteforce():
 def test_solve_chrom_exact_soft_budget_modes():
     scores = np.array([0.5, 1.5, 1.4, -0.2, 3.0, 2.8, -0.1, 0.1])
     cases = [
-        (None, None, "unpenalized", 0.0),
-        (0.0, None, "soft_selection_penalty", np.quantile(scores, 1.0)),
-        (0.25, None, "soft_selection_penalty", np.quantile(scores, 0.75)),
-        (1.0, None, "soft_selection_penalty", 0.0),
-        (0.25, 0.6, "manual_selection_penalty", 0.6),
+        (None, None, "unpenalized", 0.0, None),
+        (0.0, None, "soft_selection_penalty", np.quantile(scores, 1.0), 0),
+        (0.25, None, "soft_selection_penalty", np.quantile(scores, 0.75), 2),
+        (1.0, None, "soft_selection_penalty", 0.0, 8),
+        (np.array([0.0, 1.0]), 0.6, "manual_selection_penalty", 0.6, None),
     ]
-    for budget, selection_penalty, budget_mode, expected_penalty in cases:
+    for (
+        budget,
+        selection_penalty,
+        budget_mode,
+        expected_penalty,
+        expected_target_count,
+    ) in cases:
         solution, objective, details = solve_chrom_exact(
             scores,
             budget=budget,
@@ -446,10 +459,77 @@ def test_solve_chrom_exact_soft_budget_modes():
             ),
         )
         if budget is not None and selection_penalty is None:
-            assert details["budget"] == pytest.approx(budget)
-            assert details["budget_target_count"] == int(np.floor(len(scores) * budget))
+            assert details["budget"] == pytest.approx(
+                float(np.mean(np.atleast_1d(budget)))
+            )
+            assert details["budget_target_count"] == expected_target_count
         else:
             assert "budget" not in details
+
+
+@pytest.mark.correctness
+def test_solve_chrom_exact_block_budget_preserves_boundary_switch_cost():
+    scores = np.array([2.0, 2.0, 3.0, 3.0])
+    budget_blocks = np.array([[0.0, 2.0, 0.0], [2.0, 4.0, 1.0]])
+    solution, objective, details = solve_chrom_exact(
+        scores,
+        budget_blocks=budget_blocks,
+        gamma=5.0,
+        return_details=True,
+    )
+    penalty_track = np.array([2.0, 2.0, 0.0, 0.0])
+    brute_sol, brute_val, brute_count = _bruteforce_penalized(
+        scores,
+        build_switch_costs(scores, gamma=5.0),
+        penalty_track,
+    )
+    assert np.array_equal(solution, brute_sol)
+    assert np.array_equal(solution, np.ones(4, dtype=np.uint8))
+    assert np.isclose(details["penalized_objective"], brute_val)
+    assert details["selected_count"] == brute_count
+    assert np.isclose(
+        objective,
+        objective_value(solution, scores, build_switch_costs(scores, gamma=5.0)),
+    )
+    assert details["budget_mode"] == "block_soft_selection_penalty"
+    assert details["budget_block_count"] == 2
+    assert np.array_equal(details["budget_block_starts"], np.array([0, 2]))
+    assert np.array_equal(details["budget_block_ends"], np.array([2, 4]))
+    assert np.allclose(details["budget_block_penalties"], np.array([2.0, 0.0]))
+    with pytest.raises(ValueError, match="finite integers"):
+        solve_chrom_exact(
+            scores,
+            budget_blocks=np.array([[0.0, 2.5, 0.0], [2.5, 4.0, 1.0]]),
+            gamma=5.0,
+            return_details=True,
+        )
+
+    _, _, manual_details = solve_chrom_exact(
+        scores,
+        budget_blocks=np.array([[0.0, 2.0, 2.0], [2.0, 4.0, -1.0]]),
+        gamma=5.0,
+        selection_penalty=2.5,
+        return_details=True,
+    )
+    assert manual_details["budget_mode"] == "manual_selection_penalty"
+    assert manual_details["selection_penalty"] == pytest.approx(2.5)
+    assert "budget" not in manual_details
+
+
+@pytest.mark.correctness
+@pytest.mark.parametrize(("n_loci", "num_null_blocks"), [(10, 4), (3, 4), (1, 4)])
+def test_budget_block_bounds_cover_chromosome(n_loci, num_null_blocks):
+    bounds = ROCCO_IMPL._make_null_blocks(n_loci, num_null_blocks)
+    starts = np.array([start for start, _ in bounds], dtype=int)
+    ends = np.array([end for _, end in bounds], dtype=int)
+    lengths = ends - starts
+
+    assert len(bounds) == min(n_loci, num_null_blocks)
+    assert starts[0] == 0
+    assert ends[-1] == n_loci
+    assert np.array_equal(ends[:-1], starts[1:])
+    assert np.all(lengths > 0)
+    assert int(np.max(lengths) - np.min(lengths)) <= 1
 
 
 @pytest.mark.correctness
@@ -592,6 +672,199 @@ def test_resolve_budgets_clips_final_budgets_to_fixed_range():
 
 
 @pytest.mark.correctness
+def test_resolve_budgets_pools_chrom_block_units(monkeypatch):
+    chrom_cache = {
+        "chr1": {
+            "budget_count_hat": 3.0,
+            "total_count": 20.0,
+            "budget_rate_meta": {
+                "budget_blocks": [
+                    {
+                        "block_id": 0,
+                        "start_idx": 0,
+                        "stop_idx": 5,
+                        "start_bp": 0,
+                        "stop_bp": 250,
+                        "num_loci": 5,
+                        "budget_fraction_hat": 0.1,
+                        "budget_count_hat": 1.0,
+                        "total_count": 10.0,
+                    },
+                    {
+                        "block_id": 1,
+                        "start_idx": 5,
+                        "stop_idx": 10,
+                        "start_bp": 250,
+                        "stop_bp": 500,
+                        "num_loci": 5,
+                        "budget_fraction_hat": 0.2,
+                        "budget_count_hat": 2.0,
+                        "total_count": 10.0,
+                    },
+                ]
+            },
+        },
+        "chr2": {
+            "budget_count_hat": 7.0,
+            "total_count": 20.0,
+            "budget_rate_meta": {
+                "budget_blocks": [
+                    {
+                        "block_id": 0,
+                        "start_idx": 0,
+                        "stop_idx": 4,
+                        "start_bp": 0,
+                        "stop_bp": 200,
+                        "num_loci": 4,
+                        "budget_fraction_hat": 0.3,
+                        "budget_count_hat": 3.0,
+                        "total_count": 10.0,
+                    },
+                    {
+                        "block_id": 1,
+                        "start_idx": 4,
+                        "stop_idx": 8,
+                        "start_bp": 200,
+                        "stop_bp": 400,
+                        "num_loci": 4,
+                        "budget_fraction_hat": 0.4,
+                        "budget_count_hat": 4.0,
+                        "total_count": 10.0,
+                    },
+                ]
+            },
+        },
+    }
+    captured = {}
+
+    def fake_estimate_empirical_bayes_budgets(
+        candidate_counts,
+        total_counts,
+        posterior_quantile,
+    ):
+        captured["candidate_counts"] = dict(candidate_counts)
+        captured["total_counts"] = dict(total_counts)
+        return (
+            {key: 0.01 * (idx + 1) for idx, key in enumerate(candidate_counts)},
+            {"genome_wide_budget": 0.1, "posterior_summary": "fake"},
+        )
+
+    monkeypatch.setattr(
+        ROCCO_IMPL,
+        "estimate_empirical_bayes_budgets",
+        fake_estimate_empirical_bayes_budgets,
+    )
+
+    budgets, meta = ROCCO_IMPL._resolve_budgets(
+        chrom_cache,
+        {
+            "budget_posterior_quantile": 0.01,
+            "budget": None,
+            "scale_chrom_budgets": 1.0,
+        },
+    )
+
+    assert list(captured["candidate_counts"]) == [
+        "chr1:0",
+        "chr1:1",
+        "chr2:0",
+        "chr2:1",
+    ]
+    assert list(captured["candidate_counts"].values()) == [1.0, 2.0, 3.0, 4.0]
+    assert list(captured["total_counts"].values()) == [10.0, 10.0, 10.0, 10.0]
+    assert budgets["chr1"]["mode"] == "block"
+    assert budgets["chr1"]["budget"] == pytest.approx(0.015)
+    assert np.allclose(
+        budgets["chr1"]["block_bounds"],
+        np.array([[0.0, 5.0], [5.0, 10.0]]),
+    )
+    assert np.allclose(budgets["chr2"]["block_budgets"], np.array([0.03, 0.04]))
+    assert np.allclose(
+        ROCCO_IMPL._solver_budget_blocks(budgets["chr1"]),
+        np.array([[0.0, 5.0, 0.01], [5.0, 10.0, 0.02]]),
+    )
+    assert budgets["chr2"]["blocks"][1]["budget"] == pytest.approx(0.04)
+    assert meta["budget_unit_count"] == 4
+
+
+@pytest.mark.correctness
+def test_solve_cached_chromosome_passes_block_budgets(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_solve_chrom_exact(
+        scores,
+        budget=None,
+        gamma=0.25,
+        selection_penalty=None,
+        return_details=False,
+        budget_blocks=None,
+    ):
+        captured["scores"] = np.asarray(scores, dtype=float).copy()
+        captured["budget"] = budget
+        captured["budget_blocks"] = np.asarray(budget_blocks, dtype=float).copy()
+        captured["gamma"] = gamma
+        captured["selection_penalty"] = selection_penalty
+        captured["return_details"] = return_details
+        return np.array([1, 0, 1, 0], dtype=np.uint8), 12.0, {
+            "budget_mode": "block_soft_selection_penalty",
+            "soft_budget_penalty": 1.5,
+            "selected_count": 2,
+        }
+
+    def fake_chrom_solution_to_bed(*args, **kwargs):
+        captured["bed_args"] = args
+        return str(tmp_path / "chr1.bed")
+
+    monkeypatch.setattr(ROCCO_IMPL, "solve_chrom_exact", fake_solve_chrom_exact)
+    monkeypatch.setattr(
+        ROCCO_IMPL,
+        "chrom_solution_to_bed",
+        fake_chrom_solution_to_bed,
+    )
+
+    ROCCO_IMPL._CHROM_SOLVE_PROCESS_STATE = {
+        "chrom_cache": {
+            "chr1": {
+                "scores": np.array([0.0, 1.0, 2.0, 3.0]),
+                "intervals": np.array([0, 50, 100, 150]),
+                "gamma": 2.0,
+            }
+        },
+        "chrom_budgets": {
+            "chr1": {
+                "mode": "block",
+                "budget": 0.15,
+                "block_bounds": np.array([[0.0, 2.0], [2.0, 4.0]]),
+                "block_budgets": np.array([0.1, 0.2]),
+            }
+        },
+        "selection_penalty": None,
+        "min_length_bp": None,
+        "run_id": "test",
+    }
+    try:
+        chrom, objective, meta, solution, outfile = ROCCO_IMPL._solve_cached_chromosome(
+            "chr1"
+        )
+    finally:
+        ROCCO_IMPL._CHROM_SOLVE_PROCESS_STATE = None
+
+    assert chrom == "chr1"
+    assert objective == pytest.approx(12.0)
+    assert meta["budget_mode"] == "block_soft_selection_penalty"
+    assert np.array_equal(solution, np.array([1, 0, 1, 0], dtype=np.uint8))
+    assert outfile == str(tmp_path / "chr1.bed")
+    assert captured["budget"] is None
+    assert captured["gamma"] == pytest.approx(2.0)
+    assert captured["selection_penalty"] is None
+    assert captured["return_details"] is True
+    assert np.allclose(
+        captured["budget_blocks"],
+        np.array([[0.0, 2.0, 0.1], [2.0, 4.0, 0.2]]),
+    )
+
+
+@pytest.mark.correctness
 def test_length_bins_do_not_get_finer_than_100bp():
     lengths = np.arange(50, 275, 25, dtype=np.int64)
     binned, representatives = ROCCO_SCORES._assign_length_bins(lengths, max_bins=24)
@@ -622,9 +895,19 @@ def test_build_chrom_cache_uses_fixed_gamma_and_correlation_length(monkeypatch):
         return 7, {"correlation_length_intervals": 7}
 
     def fake_budget_estimator(centered_matrix, observed_scores, **kwargs):
-        budget_calls.append(kwargs)
+        observed_scores_ = np.asarray(observed_scores, dtype=float)
+        observed_len = int(observed_scores_.shape[0])
+        budget_calls.append(
+            {
+                "centered_shape": np.asarray(centered_matrix).shape,
+                "observed_scores": observed_scores_.copy(),
+                "observed_len": observed_len,
+                "kwargs": kwargs,
+            }
+        )
         return 0.05, {
-            "effective_total_count": float(observed_scores.shape[0]),
+            "budget_count_hat": 0.05 * float(observed_len),
+            "effective_total_count": float(observed_len),
             "dwb_bandwidth": float(kwargs["correlation_length"]),
             "num_null_draws": float(kwargs["num_null_draws"]),
         }
@@ -647,7 +930,7 @@ def test_build_chrom_cache_uses_fixed_gamma_and_correlation_length(monkeypatch):
         "step": 50,
         "round_digits": 5,
         "effective_genome_size": None,
-        "norm_method": "rpkm",
+        "norm_method": "RPKM",
         "min_mapping_score": 0,
         "flag_include": None,
         "flag_exclude": None,
@@ -661,6 +944,7 @@ def test_build_chrom_cache_uses_fixed_gamma_and_correlation_length(monkeypatch):
         "score_prior_df": 5.0,
         "score_precision_floor_ratio": 0.01,
         "budget_null_draws": 4,
+        "num_null_blocks": 4,
         "gamma": 2.5,
         "peak_mode": None,
         "dependence_span": None,
@@ -676,8 +960,51 @@ def test_build_chrom_cache_uses_fixed_gamma_and_correlation_length(monkeypatch):
     assert chrom_cache["chr_big"]["gamma"] == 2.5
     assert chrom_cache["chr_small"]["correlation_length_intervals"] == 7
     assert chrom_cache["chr_big"]["dwb_bandwidth"] == 7
-    assert [call["correlation_length"] for call in budget_calls] == [7, 7]
-    assert [call["step_bp"] for call in budget_calls] == [50, 50]
+    assert [call["observed_len"] for call in budget_calls] == [
+        30,
+        30,
+        30,
+        30,
+        60,
+        60,
+        60,
+        60,
+    ]
+    assert [call["centered_shape"] for call in budget_calls] == [
+        (2, 30),
+        (2, 30),
+        (2, 30),
+        (2, 30),
+        (2, 60),
+        (2, 60),
+        (2, 60),
+        (2, 60),
+    ]
+    assert np.allclose(
+        np.concatenate([call["observed_scores"] for call in budget_calls[:4]]),
+        np.linspace(0.0, 3.0, 120, dtype=float),
+    )
+    assert np.allclose(
+        np.concatenate([call["observed_scores"] for call in budget_calls[4:]]),
+        np.linspace(0.0, 3.0, 240, dtype=float),
+    )
+    assert [call["kwargs"]["correlation_length"] for call in budget_calls] == [7] * 8
+    assert [call["kwargs"]["step_bp"] for call in budget_calls] == [50] * 8
+    assert [call["kwargs"]["random_seed"] for call in budget_calls] == [
+        0,
+        1009,
+        2018,
+        3027,
+        0,
+        1009,
+        2018,
+        3027,
+    ]
+    assert chrom_cache["chr_small"]["budget_rate_meta"]["num_null_blocks"] == 4
+    assert chrom_cache["chr_small"]["budget_rate_meta"]["budget_blocks"][0][
+        "stop_idx"
+    ] == 30
+    assert chrom_cache["chr_big"]["total_count"] == pytest.approx(240.0)
 
 
 @pytest.mark.correctness
@@ -703,8 +1030,10 @@ def test_build_chrom_cache_peak_modes(monkeypatch, peak_mode, expected_summit_ca
         return 5, {"correlation_length_intervals": 5}
 
     def fake_budget_estimator(centered_matrix, observed_scores, **kwargs):
+        observed_len = int(np.asarray(observed_scores).shape[0])
         return 0.05, {
-            "effective_total_count": float(observed_scores.shape[0]),
+            "budget_count_hat": 0.05 * float(observed_len),
+            "effective_total_count": float(observed_len),
             "dwb_bandwidth": 5.0,
             "num_null_draws": float(kwargs["num_null_draws"]),
         }
@@ -732,7 +1061,7 @@ def test_build_chrom_cache_peak_modes(monkeypatch, peak_mode, expected_summit_ca
         "step": 50,
         "round_digits": 5,
         "effective_genome_size": None,
-        "norm_method": "rpkm",
+        "norm_method": "RPKM",
         "min_mapping_score": 0,
         "flag_include": None,
         "flag_exclude": None,
@@ -908,7 +1237,6 @@ def test_raw_count_matrix_uses_native_interval_counter(tmp_path):
 
 
 @pytest.mark.correctness
-@pytest.mark.skipif(not BIGWIG_AVAILABLE, reason="pyBigWig not installed")
 def test_build_chrom_cache_uses_bigwig_scores_directly(monkeypatch):
     direct_budget_calls = []
 
@@ -928,9 +1256,11 @@ def test_build_chrom_cache_uses_bigwig_scores_directly(monkeypatch):
         return 3, {"correlation_length_intervals": 3}
 
     def fake_budget_estimator(scores, **kwargs):
-        direct_budget_calls.append((np.asarray(scores, dtype=float), kwargs))
+        scores_ = np.asarray(scores, dtype=float)
+        direct_budget_calls.append((scores_, kwargs))
         return 0.05, {
-            "effective_total_count": float(len(scores)),
+            "budget_count_hat": 0.05 * float(scores_.shape[0]),
+            "effective_total_count": float(scores_.shape[0]),
             "dwb_bandwidth": float(kwargs["correlation_length"]),
             "num_null_draws": float(kwargs["num_null_draws"]),
         }
@@ -968,6 +1298,7 @@ def test_build_chrom_cache_uses_bigwig_scores_directly(monkeypatch):
         "score_min_effect": None,
         "score_precision_floor_ratio": 0.01,
         "budget_null_draws": 4,
+        "num_null_blocks": 4,
         "gamma": 3.0,
         "peak_mode": None,
         "dependence_span": None,
@@ -979,11 +1310,22 @@ def test_build_chrom_cache_uses_bigwig_scores_directly(monkeypatch):
         args,
     )
 
-    assert len(direct_budget_calls) == 1
-    assert np.allclose(direct_budget_calls[0][0], np.array([0.0, 2.5, 1.5, 0.0]))
-    assert direct_budget_calls[0][1]["correlation_length"] == 3
+    assert len(direct_budget_calls) == 4
+    assert [call[0].shape[0] for call in direct_budget_calls] == [1, 1, 1, 1]
+    assert np.allclose(
+        np.concatenate([call[0] for call in direct_budget_calls]),
+        np.array([0.0, 2.5, 1.5, 0.0]),
+    )
+    assert [call[1]["correlation_length"] for call in direct_budget_calls] == [3] * 4
+    assert [call[1]["random_seed"] for call in direct_budget_calls] == [
+        0,
+        1009,
+        2018,
+        3027,
+    ]
     assert np.allclose(chrom_cache["chr1"]["scores"], np.array([0.0, 2.5, 1.5, 0.0]))
     assert chrom_cache["chr1"]["gamma"] == 3.0
+    assert chrom_cache["chr1"]["budget_rate_meta"]["num_null_blocks"] == 4
 
 
 @pytest.mark.correctness
@@ -1007,6 +1349,7 @@ def test_prepare_args_low_memory_uses_conservative_defaults(monkeypatch):
     assert args["low_memory"] is True
     assert 1 <= int(args["threads"]) <= 4
     assert int(args["budget_null_draws"]) == 16
+    assert int(args["num_null_blocks"]) == 4
 
 
 @pytest.mark.correctness
@@ -1025,6 +1368,7 @@ def test_prepare_args_low_memory_uses_conservative_defaults(monkeypatch):
             ],
             "cannot exceed",
         ),
+        (["--num_null_blocks", "0"], "num_null_blocks"),
         (["-i", "fake.bw", "--peak_mode", "broad"], "BAM inputs"),
     ],
 )
@@ -1090,7 +1434,11 @@ def test_small_end_to_end_subset(test_setup):
 
 @pytest.mark.correctness
 def test_no_input_no_args():
-    result = subprocess.run(["rocco"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    result = subprocess.run(
+        [sys.executable, "-m", "rocco.rocco"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     assert result.returncode == 0
     assert "usage:" in result.stdout.decode()
 
@@ -1109,7 +1457,9 @@ def test_version_flag():
 @pytest.mark.correctness
 def test_no_input_listed():
     result = subprocess.run(
-        ["rocco", "--input_files"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        [sys.executable, "-m", "rocco.rocco", "--input_files"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     assert result.returncode != 0
     assert "usage:" in result.stderr.decode()
@@ -1118,7 +1468,9 @@ def test_no_input_listed():
 @pytest.mark.correctness
 def test_unrecognized_arg():
     result = subprocess.run(
-        ["rocco", "--unrecognized_arg"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        [sys.executable, "-m", "rocco.rocco", "--unrecognized_arg"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     assert result.returncode != 0
     assert "unrecognized" in result.stderr.decode()

@@ -8,14 +8,13 @@ ROCCO: Scores
 import logging
 import multiprocessing
 import os
-from typing import Tuple, Optional
 from collections import OrderedDict
 from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
 import pysam
-from scipy import ndimage, signal, stats
+from scipy import stats
 
 try:
     from . import _hts_counts
@@ -28,10 +27,6 @@ from rocco.readtracks import (
 )
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(module)s.%(funcName)s -  %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -140,15 +135,6 @@ class EmpiricalNull:
             return float(survival)
         return survival
 
-    def evaluate(self, x):
-        x_ = np.asarray(x, dtype=np.float64)
-        idx = np.searchsorted(self.values, x_, side="right")
-        cdf = idx / float(self.size)
-        if x_.ndim == 0:
-            return float(cdf)
-        return cdf
-
-
 def _check_read(
     read: pysam.AlignedSegment, min_mapping_quality: int = 10
 ):
@@ -252,7 +238,6 @@ def raw_count_matrix(
     peak_file: str,
     output_file: str,
     bed_columns: int = 3,
-    overwrite=True,
 ):
     r"""Generate a 'raw' count matrix from BAM files and a ROCCO output peak file.
 
@@ -394,7 +379,6 @@ def score_peaks(
     output_file="scored_peaks.bed",
     seed: int = None,
     proc: int = None,
-    null_stat: Callable[[np.ndarray], float] = _null_stat,
     summit_offsets_file: str | None = None,
 ):
     r"""Score ROCCO peaks and write narrowPeak-like output.
@@ -733,11 +717,6 @@ def get_ecdf(
     return EmpiricalNull(len_avgs)
 
 
-def wrap_run_ecdf(*args):
-    r"""Wrapper for `get_ecdf()` for compliance with `multiprocessing.Pool`"""
-    return get_ecdf(*args)
-
-
 def multi_ecdf(
     bam_files,
     lengths,
@@ -778,7 +757,7 @@ def multi_ecdf(
             )
             for len_ in ecdf_len_dict
         ]
-        results = pool.starmap(wrap_run_ecdf, args)
+        results = pool.starmap(get_ecdf, args)
 
     for idx, result in enumerate(results):
         ecdf_len_dict[uniq_lengths[idx]] = result

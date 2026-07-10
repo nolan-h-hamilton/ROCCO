@@ -14,31 +14,6 @@ static void rocco_swap_double(double *left, double *right)
     *right = temp;
 }
 
-/* partition an array of doubles around a pivot (for quick-select/sort) */
-static size_t rocco_partition_f64(
-    double *values,
-    size_t left,
-    size_t right,
-    size_t pivot_index)
-{
-    double pivot_value = values[pivot_index];
-    size_t store_index = left;
-    size_t idx = 0;
-
-    rocco_swap_double(&values[pivot_index], &values[right]);
-    for (idx = left; idx < right; ++idx)
-    {
-        if (values[idx] < pivot_value)
-        {
-            /* move to the left partition */
-            rocco_swap_double(&values[store_index], &values[idx]);
-            ++store_index;
-        }
-    }
-    rocco_swap_double(&values[right], &values[store_index]);
-    return store_index;
-}
-
 /* three-way partition an array of doubles around a pivot (for quick-select/sort, robustness to equal values) */
 static void rocco_partition3_f64(
     double *values,
@@ -142,36 +117,6 @@ static double rocco_median_f64(double *values, size_t value_count)
     upper = rocco_select_kth_f64(values, 0U, value_count - 1U, upper_index);
     lower = rocco_select_kth_f64(values, 0U, upper_index - 1U, upper_index - 1U);
     return 0.5 * (lower + upper);
-}
-
-static double rocco_small_median_f64(double *values, size_t value_count)
-{
-    // insertion for small array medians (stable/fast relative to qselect)
-    size_t idx = 0;
-    size_t inner = 0;
-    double key = 0.0;
-
-    if (value_count == 0U)
-    {
-        return 0.0;
-    }
-    for (idx = 1U; idx < value_count; ++idx)
-    {
-        key = values[idx];
-        inner = idx;
-        while (inner > 0U && values[inner - 1U] > key)
-        {
-            values[inner] = values[inner - 1U];
-            --inner;
-        }
-        values[inner] = key;
-    }
-
-    if ((value_count & 1U) == 1U)
-    {
-        return values[value_count / 2U];
-    }
-    return 0.5 * (values[(value_count / 2U) - 1U] + values[value_count / 2U]);
 }
 
 static double rocco_robust_scale_f64(double *work_buffer, size_t value_count)
