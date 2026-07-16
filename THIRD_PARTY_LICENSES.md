@@ -20,7 +20,7 @@ The following third-party components are included:
     or CC0-derived in the upstream license text
 
 - Consenrich adaptations
-  - source path: `rocco/native/ccounts_backend.c`, `rocco/native/ccounts_backend.h`, `rocco/native/baseline_backend.c`, `rocco/native/baseline_backend.h`, `rocco/_baseline.c`, `rocco/inference.py`
+  - source path: `rocco/native/ccounts_backend.c`, `rocco/native/ccounts_backend.h`, `rocco/inference.py`
   - upstream project license file: [Consenrich LICENSE](https://github.com/nolan-h-hamilton/Consenrich/blob/main/LICENSE)
   - license summary: MIT
 
@@ -30,4 +30,3 @@ Please note:
 - Bundled third-party code keeps its original licenses
 - Source and binary redistributions should preserve upstream copyright notices,
   license terms, and disclaimers
-

@@ -8,11 +8,14 @@ from .dp import (
     solve_chrom_exact,
     solve_penalized_chain,
 )
+from .dependence import (
+    choose_dependence_span,
+    estimate_dependence_radius_for_window,
+)
 from .inference import (
     candidate_mask_from_wls,
     estimate_budget_nonnull_fraction_from_score_track,
     estimate_budget_nonnull_fraction_from_wild_bootstrap_null,
-    estimate_correlation_length,
     estimate_empirical_bayes_budgets,
     fit_beta_prior_mle,
     score_loci_wls,
@@ -45,6 +48,7 @@ _ROCCO_EXPORTS = {
 }
 _SUBMODULES = {
     "constants",
+    "dependence",
     "dp",
     "inference",
     "readtracks",
@@ -60,11 +64,12 @@ __all__ = [
     "candidate_mask_from_wls",
     "check_type_bam_files",
     "chrom_solution_to_bed",
+    "choose_dependence_span",
     "combine_chrom_results",
     "cscores_quantiles",
     "estimate_budget_nonnull_fraction_from_score_track",
     "estimate_budget_nonnull_fraction_from_wild_bootstrap_null",
-    "estimate_correlation_length",
+    "estimate_dependence_radius_for_window",
     "estimate_empirical_bayes_budgets",
     "fit_beta_prior_mle",
     "generate_chrom_matrix",
@@ -95,6 +100,7 @@ def __getattr__(name):
         globals()[name] = value
         for module_name in (
             "constants",
+            "dependence",
             "dp",
             "inference",
             "readtracks",
@@ -112,6 +118,13 @@ def __dir__():
     return sorted(__all__)
 
 
-for _module_name in ("constants", "dp", "inference", "readtracks", "scores"):
+for _module_name in (
+    "constants",
+    "dependence",
+    "dp",
+    "inference",
+    "readtracks",
+    "scores",
+):
     globals().pop(_module_name, None)
 del _module_name

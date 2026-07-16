@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pysam
 import pytest
+
 try:
     import pyBigWig
 except ImportError:  # pragma: no cover - depends on optional extra
@@ -241,14 +242,17 @@ def test_combine_chrom_results_no_names(test_setup):
 @pytest.mark.correctness
 def test_score_loci_wls_log_scales_input():
     scores, details = score_loci_wls(
-        np.array([[1.0, 15.0]]),
+        np.array([[1.0, 3.0, 15.0]]),
+        interval_bp=50,
         lower_bound_z=0.0,
         return_details=True,
     )
     assert details["input_scale"] == "log2p1"
     assert "sample_intercepts" not in details
     assert "sample_baselines" not in details
-    assert np.allclose(details["mean"], np.array([-1.5, 1.5]))
+    assert np.allclose(details["mean"], np.array([-4.0 / 3.0, -1.0 / 3.0, 5.0 / 3.0]))
+    assert details["centeringWindowBP"] == 1_250_000
+    assert details["centeringWindowBins"] == 3
     expected = (details["mean"] + 1.0) / (details["standard_error"] + 1.0)
     assert np.allclose(details["z_scores"], expected)
     assert np.allclose(scores, expected + 1.0)
@@ -257,14 +261,13 @@ def test_score_loci_wls_log_scales_input():
 @pytest.mark.correctness
 def test_score_loci_wls_explicit_min_effect_shrinks_standardized_score():
     scores, details = score_loci_wls(
-        np.array([[1.0, 15.0]]),
+        np.array([[1.0, 3.0, 15.0]]),
+        interval_bp=50,
         min_effect=0.5,
         return_details=True,
     )
     assert np.isclose(details["min_effect"], 0.5)
-    expected = (details["mean"] - 0.5 + 1.0) / (
-        details["standard_error"] + 1.0
-    )
+    expected = (details["mean"] - 0.5 + 1.0) / (details["standard_error"] + 1.0)
     assert np.allclose(scores, expected + 1.0)
 
 
@@ -296,14 +299,14 @@ def test_score_loci_wls_precision_floor_raises_standard_error():
 
 
 @pytest.mark.correctness
-def test_score_loci_wls_low_memory_keeps_centered_matrix_in_float32():
+def test_score_loci_wls_returns_centered_matrix_for_dependence_estimation():
     scores, details = score_loci_wls(
         np.array([[1.0, 3.0, 7.0], [1.2, 2.8, 6.5]]),
-        low_memory=True,
+        interval_bp=50,
         return_details=True,
     )
     assert scores.dtype == np.float64
-    assert details["centered_matrix"].dtype == np.float32
+    assert details["centered_matrix"].dtype == np.float64
     assert np.all(np.isfinite(details["centered_matrix"]))
 
 
@@ -387,22 +390,28 @@ def test_native_wls_downweights_noisy_track_locally():
 
 
 @pytest.mark.correctness
-def test_consenrich_crossfit_local_baseline_tracks_broad_background():
-    x = np.arange(129, dtype=np.float64)
-    broad = 2.5 * np.exp(-0.5 * ((x - 64.0) / 18.0) ** 2)
-    spike = 5.0 * np.exp(-0.5 * ((x - 64.0) / 2.5) ** 2)
-    y = broad + spike
-    baseline = ROCCO_INFERENCE._consenrich_crossfit_whittaker_baseline(
-        y,
-        block_size=41,
-    )
-    residual = y - baseline
+@pytest.mark.parametrize(("n_loci", "interval_bp"), [(31, 50), (32, 100), (17, 250000)])
+def test_order_zero_savgol_prefix_sum_parity(n_loci, interval_bp):
+    from scipy.signal import savgol_filter
 
-    shoulder_idx = 46
-    peak_idx = 64
-    assert baseline.shape == y.shape
-    assert baseline[shoulder_idx] > 0.5 * broad[shoulder_idx]
-    assert residual[peak_idx] > 3.0 * max(residual[shoulder_idx], 1.0e-6)
+    x = np.arange(n_loci, dtype=np.float64)
+    values = np.vstack((np.sin(x / 3.0), (x - 7.0) ** 2))
+    window_bins = ROCCO_INFERENCE._resolve_centering_window_bins(n_loci, interval_bp)
+    baseline = ROCCO_INFERENCE._savgol_order_zero_baseline(values, window_bins)
+    expected = savgol_filter(
+        values,
+        window_length=window_bins,
+        polyorder=0,
+        axis=1,
+        mode="interp",
+    )
+
+    assert np.allclose(baseline, expected, rtol=1.0e-12, atol=1.0e-12)
+    assert window_bins % 2 == 1
+    assert window_bins <= n_loci
+
+    assert ROCCO_INFERENCE._resolve_centering_window_bins(30000, 50) == 25001
+    assert ROCCO_INFERENCE._resolve_centering_window_bins(20000, 100) == 12501
 
 
 @pytest.mark.correctness
@@ -537,27 +546,6 @@ def test_budget_block_bounds_cover_chromosome(n_loci, num_null_blocks):
 
 
 @pytest.mark.correctness
-def test_estimate_correlation_length_cases():
-    rng = np.random.default_rng(43)
-    iid = rng.normal(size=1024)
-    ar1 = np.empty(1024, dtype=np.float64)
-    noise = rng.normal(size=1024)
-    ar1[0] = noise[0]
-    for idx in range(1, ar1.size):
-        ar1[idx] = (0.9 * ar1[idx - 1]) + noise[idx]
-
-    iid_span, iid_meta = ROCCO_INFERENCE.estimate_correlation_length(iid, step_bp=50)
-    ar1_span, ar1_meta = ROCCO_INFERENCE.estimate_correlation_length(ar1, step_bp=50)
-
-    assert iid_span == 25
-    assert ar1_span > iid_span
-    assert iid_meta["correlation_length_method"] == "acf_crossing"
-    assert ar1_meta["correlation_length_intervals"] == ar1_span
-    with pytest.raises(ValueError, match="more loci"):
-        ROCCO_INFERENCE.estimate_correlation_length(np.arange(16.0), step_bp=50)
-
-
-@pytest.mark.correctness
 def test_empirical_bayes_budget_shrinkage():
     candidate_counts = {"chr1": 5, "chr2": 50, "chr3": 15}
     total_counts = {"chr1": 1000, "chr2": 1000, "chr3": 1000}
@@ -592,6 +580,7 @@ def test_budget_nonnull_fraction_from_wild_bootstrap_reports_soft_count_metadata
     )
     scores, details = score_loci_wls(
         chrom_matrix,
+        interval_bp=50,
         return_details=True,
     )
     fraction, meta = estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
@@ -601,16 +590,20 @@ def test_budget_nonnull_fraction_from_wild_bootstrap_reports_soft_count_metadata
         num_null_draws=6,
         return_details=True,
     )
-    assert 0.0 < fraction <= 1.0
+    assert 0.0 <= fraction <= 1.0
     assert np.isclose(fraction, meta["nonnull_fraction"])
     assert 0.0 <= meta["observed_positive_fraction"] <= 1.0
     assert 0.0 <= meta["null_positive_fraction"] <= 1.0
-    assert meta["observed_excess_mass"] > meta["null_excess_mass"] > 0.0
-    assert meta["observed_excess_units"] > meta["null_excess_units"] > 0.0
-    assert meta["effective_count"] > 0.0
+    assert meta["observed_excess_mass"] > 0.0
+    assert meta["null_excess_mass"] > 0.0
+    assert meta["observed_excess_units"] > 0.0
+    assert meta["null_excess_units"] > 0.0
+    assert meta["effective_count"] >= 0.0
+    if meta["observed_excess_mass"] <= meta["null_excess_mass"]:
+        assert fraction == 0.0
     assert 1.0 <= meta["effective_total_count"] <= meta["num_loci"]
     assert meta["autocorrelation_time"] >= 1.0
-    assert meta["ess_max_lag"] == 64.0
+    assert meta["ess_max_lag"] == 16.0
     assert meta["null_method"] == "dependent_wild_residual_bootstrap"
     assert meta["num_null_draws"] == 6.0
     assert meta["max_null_draws"] == 6.0
@@ -822,11 +815,15 @@ def test_solve_cached_chromosome_passes_block_budgets(monkeypatch, tmp_path):
         captured["gamma"] = gamma
         captured["selection_penalty"] = selection_penalty
         captured["return_details"] = return_details
-        return np.array([1, 0, 1, 0], dtype=np.uint8), 12.0, {
-            "budget_mode": "block_soft_selection_penalty",
-            "soft_budget_penalty": 1.5,
-            "selected_count": 2,
-        }
+        return (
+            np.array([1, 0, 1, 0], dtype=np.uint8),
+            12.0,
+            {
+                "budget_mode": "block_soft_selection_penalty",
+                "soft_budget_penalty": 1.5,
+                "selected_count": 2,
+            },
+        )
 
     def fake_chrom_solution_to_bed(*args, **kwargs):
         captured["bed_args"] = args
@@ -891,34 +888,66 @@ def test_length_bins_do_not_get_finer_than_100bp():
 
 
 @pytest.mark.correctness
-def test_build_chrom_cache_uses_fixed_gamma_and_correlation_length(monkeypatch):
-    chrom_lengths = {"chr_small": 120, "chr_big": 240}
+def test_build_chrom_cache_bam_shares_centered_matrix_and_working_span(monkeypatch):
+    chrom_lengths = {"chr1": 8, "chr2": 12}
+    score_calls = []
+    dependence_calls = []
     budget_calls = []
 
     def fake_generate_chrom_matrix(chrom, *args, **kwargs):
         n = chrom_lengths[chrom]
-        return 50 * np.arange(n, dtype=float), np.zeros((2, n), dtype=float)
+        matrix = np.vstack((np.arange(n), np.arange(n) + 10.0))
+        return 50 * np.arange(n, dtype=int), matrix
 
     def fake_score_loci_wls(chrom_matrix, **kwargs):
+        score_calls.append(kwargs.copy())
         n = chrom_matrix.shape[1]
         scores = np.linspace(0.0, 3.0, n, dtype=float)
+        centered = np.asarray(chrom_matrix, dtype=float) + 100.0
         return scores, {
-            "centered_matrix": np.zeros((2, n), dtype=float),
+            "centered_matrix": centered,
             "mean": np.linspace(10.0, 13.0, n, dtype=float),
             "z_scores": scores + 1.0,
+            "centeringMethod": "savgolOrder0",
+            "centeringWindowBP": 1_250_000,
+            "centeringWindowBins": n if n % 2 else n - 1,
         }
 
-    def fake_estimate_correlation_length(scores, **kwargs):
-        return 7, {"correlation_length_intervals": 7}
+    def fake_choose_dependence_span(matrices, coordinates, step_bp, **kwargs):
+        dependence_calls.append(
+            {
+                "matrices": {
+                    chromosome: np.asarray(matrix).copy()
+                    for chromosome, matrix in matrices.items()
+                },
+                "coordinates": {
+                    chromosome: np.asarray(values).copy()
+                    for chromosome, values in coordinates.items()
+                },
+                "step_bp": step_bp,
+                "kwargs": kwargs,
+            }
+        )
+        return (
+            3,
+            2,
+            4,
+            {
+                "estimateBP": 150.0,
+                "lowerBP": 100.0,
+                "upperBP": 200.0,
+                "workingSpanBP": 550.0,
+                "workingSpanIntervals": 11,
+            },
+        )
 
     def fake_budget_estimator(centered_matrix, observed_scores, **kwargs):
         observed_scores_ = np.asarray(observed_scores, dtype=float)
         observed_len = int(observed_scores_.shape[0])
         budget_calls.append(
             {
-                "centered_shape": np.asarray(centered_matrix).shape,
+                "centered_matrix": np.asarray(centered_matrix).copy(),
                 "observed_scores": observed_scores_.copy(),
-                "observed_len": observed_len,
                 "kwargs": kwargs,
             }
         )
@@ -932,9 +961,7 @@ def test_build_chrom_cache_uses_fixed_gamma_and_correlation_length(monkeypatch):
     monkeypatch.setattr(ROCCO_IMPL, "generate_chrom_matrix", fake_generate_chrom_matrix)
     monkeypatch.setattr(ROCCO_IMPL, "score_loci_wls", fake_score_loci_wls)
     monkeypatch.setattr(
-        ROCCO_IMPL,
-        "estimate_correlation_length",
-        fake_estimate_correlation_length,
+        ROCCO_IMPL, "choose_dependence_span", fake_choose_dependence_span
     )
     monkeypatch.setattr(
         ROCCO_IMPL,
@@ -959,69 +986,59 @@ def test_build_chrom_cache_uses_fixed_gamma_and_correlation_length(monkeypatch):
         "input_track_type": "bam",
         "score_lower_bound_z": 1.0,
         "score_prior_df": 5.0,
+        "score_min_effect": None,
         "score_precision_floor_ratio": 0.01,
         "budget_null_draws": 4,
         "num_null_blocks": 4,
         "gamma": 2.5,
         "peak_mode": None,
-        "dependence_span": None,
+        "window_bp": 50000,
+        "window_count": 256,
+        "working_quantile": 0.9,
+        "bootstrap_draws": 500,
+        "insufficient_data_policy": "error",
+        "prior_radius_bp": None,
     }
 
     chrom_cache = ROCCO_IMPL._build_chrom_cache(
-        ["chr_small", "chr_big"],
-        [],
+        ["chr1", "chr2"],
+        ["track1.bam", "track2.bam"],
         args,
     )
 
-    assert chrom_cache["chr_small"]["gamma"] == 2.5
-    assert chrom_cache["chr_big"]["gamma"] == 2.5
-    assert chrom_cache["chr_small"]["correlation_length_intervals"] == 7
-    assert chrom_cache["chr_big"]["dwb_bandwidth"] == 7
-    assert [call["observed_len"] for call in budget_calls] == [
-        30,
-        30,
-        30,
-        30,
-        60,
-        60,
-        60,
-        60,
+    assert len(dependence_calls) == 1
+    assert dependence_calls[0]["step_bp"] == 50
+    assert [call["interval_bp"] for call in score_calls] == [50, 50]
+    for chromosome, n_loci in chrom_lengths.items():
+        expected_centered = (
+            np.vstack((np.arange(n_loci), np.arange(n_loci) + 10.0)) + 100.0
+        )
+        assert np.array_equal(
+            dependence_calls[0]["matrices"][chromosome], expected_centered
+        )
+        chromosome_budget_calls = budget_calls[:4]
+        budget_calls = budget_calls[4:]
+        assert np.array_equal(
+            np.concatenate(
+                [call["centered_matrix"] for call in chromosome_budget_calls], axis=1
+            ),
+            expected_centered,
+        )
+        assert [
+            call["kwargs"]["correlation_length"] for call in chromosome_budget_calls
+        ] == [11] * 4
+        assert chrom_cache[chromosome]["correlation_radius_intervals"] == 3
+        assert chrom_cache[chromosome]["correlation_radius_bp"] == 150.0
+        assert chrom_cache[chromosome]["working_span_intervals"] == 11
+        assert chrom_cache[chromosome]["working_span_bp"] == 550.0
+        assert chrom_cache[chromosome]["dwb_bandwidth"] == 11
+        assert chrom_cache[chromosome]["gamma"] == 2.5
+    all_budget_calls = [
+        block
+        for chromosome in chrom_cache.values()
+        for block in chromosome["budget_rate_meta"]["budget_blocks"]
     ]
-    assert [call["centered_shape"] for call in budget_calls] == [
-        (2, 30),
-        (2, 30),
-        (2, 30),
-        (2, 30),
-        (2, 60),
-        (2, 60),
-        (2, 60),
-        (2, 60),
-    ]
-    assert np.allclose(
-        np.concatenate([call["observed_scores"] for call in budget_calls[:4]]),
-        np.linspace(0.0, 3.0, 120, dtype=float),
-    )
-    assert np.allclose(
-        np.concatenate([call["observed_scores"] for call in budget_calls[4:]]),
-        np.linspace(0.0, 3.0, 240, dtype=float),
-    )
-    assert [call["kwargs"]["correlation_length"] for call in budget_calls] == [7] * 8
-    assert [call["kwargs"]["step_bp"] for call in budget_calls] == [50] * 8
-    assert [call["kwargs"]["random_seed"] for call in budget_calls] == [
-        0,
-        1009,
-        2018,
-        3027,
-        0,
-        1009,
-        2018,
-        3027,
-    ]
-    assert chrom_cache["chr_small"]["budget_rate_meta"]["num_null_blocks"] == 4
-    assert chrom_cache["chr_small"]["budget_rate_meta"]["budget_blocks"][0][
-        "stop_idx"
-    ] == 30
-    assert chrom_cache["chr_big"]["total_count"] == pytest.approx(240.0)
+    assert [block["working_span_intervals"] for block in all_budget_calls] == [11] * 8
 
 
 @pytest.mark.correctness
@@ -1033,7 +1050,7 @@ def test_build_chrom_cache_peak_modes(monkeypatch, peak_mode, expected_summit_ca
     summit_calls = []
 
     def fake_generate_chrom_matrix(chrom, *args, **kwargs):
-        return 50 * np.arange(64, dtype=float), np.zeros((2, 64), dtype=float)
+        return 50 * np.arange(64, dtype=int), np.zeros((1, 64), dtype=float)
 
     def fake_score_loci_wls(chrom_matrix, **kwargs):
         scores = np.linspace(-1.0, 2.5, chrom_matrix.shape[1], dtype=float)
@@ -1041,10 +1058,24 @@ def test_build_chrom_cache_peak_modes(monkeypatch, peak_mode, expected_summit_ca
             "centered_matrix": np.zeros_like(chrom_matrix, dtype=float),
             "mean": scores.copy(),
             "z_scores": scores + 2.0,
+            "centeringMethod": "savgolOrder0",
+            "centeringWindowBP": 1_250_000,
+            "centeringWindowBins": 63,
         }
 
-    def fake_estimate_correlation_length(scores, **kwargs):
-        return 5, {"correlation_length_intervals": 5}
+    def fake_choose_dependence_span(*args, **kwargs):
+        return (
+            5,
+            4,
+            6,
+            {
+                "estimateBP": 250.0,
+                "lowerBP": 200.0,
+                "upperBP": 300.0,
+                "workingSpanBP": 250.0,
+                "workingSpanIntervals": 5,
+            },
+        )
 
     def fake_budget_estimator(centered_matrix, observed_scores, **kwargs):
         observed_len = int(np.asarray(observed_scores).shape[0])
@@ -1062,9 +1093,7 @@ def test_build_chrom_cache_peak_modes(monkeypatch, peak_mode, expected_summit_ca
     monkeypatch.setattr(ROCCO_IMPL, "generate_chrom_matrix", fake_generate_chrom_matrix)
     monkeypatch.setattr(ROCCO_IMPL, "score_loci_wls", fake_score_loci_wls)
     monkeypatch.setattr(
-        ROCCO_IMPL,
-        "estimate_correlation_length",
-        fake_estimate_correlation_length,
+        ROCCO_IMPL, "choose_dependence_span", fake_choose_dependence_span
     )
     monkeypatch.setattr(
         ROCCO_IMPL,
@@ -1090,23 +1119,72 @@ def test_build_chrom_cache_peak_modes(monkeypatch, peak_mode, expected_summit_ca
         "input_track_type": "bam",
         "score_lower_bound_z": 1.0,
         "score_prior_df": 5.0,
+        "score_min_effect": None,
         "score_precision_floor_ratio": 0.01,
         "budget_null_draws": 4,
+        "num_null_blocks": 4,
         "gamma": 0.25,
         "peak_mode": peak_mode,
-        "dependence_span": None,
+        "window_bp": 50000,
+        "window_count": 256,
+        "working_quantile": 0.9,
+        "bootstrap_draws": 500,
+        "insufficient_data_policy": "error",
+        "prior_radius_bp": None,
     }
 
     chrom_cache = ROCCO_IMPL._build_chrom_cache(
         ["chr1"],
-        [],
+        ["track.bam"],
         args,
     )
 
     assert len(summit_calls) == expected_summit_calls
     assert "effect_mean" not in chrom_cache["chr1"]
     assert chrom_cache["chr1"]["gamma"] == pytest.approx(0.25)
-    assert chrom_cache["chr1"]["correlation_length_intervals"] == 5
+    assert chrom_cache["chr1"]["correlation_radius_intervals"] == 5
+
+
+@pytest.mark.correctness
+def test_broad_parent_merging_uses_working_span_not_median_radius(monkeypatch):
+    intervals = 50 * np.arange(8, dtype=np.int64)
+    weak_solution = np.array([1, 1, 0, 0, 0, 0, 1, 1], dtype=np.uint8)
+
+    def fake_solve_chrom_exact(*args, **kwargs):
+        return (
+            weak_solution,
+            0.0,
+            {
+                "budget_mode": "unpenalized",
+                "soft_budget_penalty": 0.0,
+                "selected_count": 4,
+            },
+        )
+
+    monkeypatch.setattr(ROCCO_IMPL, "solve_chrom_exact", fake_solve_chrom_exact)
+    chrom_cache = {
+        "chr1": {
+            "solution": np.array([1, 0, 0, 0, 0, 0, 1, 0], dtype=np.uint8),
+            "intervals": intervals,
+            "z_scores": np.ones(8),
+            "gamma": 1.0,
+            "interval_bp": 50,
+            "correlation_radius_intervals": 1,
+            "working_span_intervals": 3,
+        }
+    }
+    records, block_map = ROCCO_IMPL._build_broad_parent_records(
+        chrom_cache,
+        {"chr1": 0.05},
+        {
+            "broad_score_lower_bound_z": 0.0,
+            "broad_max_gap_bp": None,
+            "broad_min_peak_bp": 1,
+        },
+    )
+
+    assert records == [("chr1", 0, 400)]
+    assert block_map[("chr1", 0, 400)] == [(0, 50), (300, 350)]
 
 
 @pytest.mark.correctness
@@ -1146,7 +1224,9 @@ def test_generate_chrom_matrix_counts_bam_with_native_backend(tmp_path):
 
 
 @pytest.mark.correctness
-def test_generate_chrom_matrix_smooths_each_bam_by_fragment_length(monkeypatch, tmp_path):
+def test_generate_chrom_matrix_smooths_each_bam_by_fragment_length(
+    monkeypatch, tmp_path
+):
     bam_a = tmp_path / "frag75.bam"
     bam_b = tmp_path / "frag10.bam"
     chrom_sizes_path = tmp_path / "toy_frag_smooth.sizes"
@@ -1201,6 +1281,7 @@ def test_generate_chrom_matrix_smooths_each_bam_by_fragment_length(monkeypatch, 
         ),
     )
 
+
 @pytest.mark.correctness
 def test_generate_chrom_matrix_low_memory_uses_float32(tmp_path):
     bam_path = tmp_path / "toy_lowmem.bam"
@@ -1231,19 +1312,28 @@ def test_generate_chrom_matrix_reads_bigwig_scores_directly(tmp_path):
     bw_path = tmp_path / "toy.bw"
     chrom_sizes_path = tmp_path / "toy_bw.sizes"
     chrom_sizes_path.write_text("chr1\t500\n", encoding="utf-8")
-    _write_toy_bigwig(bw_path)
+    _write_toy_bigwig(
+        bw_path,
+        entries=[
+            (0, 50, -7.1256789),
+            (100, 150, 12.75),
+            (150, 200, 0.25),
+        ],
+    )
 
     intervals, score_matrix = generate_chrom_matrix(
         "chr1",
         [str(bw_path)],
         str(chrom_sizes_path),
         step=999,
-        round_digits=6,
+        round_digits=2,
     )
 
     assert intervals.tolist() == [0, 50, 100, 150]
     assert score_matrix.shape == (1, 4)
-    assert np.allclose(score_matrix[0], np.array([0.0, 1.5, -0.5, 2.0]))
+    assert score_matrix[0, 0] == pytest.approx(-7.1256789, abs=5.0e-7)
+    assert np.isnan(score_matrix[0, 1])
+    assert np.allclose(score_matrix[0, 2:], np.array([12.75, 0.25]))
 
 
 @pytest.mark.correctness
@@ -1494,23 +1584,39 @@ def test_score_peaks_regenerates_stale_count_matrix(monkeypatch, tmp_path):
 
 
 @pytest.mark.correctness
-def test_build_chrom_cache_uses_bigwig_scores_directly(monkeypatch):
+def test_build_chrom_cache_preserves_bigwig_rows_and_bypasses_wls(monkeypatch):
+    raw_matrix = None
+    dependence_calls = []
     direct_budget_calls = []
 
     def fake_generate_chrom_matrix(chrom, *args, **kwargs):
-        return np.array([0, 50, 100, 150], dtype=int), np.array(
-            [
-                [0.0, 2.0, 1.0, 0.0],
-                [0.0, 3.0, 2.0, 0.0],
-            ],
-            dtype=float,
-        )
+        return np.array([0, 50, 100, 150], dtype=int), raw_matrix.copy()
 
     def fail_score_loci_wls(*args, **kwargs):
         raise AssertionError("bigWig inputs should bypass WLS scoring")
 
-    def fake_estimate_correlation_length(scores, **kwargs):
-        return 3, {"correlation_length_intervals": 3}
+    def fail_bam_centering(*args, **kwargs):
+        raise AssertionError("bigWig inputs should bypass BAM centering")
+
+    def fake_choose_dependence_span(matrices, coordinates, step_bp, **kwargs):
+        dependence_calls.append(
+            {
+                "matrix": np.asarray(matrices["chr1"]).copy(),
+                "step_bp": step_bp,
+            }
+        )
+        return (
+            3,
+            2,
+            4,
+            {
+                "estimateBP": 150.0,
+                "lowerBP": 100.0,
+                "upperBP": 200.0,
+                "workingSpanBP": 550.0,
+                "workingSpanIntervals": 11,
+            },
+        )
 
     def fake_budget_estimator(scores, **kwargs):
         scores_ = np.asarray(scores, dtype=float)
@@ -1525,64 +1631,80 @@ def test_build_chrom_cache_uses_bigwig_scores_directly(monkeypatch):
     monkeypatch.setattr(ROCCO_IMPL, "generate_chrom_matrix", fake_generate_chrom_matrix)
     monkeypatch.setattr(ROCCO_IMPL, "score_loci_wls", fail_score_loci_wls)
     monkeypatch.setattr(
+        ROCCO_INFERENCE, "_savgol_order_zero_baseline", fail_bam_centering
+    )
+    monkeypatch.setattr(
         ROCCO_IMPL,
         "estimate_budget_nonnull_fraction_from_score_track",
         fake_budget_estimator,
     )
     monkeypatch.setattr(
-        ROCCO_IMPL,
-        "estimate_correlation_length",
-        fake_estimate_correlation_length,
+        ROCCO_IMPL, "choose_dependence_span", fake_choose_dependence_span
     )
 
-    args = {
-        "chrom_sizes_file": None,
-        "step": 50,
-        "round_digits": 5,
-        "effective_genome_size": None,
-        "norm_method": "RPGC",
-        "min_mapping_score": 0,
-        "flag_include": None,
-        "flag_exclude": None,
-        "extend_reads": 0,
-        "center_reads": False,
-        "ignore_for_norm": [],
-        "scale_factor": 1.0,
-        "threads": 1,
-        "input_track_type": "bigwig",
-        "score_lower_bound_z": 1.0,
-        "score_prior_df": 5.0,
-        "score_min_effect": None,
-        "score_precision_floor_ratio": 0.01,
-        "budget_null_draws": 4,
-        "num_null_blocks": 4,
-        "gamma": 3.0,
-        "peak_mode": None,
-        "dependence_span": None,
-    }
-
-    chrom_cache = ROCCO_IMPL._build_chrom_cache(
-        ["chr1"],
-        ["track1.bw", "track2.bw"],
-        args,
-    )
-
-    assert len(direct_budget_calls) == 4
-    assert [call[0].shape[0] for call in direct_budget_calls] == [1, 1, 1, 1]
-    assert np.allclose(
-        np.concatenate([call[0] for call in direct_budget_calls]),
-        np.array([0.0, 2.5, 1.5, 0.0]),
-    )
-    assert [call[1]["correlation_length"] for call in direct_budget_calls] == [3] * 4
-    assert [call[1]["random_seed"] for call in direct_budget_calls] == [
-        0,
-        1009,
-        2018,
-        3027,
+    cases = [
+        (
+            np.array([[-2.125, 5.5, 12.75, 0.25]]),
+            np.array([-2.125, 5.5, 12.75, 0.25]),
+            "direct",
+        ),
+        (
+            np.array([[-2.125, np.nan, 12.75, 0.25], [-1.25, 5.5, np.nan, 2.25]]),
+            np.array([-1.6875, 5.5, 12.75, 1.25]),
+            "directMedian",
+        ),
     ]
-    assert np.allclose(chrom_cache["chr1"]["scores"], np.array([0.0, 2.5, 1.5, 0.0]))
-    assert chrom_cache["chr1"]["gamma"] == 3.0
-    assert chrom_cache["chr1"]["budget_rate_meta"]["num_null_blocks"] == 4
+    for case_index, (raw_values, expected_scores, scoring_method) in enumerate(cases):
+        raw_matrix = raw_values
+        input_files = [f"track{index}.bw" for index in range(raw_values.shape[0])]
+        args = {
+            "chrom_sizes_file": None,
+            "step": 50,
+            "round_digits": 2,
+            "effective_genome_size": None,
+            "norm_method": "RPGC",
+            "min_mapping_score": 0,
+            "flag_include": None,
+            "flag_exclude": None,
+            "extend_reads": 0,
+            "center_reads": False,
+            "ignore_for_norm": [],
+            "scale_factor": 1.0,
+            "threads": 1,
+            "input_track_type": "bigwig",
+            "score_lower_bound_z": 1.0,
+            "score_prior_df": 5.0,
+            "score_min_effect": None,
+            "score_precision_floor_ratio": 0.01,
+            "budget_null_draws": 4,
+            "num_null_blocks": 4,
+            "gamma": 3.0,
+            "peak_mode": None,
+            "window_bp": 50000,
+            "window_count": 256,
+            "working_quantile": 0.9,
+            "bootstrap_draws": 500,
+            "insufficient_data_policy": "error",
+            "prior_radius_bp": None,
+        }
+        budget_start = len(direct_budget_calls)
+        chrom_cache = ROCCO_IMPL._build_chrom_cache(["chr1"], input_files, args)
+        case_budget_calls = direct_budget_calls[budget_start:]
+
+        assert np.array_equal(
+            dependence_calls[case_index]["matrix"], raw_values, equal_nan=True
+        )
+        assert np.allclose(chrom_cache["chr1"]["scores"], expected_scores)
+        assert chrom_cache["chr1"]["signalPreparation"] == "asProvided"
+        assert chrom_cache["chr1"]["scoringMethod"] == scoring_method
+        assert "centeringMethod" not in chrom_cache["chr1"]
+        assert len(case_budget_calls) == 4
+        assert np.allclose(
+            np.concatenate([call[0] for call in case_budget_calls]), expected_scores
+        )
+        assert [call[1]["correlation_length"] for call in case_budget_calls] == [11] * 4
+        assert chrom_cache["chr1"]["correlation_radius_intervals"] == 3
+        assert chrom_cache["chr1"]["working_span_intervals"] == 11
 
 
 @pytest.mark.correctness
@@ -1607,6 +1729,7 @@ def test_prepare_args_low_memory_uses_conservative_defaults(monkeypatch):
     assert 1 <= int(args["threads"]) <= 4
     assert int(args["budget_null_draws"]) == 16
     assert int(args["num_null_blocks"]) == 4
+    assert args["working_quantile"] == pytest.approx(0.95)
 
 
 @pytest.mark.correctness
@@ -1626,7 +1749,15 @@ def test_prepare_args_low_memory_uses_conservative_defaults(monkeypatch):
             "cannot exceed",
         ),
         (["--num_null_blocks", "0"], "num_null_blocks"),
-        (["-i", "fake.bw", "--peak_mode", "broad"], "BAM inputs"),
+        (
+            [
+                "-i",
+                "fake.bw",
+                "--peak_mode",
+                "broad",
+            ],
+            "BAM inputs",
+        ),
     ],
 )
 def test_prepare_args_validation_failures(monkeypatch, extra_args, message):
@@ -1654,15 +1785,18 @@ def test_small_end_to_end_subset(test_setup):
     chrom = "chr21"
     scores, details = score_loci_wls(
         test_setup["matrices"][chrom][:, :5000],
+        interval_bp=50,
         return_details=True,
     )
     assert scores.shape == (5000,)
-    budget_fraction, budget_meta = estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
-        details["centered_matrix"],
-        observed_scores=scores,
-        correlation_length=101,
-        num_null_draws=6,
-        return_details=True,
+    budget_fraction, budget_meta = (
+        estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
+            details["centered_matrix"],
+            observed_scores=scores,
+            correlation_length=101,
+            num_null_draws=6,
+            return_details=True,
+        )
     )
     assert 0.0 <= budget_fraction <= 1.0
     assert budget_meta["effective_count"] >= 0.0

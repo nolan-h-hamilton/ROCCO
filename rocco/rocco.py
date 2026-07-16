@@ -19,6 +19,7 @@ import os
 import sys
 import tempfile
 import uuid
+from collections.abc import Iterator, Mapping
 from pprint import pformat
 
 import numpy as np
@@ -30,9 +31,9 @@ from rocco.inference import (
     estimate_budget_nonnull_fraction_from_score_track,
     estimate_budget_nonnull_fraction_from_wild_bootstrap_null,
     estimate_empirical_bayes_budgets,
-    estimate_correlation_length,
     score_loci_wls,
 )
+from rocco.dependence import choose_dependence_span
 from rocco._version import __version__
 from rocco.readtracks import (
     generate_chrom_matrix,
@@ -43,6 +44,24 @@ import rocco.scores as posthoc_scores
 
 logger = logging.getLogger(__name__)
 _CHROM_SOLVE_PROCESS_STATE: dict | None = None
+
+
+class _SpoolMatrixMapping(Mapping[str, np.ndarray]):
+    def __init__(self, matrix_paths: dict[str, str]):
+        self._matrix_paths = dict(matrix_paths)
+
+    def __getitem__(self, chromosome: str) -> np.ndarray:
+        return np.load(
+            self._matrix_paths[chromosome],
+            mmap_mode="r",
+            allow_pickle=False,
+        )
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._matrix_paths)
+
+    def __len__(self) -> int:
+        return len(self._matrix_paths)
 
 
 def _read_bed_records(
@@ -230,9 +249,9 @@ def score_central_tendency_chrom(
             logger.warning("`quantile` must be in [0, 1]. Using the median instead.")
             quantile = 0.50
         if quantile == 0.50:
-            central_tendency = np.median(chrom_matrix, axis=0)
+            central_tendency = np.nanmedian(chrom_matrix, axis=0)
         else:
-            central_tendency = np.quantile(
+            central_tendency = np.nanquantile(
                 chrom_matrix,
                 quantile,
                 axis=0,
@@ -580,7 +599,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min_peak_score", type=float, default=0.1)
     parser.add_argument("--broad_max_gap_bp", type=int, default=None)
     parser.add_argument("--broad_min_peak_bp", type=int, default=1000)
-    parser.add_argument("--dependence_span", type=int, default=None)
+    parser.add_argument("--window_bp", type=int, default=50000)
+    parser.add_argument("--window_count", type=int, default=256)
+    parser.add_argument("--working_quantile", type=float, default=0.95)
+    parser.add_argument("--bootstrap_draws", type=int, default=500)
+    parser.add_argument(
+        "--insufficient_data_policy",
+        choices=["error", "priorOnly"],
+        default="error",
+    )
+    parser.add_argument("--prior_radius_bp", type=float, default=None)
     parser.add_argument(
         "--ecdf_samples",
         type=int,
@@ -671,8 +699,27 @@ def _prepare_args(parser: argparse.ArgumentParser) -> dict:
         raise ValueError("`--broad_max_gap_bp` must be positive")
     if int(args["broad_min_peak_bp"]) <= 0:
         raise ValueError("`--broad_min_peak_bp` must be positive")
-    if args["dependence_span"] is not None and int(args["dependence_span"]) <= 0:
-        raise ValueError("`--dependence_span` must be positive")
+    if int(args["window_bp"]) <= 0:
+        raise ValueError("`--window_bp` must be positive")
+    if int(args["window_count"]) < 20:
+        raise ValueError("`--window_count` must be at least 20")
+    if not 0.5 < float(args["working_quantile"]) < 1.0:
+        raise ValueError("`--working_quantile` must be strictly between 0.5 and one")
+    if int(args["bootstrap_draws"]) < 20:
+        raise ValueError("`--bootstrap_draws` must be at least 20")
+    if args["insufficient_data_policy"] not in {"error", "priorOnly"}:
+        raise ValueError(
+            "`--insufficient_data_policy` must be either `error` or `priorOnly`"
+        )
+    prior_radius_bp = args.get("prior_radius_bp")
+    if prior_radius_bp is not None and (
+        not np.isfinite(float(prior_radius_bp)) or float(prior_radius_bp) <= 0.0
+    ):
+        raise ValueError("`--prior_radius_bp` must be positive and finite")
+    if args["insufficient_data_policy"] == "priorOnly" and prior_radius_bp is None:
+        raise ValueError(
+            "`--prior_radius_bp` is required with `insufficient_data_policy=priorOnly`"
+        )
     if args["peak_mode"] is not None and args["input_track_type"] != "bam":
         raise ValueError("`--peak_mode` sidecars require BAM inputs")
     if (
@@ -848,7 +895,7 @@ def _budget_block_record(
     interval_bp: int,
     budget_fraction_hat: float,
     budget_rate_meta: dict,
-    correlation_length: int,
+    working_span: int,
     budget_null_draws: int,
 ) -> dict:
     block_length = int(stop_idx) - int(start_idx)
@@ -884,10 +931,10 @@ def _budget_block_record(
         "budget_count_hat": float(budget_count_hat),
         "total_count": float(budget_total_count_hat),
         "effective_total_count": float(budget_total_count_hat),
-        "correlation_length_intervals": int(
-            budget_rate_meta.get("correlation_length_intervals", correlation_length)
+        "working_span_intervals": int(
+            budget_rate_meta.get("correlation_length_intervals", working_span)
         ),
-        "dwb_bandwidth": int(budget_rate_meta.get("dwb_bandwidth", correlation_length)),
+        "dwb_bandwidth": int(budget_rate_meta.get("dwb_bandwidth", working_span)),
         "num_null_draws": int(
             budget_rate_meta.get("num_null_draws", budget_null_draws)
         ),
@@ -991,208 +1038,302 @@ def _build_chrom_cache(
             int(args["threads"]),
         )
     )
-    for chrom_ in chroms_to_process:
-        logger.info("Generating chromosome matrix: %s", chrom_)
-        chrom_intervals, chrom_matrix = generate_chrom_matrix(
-            chrom_,
-            signal_inputs,
-            args["chrom_sizes_file"],
-            args["step"],
-            round_digits=args["round_digits"],
-            effective_genome_size=args["effective_genome_size"],
-            norm_method=args["norm_method"],
-            min_mapping_score=args["min_mapping_score"],
-            flag_include=args["flag_include"],
-            flag_exclude=args["flag_exclude"],
-            extend_reads=args["extend_reads"],
-            center_reads=args["center_reads"],
-            ignore_for_norm=args["ignore_for_norm"],
-            scale_factor=args["scale_factor"],
-            num_processors=args["threads"],
-            low_memory=low_memory,
-        )
+    with tempfile.TemporaryDirectory(prefix="rocco_dependence_") as spool_dir:
+        for chrom_index, chrom_ in enumerate(chroms_to_process):
+            logger.info("Generating chromosome matrix: %s", chrom_)
+            chrom_intervals, chrom_matrix = generate_chrom_matrix(
+                chrom_,
+                signal_inputs,
+                args["chrom_sizes_file"],
+                args["step"],
+                round_digits=args["round_digits"],
+                effective_genome_size=args["effective_genome_size"],
+                norm_method=args["norm_method"],
+                min_mapping_score=args["min_mapping_score"],
+                flag_include=args["flag_include"],
+                flag_exclude=args["flag_exclude"],
+                extend_reads=args["extend_reads"],
+                center_reads=args["center_reads"],
+                ignore_for_norm=args["ignore_for_norm"],
+                scale_factor=args["scale_factor"],
+                num_processors=args["threads"],
+                low_memory=low_memory,
+            )
 
-        if chrom_intervals is None or chrom_matrix is None:
-            logger.warning("Skipping chromosome %s... no data found.", chrom_)
-            continue
+            if chrom_intervals is None or chrom_matrix is None:
+                logger.warning("Skipping chromosome %s... no data found.", chrom_)
+                continue
 
-        logger.info("Chromosome %s matrix: %s", chrom_, chrom_matrix.shape)
-        if not np.all(np.isfinite(chrom_matrix)):
-            raise ValueError(f"{chrom_} matrix contains non-finite values")
-        centered_matrix = None
-        # skip WLS, note that multiple bigwigs really should _not_ be supplied unless it makes sense to aggregate via central tendency
-        if args["input_track_type"] == "bigwig":
-            if chrom_matrix.shape[0] > 1:
-                logger.warning(
-                    "Multiple bigwig tracks detected for %s. ROCCO will aggregate these via column-wise central tendency rather than WLS. If this is not the intended behavior, please supply a single bigwig track per chromosome or use BAM inputs.",
-                    chrom_,
+            chrom_intervals = np.asarray(chrom_intervals, dtype=np.int64)
+            chrom_matrix = np.asarray(chrom_matrix)
+            logger.info("Chromosome %s matrix: %s", chrom_, chrom_matrix.shape)
+            if chrom_matrix.ndim != 2 or chrom_matrix.shape[0] != len(signal_inputs):
+                raise ValueError(f"{chrom_} matrix rows must match input tracks")
+            if chrom_matrix.shape[1] != chrom_intervals.size:
+                raise ValueError(f"{chrom_} matrix and coordinates do not align")
+            interval_diffs = np.diff(chrom_intervals)
+            if interval_diffs.size > 0:
+                if np.any(interval_diffs <= 0) or np.unique(interval_diffs).size != 1:
+                    raise ValueError(
+                        f"{chrom_} coordinates must use one fixed bin width"
+                    )
+                interval_bp = int(interval_diffs[0])
+            else:
+                interval_bp = int(args["step"])
+            if interval_bp <= 0:
+                raise ValueError(f"{chrom_} bin width must be positive")
+
+            preparation_meta = {}
+            if args["input_track_type"] == "bigwig":
+                if np.any(np.isinf(chrom_matrix)):
+                    raise ValueError(f"{chrom_} bigWig matrix contains infinite values")
+                if chrom_matrix.shape[0] > 1:
+                    logger.warning(
+                        "Multiple bigWig tracks detected for %s. Region scores use their column median while dependence estimation retains every supplied row.",
+                        chrom_,
+                    )
+                chrom_scores = np.asarray(
+                    score_central_tendency_chrom(
+                        chrom_matrix,
+                        method="quantile",
+                        quantile=0.50,
+                        power=1.0,
+                    ),
+                    dtype=np.float64,
                 )
-            chrom_scores = np.asarray(
-                score_central_tendency_chrom(
+                if not np.all(np.isfinite(chrom_scores)):
+                    raise ValueError(
+                        f"{chrom_} has loci with no supplied bigWig score in any track"
+                    )
+                score_details = {
+                    "mean": chrom_scores.astype(np.float64, copy=False),
+                }
+                dependence_matrix = chrom_matrix
+                preparation_meta = {
+                    "signalPreparation": "asProvided",
+                    "scoringMethod": (
+                        "direct" if chrom_matrix.shape[0] == 1 else "directMedian"
+                    ),
+                }
+            else:
+                if not np.all(np.isfinite(chrom_matrix)):
+                    raise ValueError(f"{chrom_} BAM matrix contains non-finite values")
+                chrom_scores, score_details = score_loci_wls(
                     chrom_matrix,
-                    method="quantile",
-                    quantile=0.50,
-                    power=1.0,
-                ),
+                    interval_bp=interval_bp,
+                    lower_bound_z=args["score_lower_bound_z"],
+                    prior_df=args["score_prior_df"],
+                    min_effect=args.get("score_min_effect"),
+                    precision_floor_ratio=args["score_precision_floor_ratio"],
+                    return_details=True,
+                )
+                if not np.all(np.isfinite(chrom_scores)):
+                    raise ValueError(f"{chrom_} scores contain non-finite values")
+                dependence_matrix = np.asarray(score_details.pop("centered_matrix"))
+                if not np.all(np.isfinite(dependence_matrix)):
+                    raise ValueError(
+                        f"{chrom_} centered matrix contains non-finite values"
+                    )
+                preparation_meta = {
+                    "signalPreparation": "log2p1SavgolOrder0",
+                    "scoringMethod": "WLS",
+                    "centeringMethod": score_details["centeringMethod"],
+                    "centeringWindowBP": int(score_details["centeringWindowBP"]),
+                    "centeringWindowBins": int(score_details["centeringWindowBins"]),
+                }
+
+            matrix_path = os.path.join(spool_dir, f"matrix_{chrom_index}.npy")
+            np.save(matrix_path, dependence_matrix, allow_pickle=False)
+            chrom_effect_mean = np.asarray(
+                score_details.get("mean", chrom_scores),
                 dtype=np.float64,
             )
-            if not np.all(np.isfinite(chrom_scores)):
-                raise ValueError(f"{chrom_} direct scores contain non-finite values")
-            score_details = {
-                "mean": chrom_scores.astype(np.float64, copy=False),
+            chrom_cache[chrom_] = {
+                "intervals": chrom_intervals,
+                "scores": chrom_scores,
+                "effect_mean": chrom_effect_mean,
+                "z_scores": score_details.get("z_scores"),
+                "gamma": float(args["gamma"]),
+                "interval_bp": int(interval_bp),
+                "num_loci": int(chrom_scores.shape[0]),
+                "_dependence_matrix_path": matrix_path,
+                **preparation_meta,
             }
-        else:
-            chrom_scores, score_details = score_loci_wls(
-                chrom_matrix,
-                lower_bound_z=args["score_lower_bound_z"],
-                prior_df=args["score_prior_df"],
-                min_effect=args.get("score_min_effect"),
-                precision_floor_ratio=args["score_precision_floor_ratio"],
-                low_memory=low_memory,
-                return_details=True,
+            score_label = (
+                "direct input scores"
+                if args["input_track_type"] == "bigwig"
+                else "WLS scores"
             )
-            if not np.all(np.isfinite(chrom_scores)):
-                raise ValueError(f"{chrom_} scores contain non-finite values")
-            centered_matrix = np.asarray(
-                score_details.pop("centered_matrix"),
-                dtype=np.float32 if low_memory else np.float64,
+            logger.info(
+                "%s %s:%s", chrom_, score_label, cscores_quantiles(chrom_scores)
             )
-            if not np.all(np.isfinite(centered_matrix)):
-                raise ValueError(f"{chrom_} centered matrix contains non-finite values")
-        interval_diffs = np.diff(np.asarray(chrom_intervals, dtype=np.int64))
-        positive_diffs = interval_diffs[interval_diffs > 0]
-        interval_bp = (
-            int(np.median(positive_diffs))
-            if positive_diffs.size > 0
-            else int(args["step"])
+
+        if len(chrom_cache) == 0:
+            raise ValueError("No chromosome matrices were available for inference")
+        interval_bps = {
+            int(chrom_data["interval_bp"]) for chrom_data in chrom_cache.values()
+        }
+        if len(interval_bps) != 1:
+            raise ValueError(
+                "Genome-level dependence estimation requires one bin width across chromosomes"
+            )
+        dependence_step_bp = int(next(iter(interval_bps)))
+        chromosome_matrices = _SpoolMatrixMapping(
+            {
+                chrom_: chrom_data["_dependence_matrix_path"]
+                for chrom_, chrom_data in chrom_cache.items()
+            }
         )
-        correlation_length, _ = estimate_correlation_length(
-            chrom_scores,
-            step_bp=interval_bp,
-            dependence_span=args.get("dependence_span"),
+        chromosome_coordinates = {
+            chrom_: chrom_data["intervals"]
+            for chrom_, chrom_data in chrom_cache.items()
+        }
+        (
+            correlation_radius,
+            correlation_radius_lower,
+            correlation_radius_upper,
+            dependence_diagnostics,
+        ) = choose_dependence_span(
+            chromosome_matrices,
+            chromosome_coordinates,
+            dependence_step_bp,
+            window_bp=int(args.get("window_bp", 50000)),
+            window_count=int(args.get("window_count", 256)),
+            working_quantile=float(args.get("working_quantile", 0.95)),
+            bootstrap_draws=int(args.get("bootstrap_draws", 500)),
+            insufficient_data_policy=args.get("insufficient_data_policy", "error"),
+            prior_radius_bp=args.get("prior_radius_bp"),
         )
+        del chromosome_matrices
+        working_span = int(dependence_diagnostics["workingSpanIntervals"])
+        if working_span <= 0:
+            raise ValueError("Genome-level dependence working span must be positive")
+
         num_null_blocks = int(args.get("num_null_blocks", 4))
         if num_null_blocks <= 0:
             raise ValueError("`--num_null_blocks` must be positive")
-        budget_blocks = []
-        block_slices = _make_null_blocks(chrom_scores.shape[0], num_null_blocks)
-        chrom_interval_arr = np.asarray(chrom_intervals, dtype=np.int64)
-        for block_id, (start_idx, stop_idx) in enumerate(block_slices):
-            block_scores = chrom_scores[start_idx:stop_idx]
-            progress_label = (
-                f"Budget null {chrom_} block {block_id + 1}/{len(block_slices)}"
-            )
-            if centered_matrix is None:
-                block_fraction_hat, block_rate_meta = (
-                    estimate_budget_nonnull_fraction_from_score_track(
-                        block_scores,
-                        correlation_length=correlation_length,
-                        step_bp=interval_bp,
-                        num_null_draws=args["budget_null_draws"],
-                        random_seed=1009 * int(block_id),
-                        progress_label=progress_label,
-                        return_details=True,
+        for chrom_, chrom_data in chrom_cache.items():
+            chrom_scores = chrom_data["scores"]
+            interval_bp = int(chrom_data["interval_bp"])
+            budget_blocks = []
+            block_slices = _make_null_blocks(chrom_scores.shape[0], num_null_blocks)
+            chrom_interval_arr = np.asarray(chrom_data["intervals"], dtype=np.int64)
+            dependence_matrix = None
+            if args["input_track_type"] == "bam":
+                dependence_matrix = np.load(
+                    chrom_data["_dependence_matrix_path"],
+                    mmap_mode="r",
+                    allow_pickle=False,
+                )
+            for block_id, (start_idx, stop_idx) in enumerate(block_slices):
+                block_scores = chrom_scores[start_idx:stop_idx]
+                progress_label = (
+                    f"Budget null {chrom_} block {block_id + 1}/{len(block_slices)}"
+                )
+                if dependence_matrix is None:
+                    block_fraction_hat, block_rate_meta = (
+                        estimate_budget_nonnull_fraction_from_score_track(
+                            block_scores,
+                            correlation_length=working_span,
+                            step_bp=interval_bp,
+                            num_null_draws=args["budget_null_draws"],
+                            random_seed=1009 * int(block_id),
+                            progress_label=progress_label,
+                            return_details=True,
+                        )
+                    )
+                else:
+                    block_fraction_hat, block_rate_meta = (
+                        estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
+                            dependence_matrix[:, start_idx:stop_idx],
+                            observed_scores=block_scores,
+                            lower_bound_z=args["score_lower_bound_z"],
+                            prior_df=args["score_prior_df"],
+                            min_effect=args.get("score_min_effect"),
+                            precision_floor_ratio=args["score_precision_floor_ratio"],
+                            correlation_length=working_span,
+                            step_bp=interval_bp,
+                            num_null_draws=args["budget_null_draws"],
+                            random_seed=1009 * int(block_id),
+                            progress_label=progress_label,
+                            num_processes=min(
+                                int(args["budget_null_draws"]),
+                                int(budget_null_processes),
+                            ),
+                            return_details=True,
+                        )
+                    )
+                budget_blocks.append(
+                    _budget_block_record(
+                        block_id,
+                        start_idx,
+                        stop_idx,
+                        chrom_interval_arr,
+                        interval_bp,
+                        block_fraction_hat,
+                        block_rate_meta,
+                        working_span,
+                        args["budget_null_draws"],
                     )
                 )
-            else:
-                block_fraction_hat, block_rate_meta = (
-                    estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
-                        centered_matrix[:, start_idx:stop_idx],
-                        observed_scores=block_scores,
-                        lower_bound_z=args["score_lower_bound_z"],
-                        prior_df=args["score_prior_df"],
-                        min_effect=args.get("score_min_effect"),
-                        precision_floor_ratio=args["score_precision_floor_ratio"],
-                        correlation_length=correlation_length,
-                        step_bp=interval_bp,
-                        num_null_draws=args["budget_null_draws"],
-                        random_seed=1009 * int(block_id),
-                        progress_label=progress_label,
-                        num_processes=min(
-                            int(args["budget_null_draws"]),
-                            int(budget_null_processes),
-                        ),
-                        return_details=True,
-                    )
-                )
-            budget_blocks.append(
-                _budget_block_record(
-                    block_id,
-                    start_idx,
-                    stop_idx,
-                    chrom_interval_arr,
-                    interval_bp,
-                    block_fraction_hat,
-                    block_rate_meta,
-                    correlation_length,
-                    args["budget_null_draws"],
+            if dependence_matrix is not None:
+                del dependence_matrix
+            budget_total_count_hat = float(
+                sum(float(block["total_count"]) for block in budget_blocks)
+            )
+            budget_count_hat = float(
+                sum(float(block["budget_count_hat"]) for block in budget_blocks)
+            )
+            budget_fraction_hat = float(
+                np.clip(
+                    budget_count_hat / max(budget_total_count_hat, 1.0),
+                    0.0,
+                    1.0,
                 )
             )
-        if centered_matrix is not None:
-            del centered_matrix
-        del chrom_matrix
-        budget_total_count_hat = float(
-            sum(float(block["total_count"]) for block in budget_blocks)
-        )
-        budget_count_hat = float(
-            sum(float(block["budget_count_hat"]) for block in budget_blocks)
-        )
-        budget_fraction_hat = float(
-            np.clip(
-                budget_count_hat / max(budget_total_count_hat, 1.0),
-                0.0,
-                1.0,
+            dwb_bandwidth = int(
+                max(int(block["dwb_bandwidth"]) for block in budget_blocks)
             )
-        )
-        score_label = (
-            "direct input scores"
-            if args["input_track_type"] == "bigwig"
-            else "WLS scores"
-        )
-        logger.info("%s %s:%s", chrom_, score_label, cscores_quantiles(chrom_scores))
-        dwb_bandwidth = int(max(int(block["dwb_bandwidth"]) for block in budget_blocks))
-        total_null_draws = int(
-            sum(int(block["num_null_draws"]) for block in budget_blocks)
-        )
-        lean_budget_meta = {
-            "budget_fraction_hat": float(budget_fraction_hat),
-            "budget_count_hat": float(budget_count_hat),
-            "effective_total_count": float(budget_total_count_hat),
-            "correlation_length_intervals": int(correlation_length),
-            "dwb_bandwidth": int(dwb_bandwidth),
-            "num_null_draws_per_block": int(args["budget_null_draws"]),
-            "total_null_draws": int(total_null_draws),
-            "num_null_blocks": int(len(budget_blocks)),
-            "requested_num_null_blocks": int(num_null_blocks),
-            "budget_blocks": budget_blocks,
-        }
-        logger.info(
-            "%s raw budget estimate: %s",
-            chrom_,
-            lean_budget_meta,
-        )
-        chrom_gamma = float(args["gamma"])
-        chrom_effect_mean = np.asarray(
-            score_details.get("mean", chrom_scores),
-            dtype=np.float64,
-        )
-        chrom_cache[chrom_] = {
-            "intervals": chrom_intervals,
-            "scores": chrom_scores,
-            "effect_mean": chrom_effect_mean,
-            "z_scores": score_details.get("z_scores"),
-            "gamma": chrom_gamma,
-            "budget_count_hat": float(budget_count_hat),
-            "budget_fraction_hat": float(budget_fraction_hat),
-            "budget_rate_meta": lean_budget_meta,
-            "correlation_length_intervals": int(correlation_length),
-            "dwb_bandwidth": int(dwb_bandwidth),
-            "num_null_draws_per_block": int(args["budget_null_draws"]),
-            "total_null_draws": int(total_null_draws),
-            "interval_bp": int(interval_bp),
-            "total_count": float(budget_total_count_hat),
-            "num_loci": int(chrom_scores.shape[0]),
-        }
+            total_null_draws = int(
+                sum(int(block["num_null_draws"]) for block in budget_blocks)
+            )
+            lean_budget_meta = {
+                "budget_fraction_hat": float(budget_fraction_hat),
+                "budget_count_hat": float(budget_count_hat),
+                "effective_total_count": float(budget_total_count_hat),
+                "correlation_radius_intervals": int(correlation_radius),
+                "correlation_radius_bp": float(dependence_diagnostics["estimateBP"]),
+                "working_span_intervals": int(working_span),
+                "working_span_bp": float(dependence_diagnostics["workingSpanBP"]),
+                "dwb_bandwidth": int(dwb_bandwidth),
+                "num_null_draws_per_block": int(args["budget_null_draws"]),
+                "total_null_draws": int(total_null_draws),
+                "num_null_blocks": int(len(budget_blocks)),
+                "requested_num_null_blocks": int(num_null_blocks),
+                "budget_blocks": budget_blocks,
+            }
+            logger.info("%s raw budget estimate: %s", chrom_, lean_budget_meta)
+            chrom_data.update(
+                {
+                    "budget_count_hat": float(budget_count_hat),
+                    "budget_fraction_hat": float(budget_fraction_hat),
+                    "budget_rate_meta": lean_budget_meta,
+                    "correlation_radius_intervals": int(correlation_radius),
+                    "correlation_radius_lower_intervals": int(correlation_radius_lower),
+                    "correlation_radius_upper_intervals": int(correlation_radius_upper),
+                    "correlation_radius_bp": float(
+                        dependence_diagnostics["estimateBP"]
+                    ),
+                    "working_span_intervals": int(working_span),
+                    "working_span_bp": float(dependence_diagnostics["workingSpanBP"]),
+                    "dependence_diagnostics": dependence_diagnostics,
+                    "dwb_bandwidth": int(dwb_bandwidth),
+                    "num_null_draws_per_block": int(args["budget_null_draws"]),
+                    "total_null_draws": int(total_null_draws),
+                    "total_count": float(budget_total_count_hat),
+                }
+            )
+            chrom_data.pop("_dependence_matrix_path")
 
     if (
         args.get("peak_mode") in {"narrow", "both"}
@@ -1367,15 +1508,31 @@ def _solve_cached_chromosomes(
             "soft_budget_penalty": float(chrom_meta["soft_budget_penalty"]),
             "budget": float(_budget_value(chrom_budgets[chrom_])),
             "selected_count": int(chrom_meta["selected_count"]),
-            "correlation_length_intervals": int(
-                chrom_cache[chrom_]["correlation_length_intervals"]
+            "correlation_radius_intervals": int(
+                chrom_cache[chrom_]["correlation_radius_intervals"]
             ),
+            "correlation_radius_bp": float(
+                chrom_cache[chrom_]["correlation_radius_bp"]
+            ),
+            "working_span_intervals": int(
+                chrom_cache[chrom_]["working_span_intervals"]
+            ),
+            "working_span_bp": float(chrom_cache[chrom_]["working_span_bp"]),
             "dwb_bandwidth": int(chrom_cache[chrom_]["dwb_bandwidth"]),
             "num_null_draws_per_block": int(
                 chrom_cache[chrom_]["num_null_draws_per_block"]
             ),
             "total_null_draws": int(chrom_cache[chrom_]["total_null_draws"]),
         }
+        for preparation_key in (
+            "signalPreparation",
+            "scoringMethod",
+            "centeringMethod",
+            "centeringWindowBP",
+            "centeringWindowBins",
+        ):
+            if preparation_key in chrom_cache[chrom_]:
+                solve_meta[preparation_key] = chrom_cache[chrom_][preparation_key]
         if "budget_block_count" in chrom_meta:
             solve_meta["budget_blocks"] = [
                 {
@@ -1528,7 +1685,7 @@ def _build_broad_parent_records(
             max_gap_bp = int(
                 max(
                     interval_bp,
-                    2 * int(chrom_data["correlation_length_intervals"]) * interval_bp,
+                    2 * int(chrom_data["working_span_intervals"]) * interval_bp,
                 )
             )
         else:

@@ -13,12 +13,7 @@ import sys
 from typing import Any, Dict, Tuple
 
 import numpy as np
-from scipy import linalg, optimize, signal, special, stats
-
-try:
-    from . import _baseline as _baseline_native
-except ImportError:
-    _baseline_native = None
+from scipy import optimize, signal, special, stats
 
 try:
     from . import _wls as _wls_native
@@ -27,6 +22,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 _BUDGET_NULL_PROCESS_STATE: dict[str, Any] | None = None
+_CENTERING_WINDOW_BP = 1_250_000
 
 
 def _robust_scale(values: np.ndarray, floor: float = 1.0e-6) -> float:
@@ -37,195 +33,47 @@ def _robust_scale(values: np.ndarray, floor: float = 1.0e-6) -> float:
     return float(max(mad * 1.4826, floor))
 
 
-def _log_scale_wls_matrix(
-    chrom_matrix: np.ndarray,
-    pseudocount: float = 1.0,
+def _resolve_centering_window_bins(n_loci: int, interval_bp: int) -> int:
+    n_loci_ = int(n_loci)
+    interval_bp_ = int(interval_bp)
+    if n_loci_ <= 0:
+        raise ValueError("`chrom_matrix` must contain at least one locus")
+    if interval_bp_ <= 0:
+        raise ValueError("`interval_bp` must be positive")
+    target_bins = int(np.floor((_CENTERING_WINDOW_BP / float(interval_bp_)) + 0.5))
+    target_bins = max(1, target_bins)
+    if (target_bins % 2) == 0:
+        target_bins += 1
+    if target_bins > n_loci_:
+        target_bins = n_loci_ if (n_loci_ % 2) == 1 else n_loci_ - 1
+    return int(max(1, target_bins))
+
+
+def _savgol_order_zero_baseline(
+    values: np.ndarray,
+    window_bins: int,
 ) -> np.ndarray:
-    matrix = np.asarray(chrom_matrix, dtype=np.float64)
-    if np.any(~np.isfinite(matrix)):
-        raise ValueError("`chrom_matrix` contains non-finite values")
-    return np.log2(np.clip(matrix, 0.0, None) + float(pseudocount))
-
-
-def _resolve_local_baseline_window(
-    n_loci: int,
-    target_window: int = 101,
-) -> int:
-    n_loci = int(n_loci)
-    if n_loci < 25:
-        return 0
-    window = int(max(3, target_window))
-    if window > n_loci:
-        window = n_loci
-    if (window % 2) == 0:
-        window = window - 1 if window == n_loci else window + 1
-    return int(max(0, window))
-
-
-def _consenrich_whittaker_lambda(block_size: int) -> float:
-    r"""Map a smoothing block size to the Whittaker penalty used in Consenrich.
-
-    This follows the same :math:`\texttt{blockSize} \mapsto \lambda` rule used
-    by ``clocalBaseline`` in the Consenrich repo:
-    https://github.com/nolan-h-hamilton/Consenrich
-    """
-    block = int(max(3, block_size))
-    if (block % 2) == 0:
-        block += 1
-    w_hat = float(block) * 0.15915494
-    return float(7.0 * (w_hat**4))
-
-
-def _consenrich_whittaker_penalty_bands(
-    n_loci: int,
-    penalty_lambda: float,
-) -> np.ndarray:
-    bands = np.zeros((3, int(n_loci)), dtype=np.float64)
-    diag = np.full(int(n_loci), 6.0, dtype=np.float64)
-    diag[0] = 1.0
-    diag[-1] = 1.0
-    if n_loci > 1:
-        diag[1] = 5.0
-        diag[-2] = 5.0
-        off1 = np.full(int(n_loci) - 1, -4.0, dtype=np.float64)
-        off1[0] = -2.0
-        off1[-1] = -2.0
-        bands[1, 1:] = float(penalty_lambda) * off1
-    if n_loci > 2:
-        bands[0, 2:] = float(penalty_lambda)
-    bands[2, :] = float(penalty_lambda) * diag
-    return bands
-
-
-def _consenrich_masked_whittaker_baseline(
-    y_vals: np.ndarray,
-    fit_mask: np.ndarray,
-    penalty_bands: np.ndarray,
-) -> np.ndarray:
-    r"""Solve the masked Whittaker baseline system used by Consenrich.
-
-    This is a small pure-Python/SciPy port of the masked solve
-    :math:`(W + \lambda D^\top D)b = Wy` behind
-    ``locBaselineMasked_F64`` in the Consenrich repo:
-    https://github.com/nolan-h-hamilton/Consenrich
-    """
-    y_arr = np.asarray(y_vals, dtype=np.float64)
-    mask_arr = np.clip(np.asarray(fit_mask, dtype=np.float64), 0.0, None)
-    if y_arr.ndim != 1:
-        raise ValueError("`y_vals` must be one-dimensional")
-    if mask_arr.shape != y_arr.shape:
-        raise ValueError("`fit_mask` must match `y_vals`")
-    if y_arr.size < 3:
-        return y_arr.copy()
-    # Add the mask to the main diagonal so the system is
-    # :math:`(W + \lambda D^\top D)b = Wy`.
-    bands = np.array(penalty_bands, dtype=np.float64, copy=True)
-    bands[2, :] += mask_arr
-    rhs = mask_arr * y_arr
-    return linalg.solveh_banded(
-        bands,
-        rhs,
-        lower=False,
-        check_finite=False,
-        overwrite_ab=True,
-        overwrite_b=True,
-    )
-
-
-def _consenrich_crossfit_whittaker_baseline(
-    y_vals: np.ndarray,
-    block_size: int = 101,
-) -> np.ndarray:
-    r"""Estimate a broad local baseline with a Consenrich-style cross-fit smoother.
-
-    This follows the even/odd masked Whittaker trick used by
-    ``locBaselineCrossfit2_F64`` in the Consenrich repo, so the final estimate
-    is :math:`(\hat b_{\mathrm{even}} + \hat b_{\mathrm{odd}}) / 2`:
-    https://github.com/nolan-h-hamilton/Consenrich
-
-    Small inputs return zeros on purpose. That matches the old guard in
-    ``clocalBaseline`` and keeps short chromosomes from getting weird.
-    """
-    y_arr = np.asarray(y_vals, dtype=np.float64)
-    if y_arr.ndim != 1:
-        raise ValueError("`y_vals` must be one-dimensional")
-    n_loci = int(y_arr.size)
-    window = _resolve_local_baseline_window(n_loci, target_window=block_size)
-    if window == 0:
-        return np.zeros_like(y_arr, dtype=np.float64)
-
-    penalty_lambda = _consenrich_whittaker_lambda(window)
-    if _baseline_native is not None:
-        return np.asarray(
-            _baseline_native.crossfit_whittaker_baseline(
-                y_arr,
-                penalty_lambda=penalty_lambda,
-            ),
-            dtype=np.float64,
-        )
-    penalty_bands = _consenrich_whittaker_penalty_bands(
-        n_loci,
-        penalty_lambda,
-    )
-    even_mask = ((np.arange(n_loci) % 2) == 0).astype(np.float64)
-    odd_mask = 1.0 - even_mask
-    even_baseline = _consenrich_masked_whittaker_baseline(
-        y_arr,
-        even_mask,
-        penalty_bands,
-    )
-    odd_baseline = _consenrich_masked_whittaker_baseline(
-        y_arr,
-        odd_mask,
-        penalty_bands,
-    )
-    return 0.5 * (even_baseline + odd_baseline)
-
-
-def _estimate_local_background_matrix(
-    centered_matrix: np.ndarray,
-    target_window: int = 101,
-) -> tuple[np.ndarray, int, float]:
-    matrix = np.asarray(centered_matrix, dtype=np.float64)
+    matrix = np.asarray(values, dtype=np.float64)
     if matrix.ndim != 2:
-        raise ValueError("`centered_matrix` must be two-dimensional")
-    n_samples, n_loci = matrix.shape
-    window = _resolve_local_baseline_window(n_loci, target_window=target_window)
-    if window == 0:
-        return np.zeros_like(matrix, dtype=np.float64), 0, 0.0
+        raise ValueError("`values` must be two-dimensional")
+    n_loci = int(matrix.shape[1])
+    window_bins_ = int(window_bins)
+    if window_bins_ <= 0 or window_bins_ > n_loci or (window_bins_ % 2) == 0:
+        raise ValueError("`window_bins` must be an odd value within the track length")
 
-    penalty_lambda = _consenrich_whittaker_lambda(window)
-    if _baseline_native is not None:
-        # Apply the same cross-fit baseline to each sample track.
-        local_baselines = np.asarray(
-            _baseline_native.crossfit_whittaker_baseline(
-                matrix,
-                penalty_lambda=penalty_lambda,
-            ),
-            dtype=np.float64,
-        )
-        if not np.all(np.isfinite(local_baselines)):
-            raise ValueError("Local baseline fit produced non-finite values")
-        return local_baselines, window, penalty_lambda
-    penalty_bands = _consenrich_whittaker_penalty_bands(n_loci, penalty_lambda)
-    local_baselines = np.empty_like(matrix, dtype=np.float64)
-    even_mask = ((np.arange(n_loci) % 2) == 0).astype(np.float64)
-    odd_mask = 1.0 - even_mask
-    for sample_idx in range(n_samples):
-        even_baseline = _consenrich_masked_whittaker_baseline(
-            matrix[sample_idx],
-            even_mask,
-            penalty_bands,
-        )
-        odd_baseline = _consenrich_masked_whittaker_baseline(
-            matrix[sample_idx],
-            odd_mask,
-            penalty_bands,
-        )
-        local_baselines[sample_idx] = 0.5 * (even_baseline + odd_baseline)
-    if not np.all(np.isfinite(local_baselines)):
-        raise ValueError("Local baseline fit produced non-finite values")
-    return local_baselines, window, penalty_lambda
+    prefix_sums = np.empty((matrix.shape[0], n_loci + 1), dtype=np.float64)
+    prefix_sums[:, 0] = 0.0
+    np.cumsum(matrix, axis=1, out=prefix_sums[:, 1:])
+    rolling_means = (
+        prefix_sums[:, window_bins_:] - prefix_sums[:, : n_loci - window_bins_ + 1]
+    ) / float(window_bins_)
+    half_window = window_bins_ // 2
+    baseline = np.empty_like(matrix, dtype=np.float64)
+    baseline[:, half_window : n_loci - half_window] = rolling_means
+    if half_window > 0:
+        baseline[:, :half_window] = rolling_means[:, :1]
+        baseline[:, n_loci - half_window :] = rolling_means[:, -1:]
+    return baseline
 
 
 def _score_centered_wls_matrix(
@@ -302,44 +150,31 @@ def _score_centered_wls_matrix(
 
 def score_loci_wls(
     chrom_matrix: np.ndarray,
+    interval_bp: int,
     lower_bound_z: float = 1.0,
     prior_df: float = 5.0,
     min_effect: float | None = None,
     precision_floor_ratio: float = 0.01,
-    low_memory: bool = False,
     return_details: bool = False,
 ) -> np.ndarray | Tuple[np.ndarray, Dict[str, Any]]:
-    r"""Score loci with an EB-moderated summary on baseline-corrected log signal.
-
-    We model the log-scaled signal at each locus as
-    :math:`y_{ij} = \log(x_{ij}) = b_{ij} + \mu_j + e_{ij}` where
-    :math:`b_{ij}` is a broad local background term from a cross-fit Whittaker
-    smoother (see Consenrich api). On the resulting ``m x n`` centered matrix, ROCCO follows the
-    Consenrich pattern track by track: each sample gets a local variance track
-    from rolling AR(1) innovation variances, a separate global monotone prior
-    variance trend as a function of absolute signal level, and an EB-shrunk
-    posterior variance track based on the prior variance. Final locus estimate and standard error are
-    then computed by WLS over the full data matrix and the full posterior
-    variance matrix. The default score for the constrained optimization is the 'moderated'
-    standardized effect :math:`t_j = \mu_j / \mathrm{se}_j`.
-    """
-    matrix = _log_scale_wls_matrix(chrom_matrix)
+    r"""Score loci with an EB-moderated summary on baseline-corrected log signal."""
+    matrix = np.asarray(chrom_matrix, dtype=np.float64)
     if matrix.ndim != 2:
         raise ValueError("`chrom_matrix` must be two-dimensional")
     if matrix.shape[0] == 0 or matrix.shape[1] == 0:
         raise ValueError("`chrom_matrix` must be non-empty")
+    if np.any(~np.isfinite(matrix)):
+        raise ValueError("`chrom_matrix` contains non-finite values")
 
-    # Use a robust pilot offset before baseline fitting so the smoother targets
-    # :math:`b_{ij}` instead of burning effort on a sample-level shift.
-    baseline_init = np.median(matrix, axis=1, keepdims=True)
-    global_centered = matrix - baseline_init
-    local_baselines, local_window, local_lambda = _estimate_local_background_matrix(
-        global_centered
+    window_bins = _resolve_centering_window_bins(matrix.shape[1], interval_bp)
+    matrix = np.log2(np.clip(matrix, 0.0, None) + 1.0)
+    baselines = _savgol_order_zero_baseline(
+        matrix,
+        window_bins=window_bins,
     )
-    centered = global_centered - local_baselines
+    centered = matrix - baselines
     del matrix
-    del global_centered
-    del local_baselines
+    del baselines
     scores, core_details = _score_centered_wls_matrix(
         centered,
         lower_bound_z=lower_bound_z,
@@ -350,16 +185,11 @@ def score_loci_wls(
     if not return_details:
         return scores.astype(np.float64)
 
-    centered_out = centered.astype(
-        np.float32 if low_memory else np.float64,
-        copy=False,
-    )
-    del centered
-
     details = {
         "input_scale": "log2p1",
-        "local_baseline_window": int(local_window),
-        "local_baseline_lambda": float(local_lambda),
+        "centeringMethod": "savgolOrder0",
+        "centeringWindowBP": int(_CENTERING_WINDOW_BP),
+        "centeringWindowBins": int(window_bins),
         "mean": np.asarray(core_details["mean"], dtype=np.float64),
         "raw_variance": np.asarray(core_details["raw_variance"], dtype=np.float64),
         "prior_variance": np.asarray(core_details["prior_variance"], dtype=np.float64),
@@ -374,7 +204,7 @@ def score_loci_wls(
         "degrees_of_freedom": np.asarray(
             core_details["degrees_of_freedom"], dtype=np.float64
         ),
-        "centered_matrix": centered_out,
+        "centered_matrix": centered,
     }
     return scores.astype(np.float64), details
 
@@ -480,95 +310,15 @@ def _estimate_effective_sample_size(
     return effective_n, float(tau_int), int(lags_used)
 
 
-def estimate_correlation_length(
-    values: np.ndarray,
-    step_bp: int = 50,
-    dependence_span: int | None = None,
-    min_context_bp: int = 2500,
-    max_context_bp: int = 100000,
-    acf_point_threshold: float = 0.1,
-    acf_required_crossings: int = 5,
-    acf_min_evidence_nats: float = 250.0,
-) -> tuple[int, dict[str, float | int | str | bool]]:
-    if dependence_span is not None:
-        span = int(dependence_span)
-        if span <= 0:
-            raise ValueError("`dependence_span` must be positive")
-        return span, {
-            "correlation_length_intervals": int(span),
-            "correlation_length_bp": int((2 * span * max(int(step_bp), 1)) + 1),
-            "correlation_length_method": "fixed",
-        }
-
-    values_ = np.asarray(values, dtype=np.float64)
-    if values_.ndim != 1:
-        raise ValueError("`values` must be one-dimensional")
-    n_loci = int(values_.size)
-    required = int(max(1, acf_required_crossings))
-    if n_loci < max(32, required + 2):
-        raise ValueError("Automatic correlation length needs more loci")
-    threshold = float(acf_point_threshold)
-    if not np.isfinite(threshold) or threshold <= 0.0 or threshold >= 1.0:
-        raise ValueError("`acf_point_threshold` must lie in (0, 1)")
-    step_bp_ = max(int(step_bp), 1)
-    min_span = max(1, int(np.ceil((max(int(min_context_bp), 1) - 1) / (2 * step_bp_))))
-    max_span = int(np.floor((max(int(max_context_bp), 1) - 1) / (2 * step_bp_)))
-    max_span = max(min_span, max_span)
-    max_lag = int(min(n_loci - 1, max_span))
-    if max_lag < required:
-        raise ValueError("Automatic correlation length has too few usable lags")
-
-    centered = values_ - float(np.mean(values_))
-    variance = float(np.mean(centered * centered))
-    if not np.isfinite(variance) or variance <= 1.0e-12:
-        raise ValueError("Automatic correlation length needs nonconstant scores")
-    n_fft = 1 << int(np.ceil(np.log2((2 * n_loci) - 1)))
-    spectrum = np.fft.rfft(centered, n=n_fft)
-    acov = np.fft.irfft(spectrum * np.conjugate(spectrum), n=n_fft)[: max_lag + 1]
-    acov /= np.arange(n_loci, n_loci - max_lag - 1, -1, dtype=np.float64)
-    if not np.isfinite(acov[0]) or acov[0] <= 1.0e-12:
-        raise ValueError("Automatic correlation length produced invalid variance")
-    acf_abs = np.abs(np.clip(acov[1:] / acov[0], -1.0, 1.0))
-    crossing_lag = None
-    for lag_idx in range(0, int(acf_abs.size) - required + 1):
-        if np.all(acf_abs[lag_idx : lag_idx + required] < threshold):
-            crossing_lag = int(lag_idx + 1)
-            break
-    if crossing_lag is None:
-        raw_span = int(max_lag)
-    else:
-        raw_span = int(crossing_lag)
-
-    evidence_lag = int(min(max_lag, max(required, raw_span + required - 1)))
-    excess = np.maximum(acf_abs[:evidence_lag] - threshold, 0.0)
-    acf_evidence_nats = float(n_loci * np.sum(excess * excess))
-    if crossing_lag is None and acf_evidence_nats < float(acf_min_evidence_nats):
-        raise ValueError("Automatic correlation length lacks ACF evidence")
-
-    width_correction = 3.0 / float(np.sqrt(-np.log(threshold)))
-    span = int(round(float(raw_span) * width_correction))
-    span = int(max(min_span, min(max_span, span)))
-    return span, {
-        "correlation_length_intervals": int(span),
-        "correlation_length_bp": int((2 * span * step_bp_) + 1),
-        "correlation_length_method": "acf_crossing",
-        "crossing_lag": -1 if crossing_lag is None else int(crossing_lag),
-        "acf_evidence_nats": float(acf_evidence_nats),
-    }
-
-
 def _resolve_budget_ess_max_lag(
     n_loci: int,
     correlation_length: int | None = None,
 ) -> int:
     r"""Resolve the ESS autocorrelation lag cap from a broad background scale."""
     n_loci_ = int(max(1, n_loci))
-    return int(
-        min(
-            n_loci_ - 1,
-            max(1, 4 * max(1, min(n_loci_, int(correlation_length or 1)))),
-        )
-    )
+    if correlation_length is None:
+        raise ValueError("ESS truncation requires a correlation length")
+    return int(min(n_loci_ - 1, max(1, int(correlation_length))))
 
 
 def _resolve_budget_bootstrap_bandwidth(
@@ -802,6 +552,8 @@ def _estimate_wild_bootstrap_score_null(
     bootstrap draws estimate the positive-tail score mass expected under that
     fitted null.
     """
+    if correlation_length is None:
+        raise ValueError("Budget null estimation requires a correlation length")
     centered = np.asarray(centered_matrix, dtype=np.float64)
     residual_template, fitted_scores, positive_consensus = (
         _fit_budget_null_residual_template(
@@ -847,11 +599,6 @@ def _estimate_wild_bootstrap_score_null(
     null_threshold = float(null_center + (2.0 * null_scale))
 
     n_samples, n_loci = centered.shape
-    if correlation_length is None:
-        correlation_length, _ = estimate_correlation_length(
-            observed_scores_,
-            step_bp=step_bp,
-        )
     bandwidth = _resolve_budget_bootstrap_bandwidth(
         n_loci,
         correlation_length=correlation_length,
@@ -1240,6 +987,8 @@ def _estimate_wild_bootstrap_direct_score_null(
     stability_rel_tol: float = 2.5e-2,
 ) -> dict[str, float | int | str | np.ndarray]:
     r"""Draw nulls from generic score tracks by a dependent wild bootstrap"""
+    if correlation_length is None:
+        raise ValueError("Budget null estimation requires a correlation length")
     scores = np.asarray(score_track, dtype=np.float64)
     if scores.ndim != 1:
         raise ValueError("`score_track` must be one-dimensional")
@@ -1266,11 +1015,6 @@ def _estimate_wild_bootstrap_direct_score_null(
     null_soft_scale = float(max(null_scale, 1.0e-6))
     null_threshold = float(null_center + (2.0 * null_scale))
 
-    if correlation_length is None:
-        correlation_length, _ = estimate_correlation_length(
-            observed_scores,
-            step_bp=step_bp,
-        )
     bandwidth = _resolve_budget_bootstrap_bandwidth(
         observed_scores.size,
         correlation_length=correlation_length,
@@ -1516,6 +1260,7 @@ def estimate_budget_nonnull_fraction_from_score_track(
     if return_details:
         return nonnull_fraction, details
     return nonnull_fraction
+
 
 def fit_beta_prior_mle(
     successes: np.ndarray,

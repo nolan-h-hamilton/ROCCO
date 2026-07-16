@@ -84,8 +84,6 @@ def get_bigwig_chrom_scores(
     bigwig_file: str,
     chromosome: str,
     chrom_sizes_file: str,
-    const_scale: float = 1.0,
-    round_digits: int = 5,
 ):
     r"""Read one chromosome score track directly from a bigWig file."""
 
@@ -164,15 +162,10 @@ def get_bigwig_chrom_scores(
         step,
         dtype=np.int64,
     )
-    full_vals = np.zeros(full_intervals.size, dtype=np.float64)
+    full_vals = np.full(full_intervals.size, np.nan, dtype=np.float64)
     full_vals[idx] = vals
 
-    if const_scale >= 0:
-        if const_scale == 0:
-            logger.warning("You are scaling the values by 0.")
-        full_vals = full_vals * float(const_scale)
-
-    return full_intervals.astype(int), np.round(full_vals, round_digits)
+    return full_intervals.astype(int), full_vals
 
 
 def _estimate_fragment_length(
@@ -553,7 +546,6 @@ def generate_chrom_matrix(
     r"""Create a matrix of values for a given chromosome from BAM or bigWig files."""
 
     interval_matrix = []
-    vals_matrix = []
     track_types = {get_track_type(input_file) for input_file in input_files}
     if len(track_types) != 1:
         raise ValueError("All input files must share the same type.")
@@ -599,8 +591,6 @@ def generate_chrom_matrix(
                     input_file,
                     chromosome,
                     chrom_sizes_file,
-                    const_scale,
-                    round_digits,
                 )
             )
         if count_processes > 1:
@@ -613,11 +603,10 @@ def generate_chrom_matrix(
     for input_file, (intervals_, vals_) in zip(input_files, count_results):
         if intervals_ is None or vals_ is None:
             logger.warning(
-                f"No data found for {input_file} in chromosome {chromosome}. Excluding this track for {chromosome}."
+                f"No data found for {input_file} in chromosome {chromosome}. Retaining an empty row for this track."
             )
             continue
         interval_matrix.append(intervals_)
-        vals_matrix.append(vals_)
     if len(interval_matrix) == 0:
         logger.warning(
             f"No data found in the files {str(input_files)} for chromosome {chromosome}. Returning (None,None)."
@@ -630,12 +619,25 @@ def generate_chrom_matrix(
             raise ValueError(
                 f"bigWig inputs for {chromosome} do not share one fixed binning scheme"
             )
-    matrix_dtype = np.float32 if low_memory else np.float64
-    count_matrix = np.zeros(
-        (len(interval_matrix), len(common_intervals)),
+        common_step = int(interval_diffs[0])
+        for intervals_ in interval_matrix:
+            if intervals_.size > 1 and np.any(np.diff(intervals_) != common_step):
+                raise ValueError(
+                    f"bigWig inputs for {chromosome} do not share one fixed bin width"
+                )
+    if track_type == "bigwig":
+        matrix_dtype = np.float64
+    else:
+        matrix_dtype = np.float32 if low_memory else np.float64
+    fill_value = np.nan if track_type == "bigwig" else 0.0
+    count_matrix = np.full(
+        (len(input_files), len(common_intervals)),
+        fill_value,
         dtype=matrix_dtype,
     )
-    for i, (intervals_, vals_) in enumerate(zip(interval_matrix, vals_matrix)):
+    for i, (intervals_, vals_) in enumerate(count_results):
+        if intervals_ is None or vals_ is None:
+            continue
         idx = np.searchsorted(common_intervals, intervals_)
         count_matrix[i, idx] = np.asarray(vals_, dtype=matrix_dtype)
 
