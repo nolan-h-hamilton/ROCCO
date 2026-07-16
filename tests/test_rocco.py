@@ -249,8 +249,9 @@ def test_score_loci_wls_log_scales_input():
     assert "sample_intercepts" not in details
     assert "sample_baselines" not in details
     assert np.allclose(details["mean"], np.array([-1.5, 1.5]))
-    assert np.allclose(details["z_scores"], np.array([-0.67449076, 0.67449076]))
-    assert np.allclose(scores, np.array([-0.67449076, 0.67449076]))
+    expected = (details["mean"] + 1.0) / (details["standard_error"] + 1.0)
+    assert np.allclose(details["z_scores"], expected)
+    assert np.allclose(scores, expected + 1.0)
 
 
 @pytest.mark.correctness
@@ -261,8 +262,10 @@ def test_score_loci_wls_explicit_min_effect_shrinks_standardized_score():
         return_details=True,
     )
     assert np.isclose(details["min_effect"], 0.5)
-    assert scores[1] < details["z_scores"][1]
-    assert scores[0] < details["z_scores"][0]
+    expected = (details["mean"] - 0.5 + 1.0) / (
+        details["standard_error"] + 1.0
+    )
+    assert np.allclose(scores, expected + 1.0)
 
 
 @pytest.mark.correctness
@@ -347,8 +350,9 @@ def test_native_wls_scores_tied_large_matrix():
     )
     assert scores.shape == (250000,)
     assert np.allclose(details["mean"], 0.0)
-    assert np.allclose(details["z_scores"], 0.0)
-    assert np.allclose(scores, -1.0)
+    expected = (details["mean"] + 1.0) / (details["standard_error"] + 1.0)
+    assert np.allclose(details["z_scores"], expected)
+    assert np.allclose(scores, expected)
     assert np.all(details["standard_error"] > 0.0)
 
 
@@ -618,6 +622,19 @@ def test_budget_nonnull_fraction_from_wild_bootstrap_reports_soft_count_metadata
     assert meta["null_reference_mean_positive_consensus"] >= 0.0
     assert meta["negative_support_size"] > 0.0
     assert 0.0 < meta["negative_fraction"] <= 1.0
+
+
+@pytest.mark.correctness
+def test_dwb_null_adaptive_stop_uses_stricter_minimum_draws():
+    meta = ROCCO_INFERENCE._estimate_wild_bootstrap_direct_score_null(
+        np.zeros(128, dtype=np.float64),
+        correlation_length=4,
+        num_null_draws=20,
+    )
+
+    assert meta["num_null_draws"] == 12
+    assert meta["max_null_draws"] == 20
+    assert meta["adaptive_stop"]
 
 
 @pytest.mark.correctness
@@ -1129,6 +1146,62 @@ def test_generate_chrom_matrix_counts_bam_with_native_backend(tmp_path):
 
 
 @pytest.mark.correctness
+def test_generate_chrom_matrix_smooths_each_bam_by_fragment_length(monkeypatch, tmp_path):
+    bam_a = tmp_path / "frag75.bam"
+    bam_b = tmp_path / "frag10.bam"
+    chrom_sizes_path = tmp_path / "toy_frag_smooth.sizes"
+    bam_a.write_bytes(b"")
+    bam_b.write_bytes(b"")
+    chrom_sizes_path.write_text("chr1\t125\n", encoding="utf-8")
+    monkeypatch.setattr(ROCCO_READTRACKS, "_BAM_COUNT_METADATA_CACHE", {})
+
+    class FakeNativeCounts:
+        def is_alignment_paired_end(self, *args, **kwargs):
+            return False
+
+        def get_alignment_read_length(self, *args, **kwargs):
+            return 25
+
+        def get_alignment_mapped_read_count(self, *args, **kwargs):
+            return 1000000, 1000000
+
+        def get_alignment_fragment_length(self, bam_file, **kwargs):
+            return 75 if bam_file == str(bam_a) else 10
+
+        def get_alignment_chrom_range(self, *args, **kwargs):
+            return 0, 125
+
+        def count_alignment_region(self, bam_file, *args, **kwargs):
+            if bam_file == str(bam_a):
+                return np.array([0.0, 0.0, 4.0, 8.0, 0.0], dtype=np.float32)
+            return np.array([0.0, 5.0, 0.0, 0.0, 0.0], dtype=np.float32)
+
+    monkeypatch.setattr(ROCCO_READTRACKS, "_hts_counts", FakeNativeCounts())
+
+    intervals, count_matrix = generate_chrom_matrix(
+        "chr1",
+        [str(bam_a), str(bam_b)],
+        str(chrom_sizes_path),
+        step=25,
+        norm_method="CPM",
+        flag_exclude=0,
+        ignore_for_norm=[],
+        round_digits=6,
+        num_processors=1,
+    )
+
+    assert intervals.tolist() == [25, 50, 75, 100]
+    assert np.allclose(
+        count_matrix,
+        np.array(
+            [
+                [1.333333, 4.0, 4.0, 4.0],
+                [5.0, 0.0, 0.0, 0.0],
+            ]
+        ),
+    )
+
+@pytest.mark.correctness
 def test_generate_chrom_matrix_low_memory_uses_float32(tmp_path):
     bam_path = tmp_path / "toy_lowmem.bam"
     chrom_sizes_path = tmp_path / "toy_lowmem.sizes"
@@ -1234,6 +1307,190 @@ def test_raw_count_matrix_uses_native_interval_counter(tmp_path):
     assert rows[1] == "chr1_90_110\t1"
     assert rows[2] == "chr1_100_150\t2"
     assert rows[3] == "chr1_150_210\t2"
+
+
+@pytest.mark.correctness
+def test_get_ecdf_counts_sampled_intervals_in_native_batches(monkeypatch, tmp_path):
+    bam_a = tmp_path / "a.bam"
+    bam_b = tmp_path / "b.bam"
+    bam_a.write_bytes(b"")
+    bam_b.write_bytes(b"")
+    native_calls = []
+
+    class FakeNativeCounts:
+        def count_alignment_intervals(
+            self,
+            alignment_path,
+            chromosomes,
+            starts,
+            ends,
+            **kwargs,
+        ):
+            native_calls.append(
+                (alignment_path, list(chromosomes), list(starts), list(ends), kwargs)
+            )
+            if alignment_path == str(bam_a):
+                return np.array([2.0, 4.0], dtype=np.float32)
+            return np.array([6.0, 8.0], dtype=np.float32)
+
+    def fail_alignment_file(*args, **kwargs):
+        raise AssertionError("ECDF sampling should use native interval batches")
+
+    monkeypatch.setattr(
+        ROCCO_SCORES,
+        "_random_intervals",
+        lambda *args, **kwargs: [("chr1", 10, 110), ("chr2", 20, 120)],
+    )
+    monkeypatch.setattr(ROCCO_SCORES, "_hts_counts", FakeNativeCounts())
+    monkeypatch.setattr(ROCCO_SCORES.pysam, "AlignmentFile", fail_alignment_file)
+
+    empirical_null = ROCCO_SCORES.get_ecdf(
+        [str(bam_a), str(bam_b)],
+        length=100,
+        chrom_sizes_file=str(tmp_path / "chrom.sizes"),
+        nsamples=2,
+        sample_scaling_constants=[0.5, 2.0],
+        seed=7,
+        row_scale=100,
+        pc=1,
+        thread_count=3,
+    )
+
+    transformed = np.log2(np.array([[2.0, 13.0], [3.0, 17.0]]))
+    expected = np.sort(np.percentile(transformed, 75, axis=1))
+    assert np.allclose(empirical_null.values, expected)
+    assert len(native_calls) == 2
+    for _, chromosomes, starts, ends, kwargs in native_calls:
+        assert chromosomes == ["chr1", "chr2"]
+        assert starts == [10, 20]
+        assert ends == [110, 120]
+        assert kwargs["one_read_per_bin"] == 1
+        assert kwargs["thread_count"] == 3
+        assert kwargs["flag_exclude"] == 0x4
+        assert kwargs["min_mapping_quality"] == 10
+        assert kwargs["count_mode"] == "coverage"
+
+
+@pytest.mark.correctness
+def test_multi_ecdf_serial_path_avoids_pool(monkeypatch, tmp_path):
+    bam_path = tmp_path / "toy.bam"
+    bam_path.write_bytes(b"")
+    calls = []
+
+    def fake_get_ecdf(
+        bam_files,
+        length,
+        chrom_sizes_file,
+        nsamples,
+        sample_scaling_constants,
+        seed,
+        null_stat,
+        trim_proportion,
+        row_scale,
+        pc,
+        thread_count,
+    ):
+        calls.append(
+            (
+                bam_files,
+                int(length),
+                chrom_sizes_file,
+                int(nsamples),
+                sample_scaling_constants,
+                seed,
+                row_scale,
+                pc,
+                thread_count,
+            )
+        )
+        return ROCCO_SCORES.EmpiricalNull(np.array([float(length)]))
+
+    def fail_get_context(*args, **kwargs):
+        raise AssertionError("proc=1 should not create a multiprocessing pool")
+
+    monkeypatch.setattr(ROCCO_SCORES, "get_ecdf", fake_get_ecdf)
+    monkeypatch.setattr(ROCCO_SCORES.multiprocessing, "get_context", fail_get_context)
+
+    result = ROCCO_SCORES.multi_ecdf(
+        [str(bam_path)],
+        np.array([200, 100, 200]),
+        str(tmp_path / "chrom.sizes"),
+        nsamples_per_length=9,
+        sample_scaling_constants=[1.5],
+        seed=11,
+        proc=1,
+        row_scale=50,
+        pc=2,
+        thread_count=4,
+    )
+
+    assert list(result.keys()) == [100, 200]
+    assert [call[1] for call in calls] == [100, 200]
+    assert all(call[3:] == (9, [1.5], 11, 50, 2, 4) for call in calls)
+
+
+@pytest.mark.correctness
+def test_score_peaks_regenerates_stale_count_matrix(monkeypatch, tmp_path):
+    bam_path = tmp_path / "toy.bam"
+    peak_path = tmp_path / "peaks.bed"
+    count_path = tmp_path / "counts.tsv"
+    output_path = tmp_path / "scored.bed"
+    bam_path.write_bytes(b"")
+    peak_path.write_text(
+        "chr1\t0\t100\n" "chr1\t100\t200\n",
+        encoding="utf-8",
+    )
+    count_path.write_text(
+        "peak_name\ttoy\n" "chr1_0_100\t1\n",
+        encoding="utf-8",
+    )
+    regenerate_calls = []
+
+    def fake_raw_count_matrix(bam_files, peak_file, output_file, bed_columns=3):
+        regenerate_calls.append((bam_files, peak_file, output_file, bed_columns))
+        Path(output_file).write_text(
+            "peak_name\ttoy\n" "chr1_0_100\t4\n" "chr1_100_200\t6\n",
+            encoding="utf-8",
+        )
+        return output_file
+
+    class FakeAlignmentFile:
+        mapped = 100
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def count(self, *args, **kwargs):
+            return 0
+
+        def close(self):
+            pass
+
+    def fake_multi_ecdf(bam_files, lengths, chrom_sizes_file, **kwargs):
+        return {
+            int(length): ROCCO_SCORES.EmpiricalNull(np.array([0.0, 100.0]))
+            for length in np.asarray(lengths)
+        }
+
+    monkeypatch.setattr(ROCCO_SCORES, "raw_count_matrix", fake_raw_count_matrix)
+    monkeypatch.setattr(ROCCO_SCORES, "get_read_length", lambda *args, **kwargs: 100)
+    monkeypatch.setattr(ROCCO_SCORES.pysam, "AlignmentFile", FakeAlignmentFile)
+    monkeypatch.setattr(ROCCO_SCORES, "multi_ecdf", fake_multi_ecdf)
+
+    scores, _, _ = ROCCO_SCORES.score_peaks(
+        [str(bam_path)],
+        chrom_sizes_file=str(tmp_path / "chrom.sizes"),
+        peak_file=str(peak_path),
+        count_matrix_file=str(count_path),
+        effective_genome_size=10000,
+        output_file=str(output_path),
+        ecdf_nsamples=2,
+        proc=1,
+    )
+
+    assert len(regenerate_calls) == 1
+    assert scores.shape == (2,)
+    assert len(output_path.read_text(encoding="utf-8").splitlines()) == 2
 
 
 @pytest.mark.correctness

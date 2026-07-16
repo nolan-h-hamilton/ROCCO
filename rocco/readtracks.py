@@ -227,6 +227,20 @@ def _compute_native_scale_factor(
     )
 
 
+def _smooth_track_by_bins(vals: np.ndarray, window_bins: int) -> np.ndarray:
+    window_bins_ = int(max(1, window_bins))
+    vals_ = np.asarray(vals, dtype=np.float64)
+    if window_bins_ <= 1 or vals_.size <= 1:
+        return vals_
+    left = int(window_bins_ // 2)
+    right = int(window_bins_ - left - 1)
+    idx = np.arange(vals_.size, dtype=np.int64)
+    starts = np.maximum(0, idx - left)
+    stops = np.minimum(vals_.size, idx + right + 1)
+    cumsum = np.concatenate(([0.0], np.cumsum(vals_, dtype=np.float64)))
+    return (cumsum[stops] - cumsum[starts]) / (stops - starts)
+
+
 def _get_bam_count_metadata(
     bam_file: str,
     step: int,
@@ -281,13 +295,16 @@ def _get_bam_count_metadata(
 
     norm_read_length = int(read_length)
     resolved_extend_bp = int(extend_reads)
-    paired_end_mode = False
-    if int(extend_reads) == 0:
+    if int(extend_reads) > 0:
+        fragment_length = int(extend_reads)
+    else:
         fragment_length = _estimate_fragment_length(
             bam_file,
             flag_exclude=max(0, int(flag_exclude)),
             num_processors=threads,
         )
+    paired_end_mode = False
+    if int(extend_reads) == 0:
         if paired_end:
             if fragment_length is not None and fragment_length > 0:
                 norm_read_length = int(fragment_length)
@@ -319,6 +336,9 @@ def _get_bam_count_metadata(
         norm_read_length = int(extend_reads)
         resolved_extend_bp = int(extend_reads)
 
+    if fragment_length is None or int(fragment_length) <= 0:
+        fragment_length = int(norm_read_length)
+
     norm_scale = _compute_native_scale_factor(
         norm_method=norm_method,
         effective_genome_size=effective_genome_size,
@@ -331,6 +351,7 @@ def _get_bam_count_metadata(
         "paired_end": paired_end,
         "paired_end_mode": paired_end_mode,
         "read_length": int(read_length),
+        "fragment_length": int(fragment_length),
         "norm_read_length": int(norm_read_length),
         "resolved_extend_bp": int(resolved_extend_bp),
         "mapped_reads": int(mapped_reads),
@@ -415,6 +436,14 @@ def get_bam_chrom_reads(
         scale_factor=scale_factor,
     )
     threads = int(metadata["threads"])
+    fragment_smooth_bins = int(
+        max(
+            1,
+            np.ceil(float(metadata["fragment_length"]) / float(max(int(step), 1))),
+        )
+    )
+    smooth_left = int(fragment_smooth_bins // 2)
+    smooth_right = int(fragment_smooth_bins - smooth_left - 1)
 
     try:
         chrom_start, chrom_end = native.get_alignment_chrom_range(
@@ -449,6 +478,8 @@ def get_bam_chrom_reads(
         chrom_size,
         int(np.ceil(max(chrom_end, count_start + 1) / float(step)) * step),
     )
+    count_start = max(0, count_start - (smooth_left * int(step)))
+    count_end = min(chrom_size, count_end + (smooth_right * int(step)))
     if count_end <= count_start:
         count_end = min(chrom_size, count_start + step)
 
@@ -473,6 +504,7 @@ def get_bam_chrom_reads(
     intervals = count_start + (np.arange(vals.size, dtype=np.int64) * int(step))
 
     vals = vals * float(metadata["norm_scale"])
+    vals = _smooth_track_by_bins(vals, fragment_smooth_bins)
     if scale_by_step:
         vals = vals / float(step)
         logger.info(f"Dividing `vals` by step size (bp): {step}")

@@ -16,10 +16,7 @@ import pandas as pd
 import pysam
 from scipy import stats
 
-try:
-    from . import _hts_counts
-except ImportError:  # pragma: no cover - exercised in source-only environments
-    _hts_counts = None
+from . import _hts_counts
 
 from rocco.readtracks import (
     get_chroms_and_sizes,
@@ -70,15 +67,6 @@ def _random_intervals(
         (chroms[int(chrom_idx)], int(start), int(start + length_))
         for chrom_idx, start in zip(chrom_indices, starts)
     ]
-
-
-def _require_native_counter():
-    if _hts_counts is None:
-        raise ImportError(
-            "The HTSlib counting code is unavailable. "
-            "Reinstall ROCCO so the `rocco._hts_counts` extension is built."
-        )
-    return _hts_counts
 
 
 def _read_peak_intervals(
@@ -134,18 +122,6 @@ class EmpiricalNull:
         if x_.ndim == 0:
             return float(survival)
         return survival
-
-def _check_read(
-    read: pysam.AlignedSegment, min_mapping_quality: int = 10
-):
-    r"""Called by `pysam.AlignmentFile.count()` to determine if a read is suitable for counting
-    :param read: A `pysam` read from a BAM file.
-    """
-    return (
-        not read.is_unmapped
-        and read.mapping_quality >= min_mapping_quality
-    )
-
 
 def _null_stat(vals: np.ndarray, percentile: float = 75.0):
     r"""Default statistic for `get_ecdf()` and `score_peaks()`.
@@ -264,7 +240,6 @@ def raw_count_matrix(
 
     """
     bam_files = check_type_bam_files(bam_files)
-    native = _require_native_counter()
     chroms, starts, ends, _, peak_names = _read_peak_intervals(
         peak_file,
         min_columns=bed_columns,
@@ -296,7 +271,7 @@ def raw_count_matrix(
             len(bam_files),
             bam_file,
         )
-        counts = native.count_alignment_intervals(
+        counts = _hts_counts.count_alignment_intervals(
             bam_file,
             chroms,
             starts,
@@ -450,6 +425,7 @@ def score_peaks(
     lengths = np.zeros(matrix_.shape[0])
     bed_strings = []
     names = []
+    read_peak_file = False
     try:
         chroms, starts, ends, bed_strings, names = _read_peak_intervals(
             peak_file,
@@ -459,6 +435,7 @@ def score_peaks(
             [end - start for start, end in zip(starts, ends)],
             dtype=np.float64,
         )
+        read_peak_file = True
     except Exception as e:
         if matrix_df is None:
             raise e
@@ -479,6 +456,27 @@ def score_peaks(
         logger.info(
             f"Extracted peak lengths from count matrix file: {count_matrix_file}"
         )
+    if read_peak_file:
+        expected_shape = (int(lengths.shape[0]), int(len(bam_files_)))
+        if matrix_.shape != expected_shape:
+            logger.info(
+                "Regenerating count matrix because %s has shape %s but %s implies %s.",
+                count_matrix_file,
+                tuple(matrix_.shape),
+                peak_file,
+                expected_shape,
+            )
+            count_matrix_file = raw_count_matrix(
+                bam_files_, peak_file, count_matrix_file, bed_columns=3
+            )
+            matrix_df = pd.read_csv(
+                count_matrix_file, sep="\t", header=0, index_col=0
+            )
+            matrix_ = matrix_df.values
+            if matrix_.shape != expected_shape:
+                raise ValueError(
+                    f"Count matrix shape {matrix_.shape} does not match peak/BAM shape {expected_shape}."
+                )
 
     # Normalize each sample's counts so their total coverage is comparable to the 'effective genome size'
     if effective_genome_size is None:
@@ -533,6 +531,7 @@ def score_peaks(
         logger.info(
             f"Using random seed: {seed} to sample length-binned regions for ECDFs."
         )
+    ecdf_thread_count = max(1, int(threads_) // max(int(proc_), 1))
     ecdf_dict = multi_ecdf(
         bam_files,
         ecdf_lengths,
@@ -543,6 +542,7 @@ def score_peaks(
         proc=proc_,
         row_scale=row_scale,
         pc=pc,
+        thread_count=ecdf_thread_count,
     )
 
     # (i) Signal value for a peak is the ~75th percentile~ of 1x-normalized, log2-transformed, length-scaled counts
@@ -634,6 +634,7 @@ def get_ecdf(
     trim_proportion: float = 0.0,
     row_scale: float = 1000.0,
     pc: float = 1.0,
+    thread_count: int = 0,
 ):
     r"""Approximate a null distribution for one representative length bin.
 
@@ -659,7 +660,6 @@ def get_ecdf(
     """
 
     bam_files_ = check_type_bam_files(bam_files)
-    len_avgs = []
     sample_scaling_constants_ = (
         np.ones(len(bam_files_), dtype=np.float64)
         if sample_scaling_constants is None
@@ -678,36 +678,50 @@ def get_ecdf(
         nsamples=int(nsamples),
         seed=seed,
     )
-    aln_handles = [
-        pysam.AlignmentFile(bam_file, "rb")
-        for bam_file in bam_files_
-    ]
-    try:
-        for chrom, start, end in random_intervals:
-            cperlen = np.zeros(len(bam_files_), dtype=np.float64)
-            for j, aln_sample in enumerate(aln_handles):
-                cperlen[j] = (
-                    aln_sample.count(
-                        chrom,
-                        start,
-                        end,
-                        read_callback=_check_read,
-                    )
-                    * sample_scaling_constants_[j]
-                )
-            transformed = np.log2(
-                np.maximum(
-                    np.asarray(cperlen, dtype=np.float64)
-                    * (float(row_scale) / float(max(int(length), 1)))
-                    + float(pc),
-                    float(pc),
-                )
-            )
-            len_avgs.append(null_stat(transformed))
-    finally:
-        for aln_sample in aln_handles:
-            aln_sample.close()
-    len_avgs = np.array(len_avgs)
+    chroms = [chrom for chrom, _, _ in random_intervals]
+    starts = [int(start) for _, start, _ in random_intervals]
+    ends = [int(end) for _, _, end in random_intervals]
+    interval_counts = np.zeros(
+        (len(random_intervals), len(bam_files_)),
+        dtype=np.float64,
+    )
+    for sample_idx, bam_file in enumerate(bam_files_):
+        counts = _hts_counts.count_alignment_intervals(
+            bam_file,
+            chroms,
+            starts,
+            ends,
+            one_read_per_bin=1,
+            thread_count=int(thread_count),
+            flag_include=0,
+            flag_exclude=0x4,
+            shift_forward_strand53=0,
+            shift_reverse_strand53=0,
+            extend_bp=0,
+            max_insert_size=1000,
+            paired_end_mode=0,
+            infer_fragment_length=0,
+            min_mapping_quality=10,
+            min_template_length=-1,
+            count_mode="coverage",
+        )
+        interval_counts[:, sample_idx] = (
+            np.asarray(counts, dtype=np.float64)
+            * sample_scaling_constants_[sample_idx]
+        )
+
+    transformed = np.log2(
+        np.maximum(
+            interval_counts
+            * (float(row_scale) / float(max(int(length), 1)))
+            + float(pc),
+            float(pc),
+        )
+    )
+    len_avgs = np.asarray(
+        [null_stat(transformed[idx, :]) for idx in range(transformed.shape[0])],
+        dtype=np.float64,
+    )
     if trim_proportion > 0:
         len_avgs = stats.trim1(
             len_avgs,
@@ -728,6 +742,7 @@ def multi_ecdf(
     null_stat: Callable[[np.ndarray], float] = _null_stat,
     row_scale: float = 1000.0,
     pc: float = 1.0,
+    thread_count: int = 0,
 ):
     r"""Compute ECDFs in parallel for each unique representative length bin.
 
@@ -737,9 +752,27 @@ def multi_ecdf(
     bam_files_ = check_type_bam_files(bam_files)
     if proc is None:
         proc = min(max(multiprocessing.cpu_count() // 2 - 1, 1), 8)
+    proc = int(proc)
 
     uniq_lengths = np.unique(lengths)
     ecdf_len_dict = OrderedDict.fromkeys(uniq_lengths, None)
+    if proc <= 1 or len(uniq_lengths) <= 1:
+        for len_ in ecdf_len_dict:
+            ecdf_len_dict[len_] = get_ecdf(
+                bam_files_,
+                len_,
+                chrom_sizes_file,
+                nsamples_per_length,
+                sample_scaling_constants,
+                seed,
+                null_stat,
+                0.0,
+                row_scale,
+                pc,
+                thread_count,
+            )
+        return ecdf_len_dict
+
     ctx = multiprocessing.get_context("fork")
     with ctx.Pool(processes=proc) as pool:
         args = [
@@ -754,6 +787,7 @@ def multi_ecdf(
                 0.0,
                 row_scale,
                 pc,
+                thread_count,
             )
             for len_ in ecdf_len_dict
         ]

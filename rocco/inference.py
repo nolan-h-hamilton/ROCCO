@@ -265,6 +265,7 @@ def _score_centered_wls_matrix(
     ) = result_native
     se = np.asarray(se_arr, dtype=np.float64)
     mean = np.asarray(mean_arr, dtype=np.float64)
+    shifted_z_scores = (mean + 1.0) / (se + 1.0)
     result = (
         np.asarray(scores_arr, dtype=np.float64),
         {
@@ -273,7 +274,7 @@ def _score_centered_wls_matrix(
             "prior_variance": np.asarray(prior_var_arr, dtype=np.float64),
             "moderated_variance": np.asarray(moderated_var_arr, dtype=np.float64),
             "standard_error": se,
-            "z_scores": mean / np.maximum(se, 1.0e-8),
+            "z_scores": shifted_z_scores,
             "min_effect": float(0.0 if min_effect is None else max(min_effect, 0.0)),
             "precision_floor_ratio": float(precision_floor_ratio_),
             "degrees_of_freedom": np.full(
@@ -783,8 +784,8 @@ def _estimate_wild_bootstrap_score_null(
     progress_label: str | None = None,
     num_processes: int = 1,
     min_null_draws: int | None = None,
-    stability_abs_tol: float = 5.0e-3,
-    stability_rel_tol: float = 5.0e-2,
+    stability_abs_tol: float = 2.5e-3,
+    stability_rel_tol: float = 2.5e-2,
 ) -> dict[str, float | int | str | np.ndarray]:
     r"""Estimate the chromosome score null by a dependent wild residual bootstrap.
 
@@ -858,7 +859,7 @@ def _estimate_wild_bootstrap_score_null(
     kernel = _build_budget_bootstrap_kernel(bandwidth)
     num_draws = int(max(1, num_null_draws))
     min_draws = int(
-        min(num_draws, max(4, 8 if min_null_draws is None else min_null_draws))
+        min(num_draws, max(4, 12 if min_null_draws is None else min_null_draws))
     )
     process_count = int(min(max(1, num_processes), num_draws))
     batch_size = int(max(1, process_count))
@@ -922,6 +923,13 @@ def _estimate_wild_bootstrap_score_null(
                 draws_used,
                 mean_units,
                 m2_units,
+                min_draws=min_draws,
+                abs_tol=stability_abs_tol,
+                rel_tol=stability_rel_tol,
+            ) and _budget_null_stable_enough(
+                draws_used,
+                mean_tail_occupancy,
+                m2_tail_occupancy,
                 min_draws=min_draws,
                 abs_tol=stability_abs_tol,
                 rel_tol=stability_rel_tol,
@@ -989,6 +997,13 @@ def _estimate_wild_bootstrap_score_null(
                     draws_used,
                     mean_units,
                     m2_units,
+                    min_draws=min_draws,
+                    abs_tol=stability_abs_tol,
+                    rel_tol=stability_rel_tol,
+                ) and _budget_null_stable_enough(
+                    draws_used,
+                    mean_tail_occupancy,
+                    m2_tail_occupancy,
                     min_draws=min_draws,
                     abs_tol=stability_abs_tol,
                     rel_tol=stability_rel_tol,
@@ -1221,8 +1236,8 @@ def _estimate_wild_bootstrap_direct_score_null(
     random_seed: int = 0,
     progress_label: str | None = None,
     min_null_draws: int | None = None,
-    stability_abs_tol: float = 5.0e-3,
-    stability_rel_tol: float = 5.0e-2,
+    stability_abs_tol: float = 2.5e-3,
+    stability_rel_tol: float = 2.5e-2,
 ) -> dict[str, float | int | str | np.ndarray]:
     r"""Draw nulls from generic score tracks by a dependent wild bootstrap"""
     scores = np.asarray(score_track, dtype=np.float64)
@@ -1263,7 +1278,7 @@ def _estimate_wild_bootstrap_direct_score_null(
     kernel = _build_budget_bootstrap_kernel(bandwidth)
     num_draws = int(max(1, num_null_draws))
     min_draws = int(
-        min(num_draws, max(4, 8 if min_null_draws is None else min_null_draws))
+        min(num_draws, max(4, 12 if min_null_draws is None else min_null_draws))
     )
     draws_used = 0
     mean_mass = 0.0
@@ -1324,6 +1339,13 @@ def _estimate_wild_bootstrap_direct_score_null(
             draws_used,
             mean_units,
             m2_units,
+            min_draws=min_draws,
+            abs_tol=stability_abs_tol,
+            rel_tol=stability_rel_tol,
+        ) and _budget_null_stable_enough(
+            draws_used,
+            mean_tail_occupancy,
+            m2_tail_occupancy,
             min_draws=min_draws,
             abs_tol=stability_abs_tol,
             rel_tol=stability_rel_tol,

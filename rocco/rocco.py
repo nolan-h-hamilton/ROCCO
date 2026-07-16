@@ -41,7 +41,6 @@ from rocco.readtracks import (
 )
 import rocco.scores as posthoc_scores
 
-
 logger = logging.getLogger(__name__)
 _CHROM_SOLVE_PROCESS_STATE: dict | None = None
 
@@ -438,8 +437,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--budget_null_draws",
         type=int,
-        default=25,
-        help="Maximum number of null draws used when initializing chromosome budgets. Default is 25.",
+        default=64,
+        help="Maximum number of null draws used when initializing chromosome budgets. Default is 64.",
     )
     parser.add_argument(
         "--num_null_blocks",
@@ -456,13 +455,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--budget_posterior_quantile",
         type=float,
-        default=0.01,
+        default=0.1,
         help="Lower beta-posterior quantile used to summarize EB chromosome budgets. Smaller values are more conservative.",
     )
     parser.add_argument(
         "--gamma",
         type=float,
-        default=0.25,
+        default=1.0,
         help="Boundary penalty used by the exact DP.",
     )
     parser.add_argument(
@@ -493,13 +492,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--broad_score_lower_bound_z",
         type=float,
-        default=1.2816,
+        default=1.0,
         help="Weaker score floor used to build broad peak parents.",
     )
     parser.add_argument(
         "--score_prior_df",
         type=float,
-        default=6.0,
+        default=10.0,
         help="Prior degrees of freedom for EB variance shrinkage.",
     )
     parser.add_argument(
@@ -519,7 +518,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--step",
         "-w",
         type=int,
-        default=50,
+        default=100,
         help="Bin width used for BAM inputs. Ignored for bigWig inputs, which use their native binning scheme.",
     )
     parser.add_argument(
@@ -531,7 +530,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--min_mapping_score",
         type=int,
-        default=10,
+        default=20,
         help="Equivalent to samtools view -q.",
     )
     parser.add_argument(
@@ -654,12 +653,12 @@ def _prepare_args(parser: argparse.ArgumentParser) -> dict:
         not np.isfinite(float(args["broad_score_lower_bound_z"]))
         or float(args["broad_score_lower_bound_z"]) < 0.0
     ):
-        raise ValueError("`--broad_score_lower_bound_z` must be finite and non-negative")
-    if (
-        args["peak_mode"] in {"broad", "both"}
-        and float(args["broad_score_lower_bound_z"])
-        > float(args["score_lower_bound_z"])
-    ):
+        raise ValueError(
+            "`--broad_score_lower_bound_z` must be finite and non-negative"
+        )
+    if args["peak_mode"] in {"broad", "both"} and float(
+        args["broad_score_lower_bound_z"]
+    ) > float(args["score_lower_bound_z"]):
         raise ValueError(
             "`--broad_score_lower_bound_z` cannot exceed `--score_lower_bound_z`"
         )
@@ -676,7 +675,10 @@ def _prepare_args(parser: argparse.ArgumentParser) -> dict:
         raise ValueError("`--dependence_span` must be positive")
     if args["peak_mode"] is not None and args["input_track_type"] != "bam":
         raise ValueError("`--peak_mode` sidecars require BAM inputs")
-    if args["peak_mode"] in {"broad", "both"} and args.get("score_min_effect") is not None:
+    if (
+        args["peak_mode"] in {"broad", "both"}
+        and args.get("score_min_effect") is not None
+    ):
         raise ValueError("Broad peak mode requires z-score optimization")
 
     if args["chrom_sizes_file"] is None:
@@ -1192,7 +1194,10 @@ def _build_chrom_cache(
             "num_loci": int(chrom_scores.shape[0]),
         }
 
-    if args.get("peak_mode") in {"narrow", "both"} and args["input_track_type"] == "bam":
+    if (
+        args.get("peak_mode") in {"narrow", "both"}
+        and args["input_track_type"] == "bam"
+    ):
         for chrom_, chrom_data in chrom_cache.items():
             chrom_data["summit_track_file"] = _cpy_narrowpeak_summit_track(
                 chrom_,
@@ -1243,9 +1248,7 @@ def _resolve_budgets(
     unit_budgets = {
         unit_key: min(
             max(
-                unit_budgets[unit_key]
-                * rescale
-                * float(args["scale_chrom_budgets"]),
+                unit_budgets[unit_key] * rescale * float(args["scale_chrom_budgets"]),
                 0.001,
             ),
             0.25,
@@ -1472,7 +1475,9 @@ def _build_broad_parent_records(
     chrom_cache: dict,
     chrom_budgets: dict,
     args: dict,
-) -> tuple[list[tuple[str, int, int]], dict[tuple[str, int, int], list[tuple[int, int]]]]:
+) -> tuple[
+    list[tuple[str, int, int]], dict[tuple[str, int, int], list[tuple[int, int]]]
+]:
     records: list[tuple[str, int, int]] = []
     block_map: dict[tuple[str, int, int], list[tuple[int, int]]] = {}
     for chrom_, chrom_data in chrom_cache.items():
@@ -1485,9 +1490,8 @@ def _build_broad_parent_records(
         z_scores = chrom_data.get("z_scores")
         if z_scores is None:
             raise ValueError("Broad peak mode requires stored z-scores")
-        weak_scores = (
-            np.asarray(z_scores, dtype=np.float64)
-            - float(args["broad_score_lower_bound_z"])
+        weak_scores = np.asarray(z_scores, dtype=np.float64) - float(
+            args["broad_score_lower_bound_z"]
         )
         weak_solution, _, weak_meta = solve_chrom_exact(
             weak_scores,
@@ -1586,8 +1590,7 @@ def _write_gapped_peak_file(
                 for block_start, block_end in blocks
             )
             block_starts = ",".join(
-                str(int(block_start) - start)
-                for block_start, _ in blocks
+                str(int(block_start) - start) for block_start, _ in blocks
             )
             thick_start = int(blocks[0][0])
             thick_end = int(blocks[-1][1])
@@ -1629,6 +1632,10 @@ def _generate_peak_mode_outputs(
     if args.get("input_track_type") != "bam":
         raise ValueError("Peak sidecars require BAM inputs")
 
+    peak_threads = int(args["threads"])
+    if peak_threads <= 0:
+        peak_threads = None
+
     sidecar_root = _peak_sidecar_root(final_output)
     if peak_mode in {"narrow", "both"}:
         summit_offsets_file = None
@@ -1653,6 +1660,7 @@ def _generate_peak_mode_outputs(
                 ecdf_nsamples=args["ecdf_samples"],
                 seed=args["ecdf_seed"],
                 proc=args["ecdf_proc"],
+                threads=peak_threads,
                 summit_offsets_file=summit_offsets_file,
             )
             kept_count = _filter_scored_peak_file_by_signal(
@@ -1710,6 +1718,7 @@ def _generate_peak_mode_outputs(
                 ecdf_nsamples=args["ecdf_samples"],
                 seed=args["ecdf_seed"],
                 proc=args["ecdf_proc"],
+                threads=peak_threads,
             )
             kept_count = _write_gapped_peak_file(
                 scored_parent_file,

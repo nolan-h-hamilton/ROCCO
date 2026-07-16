@@ -868,16 +868,17 @@ int rocco_score_centered_wls_f64(
             (double)sample_count / fmax(prior_precision_sum[locus_idx], 1.0e-8);
         moderated_variance_out[locus_idx] = (double)sample_count / locus_precision;
         standard_error_out[locus_idx] = sqrt(1.0 / locus_precision);
-        z_score = mean_out[locus_idx] / fmax(standard_error_out[locus_idx], 1.0e-8);
+        z_score = (mean_out[locus_idx] + 1.0) / (standard_error_out[locus_idx] + 1.0);
         if (use_min_effect != 0)
         {
             scores_out[locus_idx] =
-                (mean_out[locus_idx] - fmax(min_effect, 0.0)) /
-                fmax(standard_error_out[locus_idx], 1.0e-8);
+                ((mean_out[locus_idx] - fmax(min_effect, 0.0) + 1.0) /
+                 (standard_error_out[locus_idx] + 1.0)) +
+                1.0;
         }
         else
         {
-            scores_out[locus_idx] = z_score - lower_bound_z;
+            scores_out[locus_idx] = z_score - lower_bound_z + 1.0;
         }
     }
 
