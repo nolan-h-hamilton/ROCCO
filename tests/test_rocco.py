@@ -1567,16 +1567,17 @@ def test_score_peaks_regenerates_stale_count_matrix(monkeypatch, tmp_path):
     monkeypatch.setattr(ROCCO_SCORES.pysam, "AlignmentFile", FakeAlignmentFile)
     monkeypatch.setattr(ROCCO_SCORES, "multi_ecdf", fake_multi_ecdf)
 
-    scores, _, _ = ROCCO_SCORES.score_peaks(
-        [str(bam_path)],
-        chrom_sizes_file=str(tmp_path / "chrom.sizes"),
-        peak_file=str(peak_path),
-        count_matrix_file=str(count_path),
-        effective_genome_size=10000,
-        output_file=str(output_path),
-        ecdf_nsamples=2,
-        proc=1,
-    )
+    with ROCCO_SCORES.pd.option_context("mode.copy_on_write", True):
+        scores, _, _ = ROCCO_SCORES.score_peaks(
+            [str(bam_path)],
+            chrom_sizes_file=str(tmp_path / "chrom.sizes"),
+            peak_file=str(peak_path),
+            count_matrix_file=str(count_path),
+            effective_genome_size=10000,
+            output_file=str(output_path),
+            ecdf_nsamples=2,
+            proc=1,
+        )
 
     assert len(regenerate_calls) == 1
     assert scores.shape == (2,)

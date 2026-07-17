@@ -478,6 +478,7 @@ def score_peaks(
                     f"Count matrix shape {matrix_.shape} does not match peak/BAM shape {expected_shape}."
                 )
 
+    matrix_ = matrix_df.to_numpy(dtype=np.float64, copy=True)
     # Normalize each sample's counts so their total coverage is comparable to the 'effective genome size'
     if effective_genome_size is None:
         effective_genome_size = np.sum(
