@@ -33,7 +33,7 @@ from rocco.inference import (
     estimate_empirical_bayes_budgets,
     score_loci_wls,
 )
-from rocco.dependence import choose_dependence_span
+from rocco.dependence import MIN_CORRELATION_RADIUS_BP, choose_dependence_span
 from rocco._version import __version__
 from rocco.readtracks import (
     generate_chrom_matrix,
@@ -713,9 +713,13 @@ def _prepare_args(parser: argparse.ArgumentParser) -> dict:
         )
     prior_radius_bp = args.get("prior_radius_bp")
     if prior_radius_bp is not None and (
-        not np.isfinite(float(prior_radius_bp)) or float(prior_radius_bp) <= 0.0
+        not np.isfinite(float(prior_radius_bp))
+        or float(prior_radius_bp) < MIN_CORRELATION_RADIUS_BP
     ):
-        raise ValueError("`--prior_radius_bp` must be positive and finite")
+        raise ValueError(
+            "`--prior_radius_bp` must be finite and at least "
+            f"{MIN_CORRELATION_RADIUS_BP}"
+        )
     if args["insufficient_data_policy"] == "priorOnly" and prior_radius_bp is None:
         raise ValueError(
             "`--prior_radius_bp` is required with `insufficient_data_policy=priorOnly`"

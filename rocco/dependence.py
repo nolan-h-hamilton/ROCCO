@@ -12,6 +12,7 @@ import numpy as np
 _MIN_WINDOWS = 20
 _MIN_AUTOSOMES = 4
 _MAX_LAG_BP = 50000
+MIN_CORRELATION_RADIUS_BP = 2500
 _ACF_THRESHOLD = 0.1
 _ACF_REQUIRED_CROSSINGS = 5
 _CLIP_QUANTILES = (0.005, 0.995)
@@ -442,6 +443,8 @@ def _prior_result(
             "upperIntervals": intervals,
             "workingSpanBP": float(prior_radius_bp),
             "workingSpanIntervals": intervals,
+            "minimumCorrelationRadiusBP": MIN_CORRELATION_RADIUS_BP,
+            "minimumCorrelationRadiusApplied": False,
         }
     )
     return intervals, intervals, intervals, diagnostics
@@ -481,9 +484,12 @@ def choose_dependence_span(
             isinstance(prior_radius_bp, bool)
             or not isinstance(prior_radius_bp, Real)
             or not math.isfinite(float(prior_radius_bp))
-            or float(prior_radius_bp) <= 0.0
+            or float(prior_radius_bp) < MIN_CORRELATION_RADIUS_BP
         ):
-            raise ValueError("`prior_radius_bp` must be a positive finite number")
+            raise ValueError(
+                "`prior_radius_bp` must be finite and at least "
+                f"{MIN_CORRELATION_RADIUS_BP}"
+            )
         prior_radius_bp = float(prior_radius_bp)
     if not isinstance(chromosome_matrices, Mapping) or not isinstance(
         chromosome_coordinates, Mapping
@@ -555,6 +561,7 @@ def choose_dependence_span(
         "windowCountRequested": requested_windows,
         "windowCountSelected": 0,
         "workingQuantile": working_q,
+        "minimumCorrelationRadiusBP": MIN_CORRELATION_RADIUS_BP,
         "bootstrapDraws": draws,
         "bootstrapSeed": seed,
         "trackCount": track_count,
@@ -759,8 +766,26 @@ def choose_dependence_span(
         if insufficient_data_policy == "priorOnly":
             return _prior_result(reason, prior_radius_bp, step, diagnostics)
         raise ValueError(reason)
-    bootstrap_estimates = np.asarray(bootstrap_estimate_values, dtype=np.float64)
-    bootstrap_working_spans = np.asarray(bootstrap_working_values, dtype=np.float64)
+    unconstrained_bootstrap_estimates = np.asarray(
+        bootstrap_estimate_values,
+        dtype=np.float64,
+    )
+    unconstrained_bootstrap_working_spans = np.asarray(
+        bootstrap_working_values,
+        dtype=np.float64,
+    )
+    unconstrained_estimate_bp = float(np.median(unconstrained_bootstrap_estimates))
+    unconstrained_working_span_bp = float(
+        np.median(unconstrained_bootstrap_working_spans)
+    )
+    bootstrap_estimates = np.maximum(
+        unconstrained_bootstrap_estimates,
+        MIN_CORRELATION_RADIUS_BP,
+    )
+    bootstrap_working_spans = np.maximum(
+        unconstrained_bootstrap_working_spans,
+        MIN_CORRELATION_RADIUS_BP,
+    )
 
     estimate_bp = float(np.median(bootstrap_estimates))
     lower_bp, upper_bp = (
@@ -806,6 +831,12 @@ def choose_dependence_span(
             "upperIntervals": upper_intervals,
             "workingSpanBP": working_span_bp,
             "workingSpanIntervals": working_span_intervals,
+            "unconstrainedEstimateBP": unconstrained_estimate_bp,
+            "unconstrainedWorkingSpanBP": unconstrained_working_span_bp,
+            "minimumCorrelationRadiusApplied": bool(
+                unconstrained_estimate_bp < MIN_CORRELATION_RADIUS_BP
+                or unconstrained_working_span_bp < MIN_CORRELATION_RADIUS_BP
+            ),
             "pointMedianRadiusBP": point_median_bp,
             "pointWorkingSpanBP": point_working_bp,
             "workingSpanLowerBP": float(np.quantile(bootstrap_working_spans, 0.025)),

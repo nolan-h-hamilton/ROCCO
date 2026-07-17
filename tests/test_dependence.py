@@ -133,10 +133,20 @@ def test_choose_dependence_span_gaussian_radius_and_genome_contract():
         random_seed=34,
     )
 
-    expected_radius_bp = 3.0 * 4.0 * STEP_BP
+    expected_unconstrained_radius_bp = 3.0 * 4.0 * STEP_BP
     assert (
-        abs(diagnostics["estimateBP"] - expected_radius_bp) / expected_radius_bp <= 0.10
+        abs(
+            diagnostics["unconstrainedEstimateBP"]
+            - expected_unconstrained_radius_bp
+        )
+        / expected_unconstrained_radius_bp
+        <= 0.10
     )
+    assert diagnostics["estimateBP"] == pytest.approx(2500.0)
+    assert diagnostics["lowerBP"] >= 2500.0
+    assert diagnostics["upperBP"] >= 2500.0
+    assert diagnostics["workingSpanBP"] >= 2500.0
+    assert diagnostics["minimumCorrelationRadiusApplied"] is True
     assert estimate == math.ceil(diagnostics["estimateBP"] / STEP_BP)
     assert lower == math.ceil(diagnostics["lowerBP"] / STEP_BP)
     assert upper == math.ceil(diagnostics["upperBP"] / STEP_BP)
@@ -187,11 +197,11 @@ def test_choose_dependence_span_rejects_insufficient_support_or_uses_prior():
         window_count=20,
         bootstrap_draws=20,
         insufficient_data_policy="priorOnly",
-        prior_radius_bp=750.0,
+        prior_radius_bp=2500.0,
     )
-    assert (estimate, lower, upper) == (15, 15, 15)
+    assert (estimate, lower, upper) == (50, 50, 50)
     assert diagnostics["usedPrior"] is True
-    assert diagnostics["workingSpanIntervals"] == 15
+    assert diagnostics["workingSpanIntervals"] == 50
 
 
 @pytest.mark.correctness
@@ -222,6 +232,12 @@ def test_choose_dependence_span_rejects_insufficient_support_or_uses_prior():
             {"chr1": STEP_BP * np.arange(WINDOW_BINS)},
             {"bootstrap_draws": 19},
             "at least 20",
+        ),
+        (
+            {"chr1": np.ones((1, WINDOW_BINS))},
+            {"chr1": STEP_BP * np.arange(WINDOW_BINS)},
+            {"prior_radius_bp": 2499.0},
+            "at least 2500",
         ),
     ],
 )

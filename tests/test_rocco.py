@@ -1749,6 +1749,7 @@ def test_prepare_args_low_memory_uses_conservative_defaults(monkeypatch):
             "cannot exceed",
         ),
         (["--num_null_blocks", "0"], "num_null_blocks"),
+        (["--prior_radius_bp", "2499"], "at least 2500"),
         (
             [
                 "-i",
