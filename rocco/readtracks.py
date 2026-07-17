@@ -26,20 +26,9 @@ except ImportError:  # pragma: no cover - exercised in build environments
     _hts_counts = None
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(module)s.%(funcName)s -  %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 _BAM_COUNT_METADATA_CACHE: dict[tuple, Dict[str, float | int | bool]] = {}
-
-
-def get_shape(matrix: np.ndarray) -> Tuple:
-    r"""Helper function to get the shape of a 1D/2D numpy array"""
-    if len(matrix.shape) == 1:
-        return 1, len(matrix)
-    return matrix.shape
 
 
 def _resolve_num_processors(num_processors: int) -> int:
@@ -80,14 +69,14 @@ def _require_pybigwig():
     return pyBigWig
 
 
-def _get_track_type(track_file: str) -> str:
-    ext = os.path.splitext(track_file)[1].lower().lstrip(".")
-    if ext == "bam":
+def get_track_type(track_file: str) -> str:
+    ext = os.path.splitext(track_file)[1]
+    if ext == ".bam":
         return "bam"
-    if ext in {"bw", "bigwig"}:
+    if ext == ".bw":
         return "bigwig"
     raise ValueError(
-        f"Unsupported input file type for `{track_file}`. Expected BAM or bigWig."
+        f"Unsupported input file type for `{track_file}`. Expected `.bam` or `.bw`."
     )
 
 
@@ -95,8 +84,6 @@ def get_bigwig_chrom_scores(
     bigwig_file: str,
     chromosome: str,
     chrom_sizes_file: str,
-    const_scale: float = 1.0,
-    round_digits: int = 5,
 ):
     r"""Read one chromosome score track directly from a bigWig file."""
 
@@ -175,15 +162,10 @@ def get_bigwig_chrom_scores(
         step,
         dtype=np.int64,
     )
-    full_vals = np.zeros(full_intervals.size, dtype=np.float64)
+    full_vals = np.full(full_intervals.size, np.nan, dtype=np.float64)
     full_vals[idx] = vals
 
-    if const_scale >= 0:
-        if const_scale == 0:
-            logger.warning("You are scaling the values by 0.")
-        full_vals = full_vals * float(const_scale)
-
-    return full_intervals.astype(int), np.round(full_vals, round_digits)
+    return full_intervals.astype(int), full_vals
 
 
 def _estimate_fragment_length(
@@ -215,11 +197,10 @@ def _compute_native_scale_factor(
     norm_read_length: int,
     scale_factor: float = 1.0,
 ) -> float:
-    norm_method_ = clean_string(norm_method).upper()
     mapped_reads_ = max(int(mapped_reads), 1)
     tile_len_kb = float(step) / 1000.0
     scale = float(scale_factor)
-    if norm_method_ == "RPGC":
+    if norm_method == "RPGC":
         if effective_genome_size is None or float(effective_genome_size) <= 0:
             raise ValueError(
                 "Effective genome size must be positive for RPGC normalization."
@@ -228,15 +209,29 @@ def _compute_native_scale_factor(
             float(mapped_reads_) * float(max(int(norm_read_length), 1))
         ) / float(effective_genome_size)
         return float(scale * (1.0 / max(current_coverage, 1.0e-12)))
-    if norm_method_ == "RPKM":
+    if norm_method == "RPKM":
         million_reads_mapped = float(mapped_reads_) / 1.0e6
         return float(scale * (1.0 / max(million_reads_mapped * tile_len_kb, 1.0e-12)))
-    if norm_method_ in {"CPM", "BPM"}:
+    if norm_method in {"CPM", "BPM"}:
         million_reads_mapped = float(mapped_reads_) / 1.0e6
         return float(scale * (1.0 / max(million_reads_mapped, 1.0e-12)))
     raise ValueError(
         f"Normalization method must be one of `RPGC`, `RPKM`, `CPM`, or `BPM`, not `{norm_method}`."
     )
+
+
+def _smooth_track_by_bins(vals: np.ndarray, window_bins: int) -> np.ndarray:
+    window_bins_ = int(max(1, window_bins))
+    vals_ = np.asarray(vals, dtype=np.float64)
+    if window_bins_ <= 1 or vals_.size <= 1:
+        return vals_
+    left = int(window_bins_ // 2)
+    right = int(window_bins_ - left - 1)
+    idx = np.arange(vals_.size, dtype=np.int64)
+    starts = np.maximum(0, idx - left)
+    stops = np.minimum(vals_.size, idx + right + 1)
+    cumsum = np.concatenate(([0.0], np.cumsum(vals_, dtype=np.float64)))
+    return (cumsum[stops] - cumsum[starts]) / (stops - starts)
 
 
 def _get_bam_count_metadata(
@@ -255,7 +250,7 @@ def _get_bam_count_metadata(
     cache_key = (
         bam_file,
         int(step),
-        clean_string(norm_method).upper(),
+        norm_method,
         float(effective_genome_size if effective_genome_size is not None else -1.0),
         ignore_for_norm_,
         int(flag_exclude),
@@ -293,13 +288,16 @@ def _get_bam_count_metadata(
 
     norm_read_length = int(read_length)
     resolved_extend_bp = int(extend_reads)
-    paired_end_mode = False
-    if int(extend_reads) == 0:
+    if int(extend_reads) > 0:
+        fragment_length = int(extend_reads)
+    else:
         fragment_length = _estimate_fragment_length(
             bam_file,
             flag_exclude=max(0, int(flag_exclude)),
             num_processors=threads,
         )
+    paired_end_mode = False
+    if int(extend_reads) == 0:
         if paired_end:
             if fragment_length is not None and fragment_length > 0:
                 norm_read_length = int(fragment_length)
@@ -331,6 +329,9 @@ def _get_bam_count_metadata(
         norm_read_length = int(extend_reads)
         resolved_extend_bp = int(extend_reads)
 
+    if fragment_length is None or int(fragment_length) <= 0:
+        fragment_length = int(norm_read_length)
+
     norm_scale = _compute_native_scale_factor(
         norm_method=norm_method,
         effective_genome_size=effective_genome_size,
@@ -343,6 +344,7 @@ def _get_bam_count_metadata(
         "paired_end": paired_end,
         "paired_end_mode": paired_end_mode,
         "read_length": int(read_length),
+        "fragment_length": int(fragment_length),
         "norm_read_length": int(norm_read_length),
         "resolved_extend_bp": int(resolved_extend_bp),
         "mapped_reads": int(mapped_reads),
@@ -351,13 +353,6 @@ def _get_bam_count_metadata(
     }
     _BAM_COUNT_METADATA_CACHE[cache_key] = metadata
     return metadata
-
-
-def clean_string(string_input):
-    if string_input is None:
-        return ""
-    return string_input.lower().replace(" ", "")
-
 
 def get_chroms_and_sizes(chrom_sizes_file):
     r"""Parse a chromosome sizes file and return a dictionary of chromosome names and sizes.
@@ -374,8 +369,7 @@ def get_chroms_and_sizes(chrom_sizes_file):
             f"Sizes file, {chrom_sizes_file}, not found or is `None`"
         )
     try:
-        chrom_names = pd.read_csv(chrom_sizes_file, sep="\t", header=None)[0]
-        chrom_sizes = pd.read_csv(chrom_sizes_file, sep="\t", header=None)[1]
+        chrom_sizes_df = pd.read_csv(chrom_sizes_file, sep="\t", header=None)
     except Exception as e:
         logger.info(
             f"Error reading chromosome sizes file: {chrom_sizes_file}.\
@@ -383,7 +377,7 @@ def get_chroms_and_sizes(chrom_sizes_file):
             \nchr1\t248956422\nchr2\t242193529\n..."
         )
         raise
-    return dict(zip(chrom_names, chrom_sizes))
+    return dict(zip(chrom_sizes_df[0], chrom_sizes_df[1]))
 
 
 def get_bam_chrom_reads(
@@ -435,6 +429,14 @@ def get_bam_chrom_reads(
         scale_factor=scale_factor,
     )
     threads = int(metadata["threads"])
+    fragment_smooth_bins = int(
+        max(
+            1,
+            np.ceil(float(metadata["fragment_length"]) / float(max(int(step), 1))),
+        )
+    )
+    smooth_left = int(fragment_smooth_bins // 2)
+    smooth_right = int(fragment_smooth_bins - smooth_left - 1)
 
     try:
         chrom_start, chrom_end = native.get_alignment_chrom_range(
@@ -445,7 +447,7 @@ def get_bam_chrom_reads(
             flag_exclude=max(0, int(flag_exclude)),
         )
     except RuntimeError as exc:
-        if "chromosome not found" in str(exc).lower():
+        if "chromosome not found" in str(exc):
             logger.warning(
                 "Chromosome %s not found in BAM file: %s. Returning (None,None).",
                 chromosome,
@@ -469,6 +471,8 @@ def get_bam_chrom_reads(
         chrom_size,
         int(np.ceil(max(chrom_end, count_start + 1) / float(step)) * step),
     )
+    count_start = max(0, count_start - (smooth_left * int(step)))
+    count_end = min(chrom_size, count_end + (smooth_right * int(step)))
     if count_end <= count_start:
         count_end = min(chrom_size, count_start + step)
 
@@ -493,6 +497,7 @@ def get_bam_chrom_reads(
     intervals = count_start + (np.arange(vals.size, dtype=np.int64) * int(step))
 
     vals = vals * float(metadata["norm_scale"])
+    vals = _smooth_track_by_bins(vals, fragment_smooth_bins)
     if scale_by_step:
         vals = vals / float(step)
         logger.info(f"Dividing `vals` by step size (bp): {step}")
@@ -541,8 +546,7 @@ def generate_chrom_matrix(
     r"""Create a matrix of values for a given chromosome from BAM or bigWig files."""
 
     interval_matrix = []
-    vals_matrix = []
-    track_types = {_get_track_type(input_file) for input_file in input_files}
+    track_types = {get_track_type(input_file) for input_file in input_files}
     if len(track_types) != 1:
         raise ValueError("All input files must share the same type.")
     track_type = next(iter(track_types))
@@ -587,8 +591,6 @@ def generate_chrom_matrix(
                     input_file,
                     chromosome,
                     chrom_sizes_file,
-                    const_scale,
-                    round_digits,
                 )
             )
         if count_processes > 1:
@@ -601,11 +603,10 @@ def generate_chrom_matrix(
     for input_file, (intervals_, vals_) in zip(input_files, count_results):
         if intervals_ is None or vals_ is None:
             logger.warning(
-                f"No data found for {input_file} in chromosome {chromosome}. Excluding this track for {chromosome}."
+                f"No data found for {input_file} in chromosome {chromosome}. Retaining an empty row for this track."
             )
             continue
         interval_matrix.append(intervals_)
-        vals_matrix.append(vals_)
     if len(interval_matrix) == 0:
         logger.warning(
             f"No data found in the files {str(input_files)} for chromosome {chromosome}. Returning (None,None)."
@@ -618,17 +619,27 @@ def generate_chrom_matrix(
             raise ValueError(
                 f"bigWig inputs for {chromosome} do not share one fixed binning scheme"
             )
-    matrix_dtype = np.float32 if low_memory else np.float64
-    count_matrix = np.zeros(
-        (len(interval_matrix), len(common_intervals)),
+        common_step = int(interval_diffs[0])
+        for intervals_ in interval_matrix:
+            if intervals_.size > 1 and np.any(np.diff(intervals_) != common_step):
+                raise ValueError(
+                    f"bigWig inputs for {chromosome} do not share one fixed bin width"
+                )
+    if track_type == "bigwig":
+        matrix_dtype = np.float64
+    else:
+        matrix_dtype = np.float32 if low_memory else np.float64
+    fill_value = np.nan if track_type == "bigwig" else 0.0
+    count_matrix = np.full(
+        (len(input_files), len(common_intervals)),
+        fill_value,
         dtype=matrix_dtype,
     )
-    for i, (intervals_, vals_) in enumerate(zip(interval_matrix, vals_matrix)):
+    for i, (intervals_, vals_) in enumerate(count_results):
+        if intervals_ is None or vals_ is None:
+            continue
         idx = np.searchsorted(common_intervals, intervals_)
         count_matrix[i, idx] = np.asarray(vals_, dtype=matrix_dtype)
-
-    if get_shape(count_matrix)[0] == 1:
-        count_matrix = count_matrix.reshape(1, -1)
 
     return np.array(common_intervals).astype(int), count_matrix
 

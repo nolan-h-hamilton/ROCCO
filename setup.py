@@ -305,15 +305,6 @@ with open("README.md", "r", encoding="utf-8") as readme_file:
 
 extensions = [
     Extension(
-        "rocco._baseline",
-        sources=[
-            "rocco/_baseline.c",
-            "rocco/native/baseline_backend.c",
-        ],
-        include_dirs=[get_numpy_include(), "rocco"],
-        extra_compile_args=BASE_COMPILE_ARGS,
-    ),
-    Extension(
         "rocco._chain_dp",
         sources=["rocco/_chain_dp.c"],
         include_dirs=[get_numpy_include()],
@@ -381,7 +372,6 @@ setup(
         "ChIP-seq",
     ],
     python_requires=">=3.10, <4",
-    setup_requires=["numpy"],
     ext_modules=extensions,
     cmdclass={"build_ext": build_rocco_ext},
     install_requires=[

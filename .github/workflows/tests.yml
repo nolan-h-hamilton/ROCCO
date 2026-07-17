@@ -7,6 +7,8 @@ on:
       - rocco/**/*.py
     branches:
       - main
+      - develop
+      - dev
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,7 +24,6 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pylint
         pip install build
         sudo apt-get update
         sudo apt-get install -y samtools zlib1g-dev libbz2-dev liblzma-dev
