@@ -255,15 +255,20 @@ def raw_count_matrix(
             name = name[:-4]
         samples.append(name)
     header = "peak_name\t" + "\t".join(samples)
+    thread_count = max(multiprocessing.cpu_count() // 2 - 1, 1)
     logger.info(f"\n\nCount matrix header: {header}\n\n")
     logger.info(
-        "Counting %s peak regions across %s alignments.",
+        "Counting %s peak regions across %s alignments with "
+        "countMode=coverage oneReadPerBin=1 minimumMAPQ=10 flagInclude=0 "
+        "flagExclude=0 readLength=0 extendBP=0 pairedEndMode=0 "
+        "inferFragmentLength=0 maxInsertSize=1000 minimumTemplateLength=-1 "
+        "strandShifts=0,0 threads=%s.",
         int(num_peaks),
         int(len(bam_files)),
+        int(thread_count),
     )
 
     count_matrix = np.zeros((num_peaks, len(bam_files)), dtype=np.int64)
-    thread_count = max(multiprocessing.cpu_count() // 2 - 1, 1)
     for sample_idx, bam_file in enumerate(bam_files):
         logger.info(
             "Counting sample %s of %s: %s",
@@ -571,12 +576,6 @@ def score_peaks(
         )
     scores = sig_vals
 
-    # We will use BH FDR correction to compute q-values
-    # ...may later consider an alternative that does not
-    # ...assume independence or at least gives users options
-    # ...to apply, e.g., yekutieli, bonferroni(FWER), etc.
-    qvals = stats.false_discovery_control(pvals, method="bh")
-
     summit_offsets = {}
     if summit_offsets_file is not None:
         with open(summit_offsets_file, encoding="utf-8") as handle:
@@ -591,7 +590,7 @@ def score_peaks(
                     )
                 summit_offsets[str(fields[0])] = int(fields[1])
 
-    # Scale signal values, p-values, q-values according to narrowPeak convention
+    # Scale signal values and p-values according to narrowPeak convention
     bed6_scores = np.minimum(
         np.array(
             ucsc_base
@@ -603,7 +602,6 @@ def score_peaks(
         1000,
     )
     pvals_out = np.round(-np.log10(pvals + 1e-10), 4)
-    qvals_out = np.round(-np.log10(qvals + 1e-10), 4)
     sig_vals = np.round(sig_vals, 4)
 
     with open(output_file, "w") as f:
@@ -618,7 +616,7 @@ def score_peaks(
                     )
                 )
             f.write(
-                f"{peak}\t{names[i]}\t{bed6_scores[i]}\t.\t{sig_vals[i]}\t{pvals_out[i]}\t{qvals_out[i]}\t{summit_offset}\n"
+                f"{peak}\t{names[i]}\t{bed6_scores[i]}\t.\t{sig_vals[i]}\t{pvals_out[i]}\t-1\t{summit_offset}\n"
             )
         logger.info(f"Scored output: {output_file}")
     return scores, bed6_scores, pvals
@@ -671,7 +669,14 @@ def get_ecdf(
             "`sample_scaling_constants` must match the number of BAM files."
         )
     logger.info(
-        f"Computing ECDF for representative length bin: {length} with {nsamples} samples."
+        "Computing ECDF for representative length bin %s with %s samples and "
+        "countMode=coverage oneReadPerBin=1 minimumMAPQ=20 flagInclude=0 "
+        "flagExclude=3844 readLength=0 extendBP=0 pairedEndMode=0 "
+        "inferFragmentLength=0 maxInsertSize=1000 minimumTemplateLength=-1 "
+        "strandShifts=0,0 threads=%s.",
+        int(length),
+        int(nsamples),
+        int(thread_count),
     )
     random_intervals = _random_intervals(
         chrom_sizes_file,
@@ -695,14 +700,14 @@ def get_ecdf(
             one_read_per_bin=1,
             thread_count=int(thread_count),
             flag_include=0,
-            flag_exclude=0x4,
+            flag_exclude=3844,
             shift_forward_strand53=0,
             shift_reverse_strand53=0,
             extend_bp=0,
             max_insert_size=1000,
             paired_end_mode=0,
             infer_fragment_length=0,
-            min_mapping_quality=10,
+            min_mapping_quality=20,
             min_template_length=-1,
             count_mode="coverage",
         )

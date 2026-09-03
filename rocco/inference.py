@@ -8,21 +8,16 @@ Functions for scoring loci and setting chromosome-specific budgets.
 from __future__ import annotations
 
 import logging
-import multiprocessing as mp
-import sys
 from typing import Any, Dict, Tuple
 
 import numpy as np
-from scipy import optimize, signal, special, stats
+from scipy import optimize, special, stats
 
-try:
-    from . import _wls as _wls_native
-except ImportError:
-    _wls_native = None
+from . import _wls
 
 logger = logging.getLogger(__name__)
-_BUDGET_NULL_PROCESS_STATE: dict[str, Any] | None = None
 _CENTERING_WINDOW_BP = 1_250_000
+_TINY = float(np.finfo(np.float64).tiny)
 
 
 def _robust_scale(values: np.ndarray, floor: float = 1.0e-6) -> float:
@@ -89,11 +84,9 @@ def _score_centered_wls_matrix(
         raise ValueError("`centered_matrix` must be two-dimensional")
     if centered.shape[0] == 0 or centered.shape[1] == 0:
         raise ValueError("`centered_matrix` must be non-empty")
-    if _wls_native is None:
-        raise RuntimeError("Make sure native C extensions are built and available")
     precision_floor_ratio_ = float(max(precision_floor_ratio, 0.0))
     # run EB munc + WLS to get per-locus scores and details for the constrained optimization (DP)
-    result_native = _wls_native.score_centered_wls(
+    result_native = _wls.score_centered_wls(
         centered,
         lower_bound_z=float(lower_bound_z),
         prior_df=float(prior_df),
@@ -310,956 +303,296 @@ def _estimate_effective_sample_size(
     return effective_n, float(tau_int), int(lags_used)
 
 
-def _resolve_budget_ess_max_lag(
-    n_loci: int,
-    correlation_length: int | None = None,
-) -> int:
-    r"""Resolve the ESS autocorrelation lag cap from a broad background scale."""
-    n_loci_ = int(max(1, n_loci))
-    if correlation_length is None:
-        raise ValueError("ESS truncation requires a correlation length")
-    return int(min(n_loci_ - 1, max(1, int(correlation_length))))
+def _halfSampleMode(sortedValues: np.ndarray) -> float:
+    values = np.asarray(sortedValues, dtype=np.float64)
+    size = int(values.size)
+    if size == 0:
+        raise ValueError("`sortedValues` must be non-empty")
+    if size == 1:
+        return float(values[0])
+    if size == 2:
+        return float(np.mean(values))
+    if size == 3:
+        leftWidth = float(values[1] - values[0])
+        rightWidth = float(values[2] - values[1])
+        if leftWidth <= rightWidth:
+            return float(np.mean(values[:2]))
+        return float(np.mean(values[1:]))
+
+    window = int(np.ceil(size / 2.0))
+    bestStart = 0
+    bestWidth = float(values[window - 1] - values[0])
+    for start in range(1, size - window + 1):
+        width = float(values[start + window - 1] - values[start])
+        if width < bestWidth:
+            bestWidth = width
+            bestStart = start
+    return _halfSampleMode(values[bestStart : bestStart + window])
 
 
-def _resolve_budget_bootstrap_bandwidth(
-    n_loci: int,
-    correlation_length: int | None = None,
-) -> int:
-    r"""Resolve the dependent-multiplier bandwidth for the budget null (DWB)."""
-    n_loci_ = int(max(1, n_loci))
-    if n_loci_ <= 1:
-        return 1
-    if correlation_length is None:
-        raise ValueError("DWB bandwidth requires a correlation length")
-    return int(min(n_loci_ - 1, max(1, int(correlation_length))))
-
-
-def _build_budget_bootstrap_kernel(
-    bandwidth: int,
-) -> np.ndarray:
-    r"""Build the Bartlett kernel used by the dependent wild bootstrap to induce short-range dependence."""
-    bandwidth_ = int(max(1, bandwidth))
-    support = np.arange(-bandwidth_, bandwidth_ + 1, dtype=np.float64)
-    kernel = np.maximum(1.0 - (np.abs(support) / float(bandwidth_ + 1)), 0.0)
-    kernel /= np.sqrt(np.sum(kernel * kernel))
-    return kernel.astype(np.float64, copy=False)
-
-
-def _generate_dependent_wild_weights(
-    n_loci: int,
-    kernel: np.ndarray,
-    rng: np.random.Generator,
-) -> np.ndarray:
-    r"""Draw a short-range dependent multiplier process for the wild bootstrap.
-
-    Independent innovations are smoothed by a precomputed *Bartlett kernel* so
-    the multiplier field has mean zero, unit variance, and a fixed dependence
-    scale across all draws (i.e., the dependent wild bootstrap).
-    """
-    n_loci_ = int(max(1, n_loci))
-    if n_loci_ == 1:
-        return np.ones(1, dtype=np.float64)
-
-    kernel_ = np.asarray(kernel, dtype=np.float64)
-    innovations = rng.standard_normal(n_loci_ + kernel_.size - 1)
-    weights = signal.fftconvolve(innovations, kernel_, mode="valid")
-    weights = np.asarray(weights, dtype=np.float64)
-    weights -= float(np.mean(weights))
-    weight_scale = float(np.std(weights))
-    if not np.isfinite(weight_scale) or weight_scale <= 1.0e-8:
-        fallback = rng.choice(np.array([-1.0, 1.0], dtype=np.float64), size=n_loci_)
-        fallback -= float(np.mean(fallback))
-        weight_scale = float(np.std(fallback))
-        return fallback / max(weight_scale, 1.0e-6)
-    return weights / weight_scale
-
-
-def _update_running_moments(
-    count: int,
-    mean: float,
-    m2: float,
-    new_value: float,
-) -> tuple[int, float, float]:
-    # Welford's algorithm for numerically stable online mean and variance updates
-    count_ = int(count) + 1
-    delta = float(new_value) - float(mean)
-    mean_ = float(mean) + (delta / float(count_))
-    delta2 = float(new_value) - mean_
-    m2_ = float(m2) + (delta * delta2)
-    return count_, mean_, m2_
-
-
-def _budget_null_stable_enough(
-    count: int,
-    mean: float,
-    m2: float,
-    min_draws: int,
-    abs_tol: float,
-    rel_tol: float,
-) -> bool:
-    if int(count) < int(max(2, min_draws)):
-        return False
-    sample_var = float(max(m2 / float(max(count - 1, 1)), 0.0))
-    stderr = float(np.sqrt(sample_var / float(max(count, 1))))
-    target = float(max(abs_tol, rel_tol * max(abs(mean), 1.0e-6)))
-    return bool(stderr <= target)
-
-
-def _choose_budget_pool_context() -> mp.context.BaseContext:
-    start_methods = mp.get_all_start_methods()
-    if "fork" in start_methods:
-        return mp.get_context("fork")
-    return mp.get_context(start_methods[0])
-
-
-def _init_budget_null_process(
-    residual_template: np.ndarray,
-    lower_bound_z: float,
-    prior_df: float,
-    min_effect: float | None,
-    precision_floor_ratio: float,
-    null_center: float,
-    null_soft_scale: float,
-    null_threshold: float,
-    kernel: np.ndarray,
-    base_seed: int,
-) -> None:
-    global _BUDGET_NULL_PROCESS_STATE
-    _BUDGET_NULL_PROCESS_STATE = {
-        "residual_template": np.asarray(residual_template, dtype=np.float64),
-        "lower_bound_z": float(lower_bound_z),
-        "prior_df": float(prior_df),
-        "min_effect": None if min_effect is None else float(max(min_effect, 0.0)),
-        "precision_floor_ratio": float(max(precision_floor_ratio, 0.0)),
-        "null_center": float(null_center),
-        "null_soft_scale": float(null_soft_scale),
-        "null_threshold": float(null_threshold),
-        "kernel": np.asarray(kernel, dtype=np.float64),
-        "base_seed": int(base_seed),
-    }
-
-
-def _compute_budget_null_draw(draw_index: int) -> tuple[float, float, float, float]:
-    state = _BUDGET_NULL_PROCESS_STATE
-    if state is None:
-        raise RuntimeError("Budget null process state is not initialized")
-
-    residual_template = np.asarray(state["residual_template"], dtype=np.float64)
-    lower_bound_z = float(state["lower_bound_z"])
-    prior_df = float(state["prior_df"])
-    min_effect = state["min_effect"]
-    precision_floor_ratio = float(state["precision_floor_ratio"])
-    null_center = float(state["null_center"])
-    null_soft_scale = float(state["null_soft_scale"])
-    null_threshold = float(state["null_threshold"])
-    kernel = np.asarray(state["kernel"], dtype=np.float64)
-    base_seed = int(state["base_seed"])
-    n_samples, n_loci = residual_template.shape
-    rng = np.random.default_rng(base_seed + (104729 * (int(draw_index) + 1)))
-    bootstrap_centered = np.empty_like(residual_template, dtype=np.float64)
-
-    for sample_idx in range(n_samples):
-        wild_weights = _generate_dependent_wild_weights(
-            n_loci,
-            kernel=kernel,
-            rng=rng,
-        )
-        bootstrap_centered[sample_idx] = residual_template[sample_idx] * wild_weights
-
-    bootstrap_scores, _ = _score_centered_wls_matrix(
-        bootstrap_centered,
-        lower_bound_z=lower_bound_z,
-        prior_df=prior_df,
-        min_effect=min_effect,
-        precision_floor_ratio=precision_floor_ratio,
-    )
-    bootstrap_residual_scores = (
-        np.asarray(bootstrap_scores, dtype=np.float64) - null_center
-    )
-    bootstrap_positive = np.clip(bootstrap_residual_scores, 0.0, None)
-    return (
-        float(np.mean(bootstrap_positive)),
-        float(np.mean(bootstrap_positive / null_soft_scale)),
-        float(np.mean(bootstrap_positive > 0.0)),
-        float(np.mean(bootstrap_scores > null_threshold)),
-    )
-
-
-def _fit_budget_null_residual_template(
-    centered_matrix: np.ndarray,
-    lower_bound_z: float = 1.0,
-    prior_df: float = 5.0,
-    min_effect: float | None = None,
-    precision_floor_ratio: float = 0.01,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    r"""Fit the one-sided null residual template used by the budget bootstrap.
-
-    ROCCO scores the centered matrix as :math:`y_{ij} = \mu_j + e_{ij}` after
-    removing :math:`a_i + b_{ij}`. The budget null sets
-    :math:`\mu_j^{(0)} = \max(\hat\mu_j, 0)` to zero out positive consensus
-    signal, then uses
-
-    .. math::
-
-       \tilde e_{ij} = y_{ij} - \max(\hat\mu_j, 0)
-
-    as the residual template for the bootstrap.
-    """
-    observed_scores, score_details = _score_centered_wls_matrix(
-        centered_matrix,
-        lower_bound_z=lower_bound_z,
-        prior_df=prior_df,
-        min_effect=min_effect,
-        precision_floor_ratio=precision_floor_ratio,
-    )
-    mu_hat = np.asarray(score_details["mean"], dtype=np.float64)
-    positive_consensus = np.clip(mu_hat, 0.0, None)
-    residual_template = (
-        np.asarray(centered_matrix, dtype=np.float64) - positive_consensus[None, :]
-    )
-    return residual_template, observed_scores.astype(np.float64), positive_consensus
-
-
-def _estimate_wild_bootstrap_score_null(
-    centered_matrix: np.ndarray,
-    lower_bound_z: float = 1.0,
-    prior_df: float = 5.0,
-    min_effect: float | None = None,
-    precision_floor_ratio: float = 0.01,
-    observed_scores: np.ndarray | None = None,
-    correlation_length: int | None = None,
-    step_bp: int = 50,
-    num_null_draws: int = 25,
-    random_seed: int = 0,
-    progress_label: str | None = None,
-    num_processes: int = 1,
-    min_null_draws: int | None = None,
-    stability_abs_tol: float = 2.5e-3,
-    stability_rel_tol: float = 2.5e-2,
-) -> dict[str, float | int | str | np.ndarray]:
-    r"""Estimate the chromosome score null by a dependent wild residual bootstrap.
-
-    The fitted null starts from the residual template
-    :math:`\tilde e_{ij}`. For each bootstrap draw, ROCCO generates a
-    short-range dependent multiplier field :math:`W_{ij}` and forms
-
-    .. math::
-
-       y_{ij}^{*} = \tilde e_{ij} W_{ij}.
-
-    The WLS score is recomputed on :math:`y_{ij}^{*}`. The null center and null
-    scale come from the score field of the fitted null template, while the
-    bootstrap draws estimate the positive-tail score mass expected under that
-    fitted null.
-    """
-    if correlation_length is None:
-        raise ValueError("Budget null estimation requires a correlation length")
-    centered = np.asarray(centered_matrix, dtype=np.float64)
-    residual_template, fitted_scores, positive_consensus = (
-        _fit_budget_null_residual_template(
-            centered,
-            lower_bound_z=lower_bound_z,
-            prior_df=prior_df,
-            min_effect=min_effect,
-            precision_floor_ratio=precision_floor_ratio,
+def _estimateStationaryNull(scoreTrack: np.ndarray) -> tuple[float, float]:
+    scores = np.asarray(scoreTrack, dtype=np.float64)
+    bulkCutoff = float(
+        np.quantile(
+            scores,
+            0.60,
+            method="interpolated_inverted_cdf",
         )
     )
-    if observed_scores is None:
-        observed_scores_ = fitted_scores
-    else:
-        observed_scores_ = np.asarray(observed_scores, dtype=np.float64)
-        if observed_scores_.shape[0] != centered.shape[1]:
-            raise ValueError(
-                "`observed_scores` must have the same number of loci as `centered_matrix`"
-            )
-
-    null_reference_scores, _ = _score_centered_wls_matrix(
-        residual_template,
-        lower_bound_z=lower_bound_z,
-        prior_df=prior_df,
-        min_effect=min_effect,
-        precision_floor_ratio=precision_floor_ratio,
+    lowerBulk = scores[scores <= bulkCutoff]
+    lowerBulk = np.sort(lowerBulk)
+    nullCenter = _halfSampleMode(lowerBulk)
+    bulkResiduals = lowerBulk - nullCenter
+    bulkMAD = 1.4826 * float(
+        np.median(np.abs(bulkResiduals - np.median(bulkResiduals)))
     )
-    finite_null_scores = np.asarray(null_reference_scores, dtype=np.float64)
-    null_center = float(np.median(finite_null_scores))
-    null_reference_residuals = finite_null_scores - null_center
-    negative_reference = null_reference_residuals[null_reference_residuals <= 0.0]
-    if negative_reference.size == 0:
-        negative_magnitudes = np.abs(null_reference_residuals)
-    else:
-        negative_magnitudes = -negative_reference
-    if negative_magnitudes.size == 0:
-        negative_magnitudes = np.array([0.0], dtype=np.float64)
-    mirrored_reference = np.concatenate((-negative_magnitudes, negative_magnitudes))
-    null_scale = float(_robust_scale(mirrored_reference))
-    if not np.isfinite(null_center) or not np.isfinite(null_scale):
-        raise ValueError("Budget null fit produced non-finite values")
-    null_soft_scale = float(max(null_scale, 1.0e-6))
-    # Conservative score threshold at :math:`\mu_0 + 2\sigma_0`, where sigma_0 is null scale
-    null_threshold = float(null_center + (2.0 * null_scale))
+    bulkIQR = float(stats.iqr(bulkResiduals, rng=(25, 75))) / 1.349
+    bulkSD = float(np.std(bulkResiduals, ddof=1))
+    centerScale = float(max(bulkMAD, bulkIQR, bulkSD, 1.0e-6))
 
-    n_samples, n_loci = centered.shape
-    bandwidth = _resolve_budget_bootstrap_bandwidth(
-        n_loci,
-        correlation_length=correlation_length,
-    )
-    kernel = _build_budget_bootstrap_kernel(bandwidth)
-    num_draws = int(max(1, num_null_draws))
-    min_draws = int(
-        min(num_draws, max(4, 12 if min_null_draws is None else min_null_draws))
-    )
-    process_count = int(min(max(1, num_processes), num_draws))
-    batch_size = int(max(1, process_count))
-    draws_used = 0
-    mean_mass = 0.0
-    m2_mass = 0.0
-    mean_units = 0.0
-    m2_units = 0.0
-    mean_fraction = 0.0
-    m2_fraction = 0.0
-    mean_tail_occupancy = 0.0
-    m2_tail_occupancy = 0.0
-
-    if process_count <= 1:
-        _init_budget_null_process(
-            residual_template,
-            lower_bound_z,
-            prior_df,
-            min_effect,
-            precision_floor_ratio,
-            null_center,
-            null_soft_scale,
-            null_threshold,
-            kernel,
-            int(random_seed),
+    for _ in range(20):
+        standardized = (scores - nullCenter) / (3.0 * centerScale)
+        centerMask = np.abs(standardized) < 1.0
+        if np.count_nonzero(centerMask) < 8:
+            raise ValueError("Stationary null center requires eight central residuals")
+        centerWeights = (1.0 - standardized[centerMask] ** 2) ** 2
+        nextCenter = float(
+            np.dot(centerWeights, scores[centerMask]) / np.sum(centerWeights)
         )
-        for batch_start in range(0, num_draws, batch_size):
-            draw_ids = range(batch_start, min(num_draws, batch_start + batch_size))
-            for draw_id in draw_ids:
-                null_mass, null_units, null_fraction, null_tail_occupancy = (
-                    _compute_budget_null_draw(draw_id)
-                )
-                draws_used, mean_mass, m2_mass = _update_running_moments(
-                    draws_used,
-                    mean_mass,
-                    m2_mass,
-                    null_mass,
-                )
-                _, mean_units, m2_units = _update_running_moments(
-                    draws_used - 1,
-                    mean_units,
-                    m2_units,
-                    null_units,
-                )
-                _, mean_fraction, m2_fraction = _update_running_moments(
-                    draws_used - 1,
-                    mean_fraction,
-                    m2_fraction,
-                    null_fraction,
-                )
-                _, mean_tail_occupancy, m2_tail_occupancy = _update_running_moments(
-                    draws_used - 1,
-                    mean_tail_occupancy,
-                    m2_tail_occupancy,
-                    null_tail_occupancy,
-                )
-                if progress_label:
-                    sys.stderr.write(f"\r{progress_label}: {draws_used}/{num_draws}")
-                    sys.stderr.flush()
-            if _budget_null_stable_enough(
-                draws_used,
-                mean_units,
-                m2_units,
-                min_draws=min_draws,
-                abs_tol=stability_abs_tol,
-                rel_tol=stability_rel_tol,
-            ) and _budget_null_stable_enough(
-                draws_used,
-                mean_tail_occupancy,
-                m2_tail_occupancy,
-                min_draws=min_draws,
-                abs_tol=stability_abs_tol,
-                rel_tol=stability_rel_tol,
-            ):
-                break
-    else:
-        context = _choose_budget_pool_context()
-        with context.Pool(
-            processes=process_count,
-            initializer=_init_budget_null_process,
-            initargs=(
-                residual_template,
-                lower_bound_z,
-                prior_df,
-                min_effect,
-                precision_floor_ratio,
-                null_center,
-                null_soft_scale,
-                null_threshold,
-                kernel,
-                int(random_seed),
-            ),
-        ) as pool:
-            for batch_start in range(0, num_draws, batch_size):
-                draw_ids = list(
-                    range(batch_start, min(num_draws, batch_start + batch_size))
-                )
-                batch_results = pool.map(_compute_budget_null_draw, draw_ids)
-                for (
-                    null_mass,
-                    null_units,
-                    null_fraction,
-                    null_tail_occupancy,
-                ) in batch_results:
-                    draws_used, mean_mass, m2_mass = _update_running_moments(
-                        draws_used,
-                        mean_mass,
-                        m2_mass,
-                        null_mass,
-                    )
-                    _, mean_units, m2_units = _update_running_moments(
-                        draws_used - 1,
-                        mean_units,
-                        m2_units,
-                        null_units,
-                    )
-                    _, mean_fraction, m2_fraction = _update_running_moments(
-                        draws_used - 1,
-                        mean_fraction,
-                        m2_fraction,
-                        null_fraction,
-                    )
-                    _, mean_tail_occupancy, m2_tail_occupancy = _update_running_moments(
-                        draws_used - 1,
-                        mean_tail_occupancy,
-                        m2_tail_occupancy,
-                        null_tail_occupancy,
-                    )
-                    if progress_label:
-                        sys.stderr.write(
-                            f"\r{progress_label}: {draws_used}/{num_draws}"
-                        )
-                        sys.stderr.flush()
-                if _budget_null_stable_enough(
-                    draws_used,
-                    mean_units,
-                    m2_units,
-                    min_draws=min_draws,
-                    abs_tol=stability_abs_tol,
-                    rel_tol=stability_rel_tol,
-                ) and _budget_null_stable_enough(
-                    draws_used,
-                    mean_tail_occupancy,
-                    m2_tail_occupancy,
-                    min_draws=min_draws,
-                    abs_tol=stability_abs_tol,
-                    rel_tol=stability_rel_tol,
-                ):
-                    break
-
-    if progress_label:
-        sys.stderr.write("\n")
-        sys.stderr.flush()
-
-    null_units_sd = float(np.sqrt(max(m2_units / float(max(draws_used - 1, 1)), 0.0)))
-    null_units_stderr = float(
-        np.sqrt(
-            max(m2_units / float(max(draws_used - 1, 1)), 0.0)
-            / float(max(draws_used, 1))
-        )
-    )
-    null_tail_occupancy_sd = float(
-        np.sqrt(max(m2_tail_occupancy / float(max(draws_used - 1, 1)), 0.0))
-    )
-    null_tail_occupancy_stderr = float(
-        np.sqrt(
-            max(m2_tail_occupancy / float(max(draws_used - 1, 1)), 0.0)
-            / float(max(draws_used, 1))
-        )
-    )
-
-    return {
-        "observed_scores": observed_scores_.astype(np.float64),
-        "null_center": float(null_center),
-        "null_scale": float(null_scale),
-        "null_positive_mass": float(mean_mass),
-        "null_positive_units": float(mean_units),
-        "null_positive_fraction": float(mean_fraction),
-        "null_positive_units_sd": float(null_units_sd),
-        "null_positive_units_stderr": float(null_units_stderr),
-        "null_threshold": float(null_threshold),
-        "null_tail_occupancy": float(mean_tail_occupancy),
-        "null_tail_occupancy_sd": float(null_tail_occupancy_sd),
-        "null_tail_occupancy_stderr": float(null_tail_occupancy_stderr),
-        "negative_support_size": int(negative_magnitudes.size),
-        "negative_fraction": float(
-            negative_magnitudes.size / max(int(finite_null_scores.size), 1)
-        ),
-        "num_null_draws": int(draws_used),
-        "max_null_draws": int(num_draws),
-        "adaptive_stop": bool(draws_used < num_draws),
-        "wild_bandwidth": int(bandwidth),
-        "correlation_length_intervals": int(correlation_length),
-        "wild_process": "bartlett_multiplier",
-        "null_method": "dependent_wild_residual_bootstrap",
-        "null_reference_mean_positive_consensus": float(np.mean(positive_consensus)),
-        "null_reference_max_positive_consensus": float(np.max(positive_consensus)),
-    }
-
-
-def estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
-    centered_matrix: np.ndarray,
-    observed_scores: np.ndarray | None = None,
-    lower_bound_z: float = 1.0,
-    prior_df: float = 5.0,
-    min_effect: float | None = None,
-    precision_floor_ratio: float = 0.01,
-    correlation_length: int | None = None,
-    step_bp: int = 50,
-    num_null_draws: int = 25,
-    random_seed: int = 0,
-    progress_label: str | None = None,
-    num_processes: int = 1,
-    return_details: bool = False,
-) -> float | Tuple[float, Dict[str, Any]]:
-    r"""Estimate a conservative enriched fraction from a wild-bootstrap null.
-
-    We fit a null residual template by subtracting the positive
-    part of the fitted locus effect, then bootstrap that template with a
-    short-range dependent multiplier process. With :math:`\mu_0` and
-    :math:`\sigma_0` estimated from the fitted null score field, the observed
-    soft count is
-
-    .. math::
-
-       m_{\mathrm{obs}} =
-       \frac{1}{n}\sum_j \frac{(s_j - \mu_0)_+}{\max(\sigma_0, 10^{-6})},
-
-    and the null contribution is the bootstrap average
-
-    .. math::
-
-       m_0 =
-       \mathbb{E}_{*}\left[
-       \frac{(S_j^{*} - \mu_0)_+}{\max(\sigma_0, 10^{-6})}
-       \right].
-
-    Let :math:`t_0 = \mu_0 + 2\sigma_0`. we estimate the raw chromosome
-    budget from above that fitted null threshold. If
-    :math:`\hat p_{\mathrm{obs}} = n^{-1}\sum_j I(s_j > t_0)` and
-    :math:`\hat p_0` is the bootstrap average of the same statistic under the
-    fitted null,
-    then ROCCO uses
-
-    .. math::
-
-       \hat \pi_1 =
-       \operatorname{clip}(
-       \hat p_{\mathrm{obs}} - \hat p_0,
-       0,
-       1)
-
-    as the raw enriched fraction for the budget EB step.
-    """
-    centered = np.asarray(centered_matrix, dtype=np.float64)
-    if centered.ndim == 1:
-        centered = centered[np.newaxis, :]
-    if centered.ndim != 2:
-        raise ValueError("`centered_matrix` must be one- or two-dimensional")
-
-    _, n_loci = centered.shape
-    if n_loci <= 0:
-        raise ValueError("`centered_matrix` must contain at least one locus")
-    null_meta = _estimate_wild_bootstrap_score_null(
-        centered,
-        lower_bound_z=lower_bound_z,
-        prior_df=prior_df,
-        min_effect=min_effect,
-        precision_floor_ratio=precision_floor_ratio,
-        observed_scores=observed_scores,
-        correlation_length=correlation_length,
-        step_bp=step_bp,
-        num_null_draws=num_null_draws,
-        random_seed=random_seed,
-        progress_label=progress_label,
-        num_processes=num_processes,
-    )
-    observed_scores_ = np.asarray(null_meta["observed_scores"], dtype=np.float64)
-    null_center = float(null_meta["null_center"])
-    null_scale = float(null_meta["null_scale"])
-    null_soft_scale = float(max(null_scale, 1.0e-6))
-    residual_scores = observed_scores_ - null_center
-    # Positive-part score mass above the fitted bootstrap null:
-    # :math:`(s_j - \mu_0)_+ / \sigma_0`.
-    observed_excess = np.clip(residual_scores, 0.0, None)
-    observed_negative = np.clip(-residual_scores, 0.0, None)
-    observed_soft_counts = observed_excess / null_soft_scale
-    observed_positive_fraction = float(np.mean(observed_excess > 0.0))
-    observed_negative_fraction = float(np.mean(observed_negative > 0.0))
-    observed_excess_mass = float(np.mean(observed_excess))
-    observed_excess_units = float(np.mean(observed_soft_counts))
-    null_excess_mass = float(null_meta["null_positive_mass"])
-    null_excess_units = float(null_meta["null_positive_units"])
-    null_excess_units_sd = float(null_meta["null_positive_units_sd"])
-    null_threshold = float(null_meta["null_threshold"])
-    observed_tail_occupancy = float(np.mean(observed_scores_ > null_threshold))
-    null_tail_occupancy = float(null_meta["null_tail_occupancy"])
-    null_tail_occupancy_sd = float(null_meta["null_tail_occupancy_sd"])
-    ess_max_lag = _resolve_budget_ess_max_lag(
-        n_loci,
-        correlation_length=int(null_meta["correlation_length_intervals"]),
-    )
-    effective_total_count, tau_int, ess_lags_used = _estimate_effective_sample_size(
-        observed_soft_counts,
-        max_lag=ess_max_lag,
-    )
-    nonnull_fraction = float(
-        np.clip(
-            observed_tail_occupancy
-            - null_tail_occupancy,  # removed silly `null_tail_occupancy_sd` subtraction
-            0.0,
-            1.0,
-        )
-    )
-    if (
-        not np.isfinite(nonnull_fraction)
-        or not np.isfinite(effective_total_count)
-        or not np.isfinite(tau_int)
-    ):
-        raise ValueError("Budget initialization produced non-finite values")
-    details = {
-        "observed_positive_fraction": float(observed_positive_fraction),
-        "observed_negative_fraction": float(observed_negative_fraction),
-        "null_positive_fraction": float(null_meta["null_positive_fraction"]),
-        "observed_excess_mass": float(observed_excess_mass),
-        "null_excess_mass": float(null_excess_mass),
-        "observed_excess_units": float(observed_excess_units),
-        "null_excess_units": float(null_excess_units),
-        "null_excess_units_sd": float(null_excess_units_sd),
-        "null_excess_units_stderr": float(null_meta["null_positive_units_stderr"]),
-        "null_threshold": float(null_threshold),
-        "observed_tail_occupancy": float(observed_tail_occupancy),
-        "null_tail_occupancy": float(null_tail_occupancy),
-        "null_tail_occupancy_sd": float(null_tail_occupancy_sd),
-        "null_tail_occupancy_stderr": float(null_meta["null_tail_occupancy_stderr"]),
-        "null_center": float(null_center),
-        "null_scale": float(null_scale),
-        "nonnull_fraction": float(nonnull_fraction),
-        "effective_count": float(nonnull_fraction * effective_total_count),
-        "effective_total_count": float(effective_total_count),
-        "autocorrelation_time": float(tau_int),
-        "ess_max_lag": float(ess_max_lag),
-        "ess_lags_used": float(ess_lags_used),
-        "num_loci": float(n_loci),
-        "negative_support_size": float(null_meta["negative_support_size"]),
-        "negative_fraction": float(null_meta["negative_fraction"]),
-        "num_null_draws": float(null_meta["num_null_draws"]),
-        "max_null_draws": float(null_meta["max_null_draws"]),
-        "adaptive_stop": bool(null_meta["adaptive_stop"]),
-        "wild_bandwidth": float(null_meta["wild_bandwidth"]),
-        "dwb_bandwidth": float(null_meta["wild_bandwidth"]),
-        "correlation_length_intervals": float(
-            null_meta["correlation_length_intervals"]
-        ),
-        "wild_process": str(null_meta["wild_process"]),
-        "null_method": str(null_meta["null_method"]),
-        "null_reference_mean_positive_consensus": float(
-            null_meta["null_reference_mean_positive_consensus"]
-        ),
-        "null_reference_max_positive_consensus": float(
-            null_meta["null_reference_max_positive_consensus"]
-        ),
-    }
-    if return_details:
-        return nonnull_fraction, details
-    return nonnull_fraction
-
-
-def _estimate_wild_bootstrap_direct_score_null(
-    score_track: np.ndarray,
-    correlation_length: int | None = None,
-    step_bp: int = 50,
-    num_null_draws: int = 25,
-    random_seed: int = 0,
-    progress_label: str | None = None,
-    min_null_draws: int | None = None,
-    stability_abs_tol: float = 2.5e-3,
-    stability_rel_tol: float = 2.5e-2,
-) -> dict[str, float | int | str | np.ndarray]:
-    r"""Draw nulls from generic score tracks by a dependent wild bootstrap"""
-    if correlation_length is None:
-        raise ValueError("Budget null estimation requires a correlation length")
-    scores = np.asarray(score_track, dtype=np.float64)
-    if scores.ndim != 1:
-        raise ValueError("`score_track` must be one-dimensional")
-    if scores.size == 0:
-        raise ValueError("`score_track` must contain at least one locus")
-
-    observed_scores = scores.astype(np.float64, copy=False)
-    positive_consensus = np.clip(observed_scores, 0.0, None)
-    residual_template = observed_scores - positive_consensus
-    null_reference_scores = residual_template
-    null_center = float(np.median(null_reference_scores))
-    null_reference_residuals = null_reference_scores - null_center
-    negative_reference = null_reference_residuals[null_reference_residuals <= 0.0]
-    if negative_reference.size == 0:
-        negative_magnitudes = np.abs(null_reference_residuals)
-    else:
-        negative_magnitudes = -negative_reference
-    if negative_magnitudes.size == 0:
-        negative_magnitudes = np.array([0.0], dtype=np.float64)
-    mirrored_reference = np.concatenate((-negative_magnitudes, negative_magnitudes))
-    null_scale = float(_robust_scale(mirrored_reference))
-    if not np.isfinite(null_center) or not np.isfinite(null_scale):
-        raise ValueError("Direct-score budget null fit produced non-finite values")
-    null_soft_scale = float(max(null_scale, 1.0e-6))
-    null_threshold = float(null_center + (2.0 * null_scale))
-
-    bandwidth = _resolve_budget_bootstrap_bandwidth(
-        observed_scores.size,
-        correlation_length=correlation_length,
-    )
-    kernel = _build_budget_bootstrap_kernel(bandwidth)
-    num_draws = int(max(1, num_null_draws))
-    min_draws = int(
-        min(num_draws, max(4, 12 if min_null_draws is None else min_null_draws))
-    )
-    draws_used = 0
-    mean_mass = 0.0
-    m2_mass = 0.0
-    mean_units = 0.0
-    m2_units = 0.0
-    mean_fraction = 0.0
-    m2_fraction = 0.0
-    mean_tail_occupancy = 0.0
-    m2_tail_occupancy = 0.0
-    rng = np.random.default_rng(int(random_seed))
-
-    # For each draw, generate a short-range dependency-inducing conv. kernel for the wild bootstrap
-    for draw_id in range(num_draws):
-        wild_weights = _generate_dependent_wild_weights(
-            observed_scores.size,
-            kernel=kernel,
-            rng=rng,
-        )
-        # convolve w/ template
-        bootstrap_scores = residual_template * wild_weights
-        # center null draws
-        bootstrap_residual_scores = bootstrap_scores - null_center
-        bootstrap_positive = np.clip(bootstrap_residual_scores, 0.0, None)
-        null_mass = float(np.mean(bootstrap_positive))
-        null_units = float(np.mean(bootstrap_positive / null_soft_scale))
-        null_fraction = float(np.mean(bootstrap_positive > 0.0))
-        null_tail_occupancy = float(np.mean(bootstrap_scores > null_threshold))
-
-        draws_used, mean_mass, m2_mass = _update_running_moments(
-            draws_used,
-            mean_mass,
-            m2_mass,
-            null_mass,
-        )
-        _, mean_units, m2_units = _update_running_moments(
-            draws_used - 1,
-            mean_units,
-            m2_units,
-            null_units,
-        )
-        _, mean_fraction, m2_fraction = _update_running_moments(
-            draws_used - 1,
-            mean_fraction,
-            m2_fraction,
-            null_fraction,
-        )
-        _, mean_tail_occupancy, m2_tail_occupancy = _update_running_moments(
-            draws_used - 1,
-            mean_tail_occupancy,
-            m2_tail_occupancy,
-            null_tail_occupancy,
-        )
-        if progress_label:
-            sys.stderr.write(f"\r{progress_label}: {draws_used}/{num_draws}")
-            sys.stderr.flush()
-        if _budget_null_stable_enough(
-            draws_used,
-            mean_units,
-            m2_units,
-            min_draws=min_draws,
-            abs_tol=stability_abs_tol,
-            rel_tol=stability_rel_tol,
-        ) and _budget_null_stable_enough(
-            draws_used,
-            mean_tail_occupancy,
-            m2_tail_occupancy,
-            min_draws=min_draws,
-            abs_tol=stability_abs_tol,
-            rel_tol=stability_rel_tol,
-        ):
+        if abs(nextCenter - nullCenter) <= 1.0e-10 * max(centerScale, 1.0):
+            nullCenter = nextCenter
             break
+        nullCenter = nextCenter
 
-    if progress_label:
-        sys.stderr.write("\n")
-        sys.stderr.flush()
+    lowerMagnitudes = nullCenter - scores[scores < nullCenter]
+    if lowerMagnitudes.size < 8:
+        raise ValueError("Stationary null estimation requires eight lower residuals")
+    nullScale = float(np.median(lowerMagnitudes) / stats.norm.ppf(0.75))
+    if nullScale <= _TINY:
+        raise ValueError("Stationary lower-residual scale must be positive")
+    return float(nullCenter), float(nullScale)
 
-    null_units_sd = float(np.sqrt(max(m2_units / float(max(draws_used - 1, 1)), 0.0)))
-    null_units_stderr = float(
-        np.sqrt(
-            max(m2_units / float(max(draws_used - 1, 1)), 0.0)
-            / float(max(draws_used, 1))
+
+def _prepareStationaryNullTemplate(
+    scoreTrack: np.ndarray,
+    nullCenter: float,
+) -> tuple[np.ndarray, dict[str, float | int]]:
+    centered = np.asarray(scoreTrack, dtype=np.float64) - float(nullCenter)
+    lowerMagnitudes = -centered[centered < 0.0]
+    if lowerMagnitudes.size < 8:
+        raise ValueError("Stationary null template requires eight lower residuals")
+    lowerScale = float(np.median(lowerMagnitudes) / stats.norm.ppf(0.75))
+    if lowerScale <= _TINY:
+        raise ValueError("Stationary lower-residual scale must be positive")
+
+    template = centered.copy()
+    positiveMask = centered > 0.0
+    positiveCount = int(np.count_nonzero(positiveMask))
+    if positiveCount:
+        positiveRanks = stats.rankdata(centered[positiveMask], method="average")
+        positiveQuantiles = (positiveRanks - 0.5) / float(positiveCount)
+        sortedLowerMagnitudes = np.sort(lowerMagnitudes)
+        virtualIndices = positiveQuantiles * float(lowerMagnitudes.size) - 1.0
+        lowerIndices = np.floor(virtualIndices).astype(np.int64)
+        fractions = virtualIndices - lowerIndices
+        upperIndices = np.clip(
+            lowerIndices + 1,
+            0,
+            lowerMagnitudes.size - 1,
         )
-    )
-    null_tail_occupancy_sd = float(
-        np.sqrt(max(m2_tail_occupancy / float(max(draws_used - 1, 1)), 0.0))
-    )
-    null_tail_occupancy_stderr = float(
-        np.sqrt(
-            max(m2_tail_occupancy / float(max(draws_used - 1, 1)), 0.0)
-            / float(max(draws_used, 1))
+        lowerIndices = np.clip(
+            lowerIndices,
+            0,
+            lowerMagnitudes.size - 1,
         )
-    )
+        template[positiveMask] = (
+            sortedLowerMagnitudes[lowerIndices] * (1.0 - fractions)
+            + sortedLowerMagnitudes[upperIndices] * fractions
+        )
 
-    # build metadata dict with null estimates and diagnostics
-    return {
-        "observed_scores": observed_scores.astype(np.float64),
-        "null_center": float(null_center),
-        "null_scale": float(null_scale),
-        "null_positive_mass": float(mean_mass),
-        "null_positive_units": float(mean_units),
-        "null_positive_fraction": float(mean_fraction),
-        "null_positive_units_sd": float(null_units_sd),
-        "null_positive_units_stderr": float(null_units_stderr),
-        "null_threshold": float(null_threshold),
-        "null_tail_occupancy": float(mean_tail_occupancy),
-        "null_tail_occupancy_sd": float(null_tail_occupancy_sd),
-        "null_tail_occupancy_stderr": float(null_tail_occupancy_stderr),
-        "negative_support_size": int(negative_magnitudes.size),
-        "negative_fraction": float(
-            negative_magnitudes.size / max(int(null_reference_scores.size), 1)
-        ),
-        "num_null_draws": int(draws_used),
-        "max_null_draws": int(num_draws),
-        "adaptive_stop": bool(draws_used < num_draws),
-        "wild_bandwidth": int(bandwidth),
-        "correlation_length_intervals": int(correlation_length),
-        "wild_process": "bartlett_multiplier",
-        "null_method": "dependent_wild_score_bootstrap",
-        "null_reference_mean_positive_consensus": float(np.mean(positive_consensus)),
-        "null_reference_max_positive_consensus": float(np.max(positive_consensus)),
+    lowerCap, upperCap = np.quantile(
+        template,
+        (0.001, 0.999),
+        method="interpolated_inverted_cdf",
+    )
+    template = np.clip(template, lowerCap, upperCap)
+    template -= float(np.mean(template))
+    templateRMS = float(np.sqrt(np.mean(template * template)))
+    if templateRMS <= _TINY:
+        raise ValueError("Stationary null template scale must be positive")
+    template *= lowerScale / templateRMS
+
+    metadata: dict[str, float | int] = {
+        "templateLowerSize": int(lowerMagnitudes.size),
+        "templateClipLower": float(lowerCap),
+        "templateClipUpper": float(upperCap),
     }
+    return np.ascontiguousarray(template, dtype=np.float64), metadata
 
 
-def estimate_budget_nonnull_fraction_from_score_track(
-    score_track: np.ndarray,
-    correlation_length: int | None = None,
-    step_bp: int = 50,
-    num_null_draws: int = 25,
-    random_seed: int = 0,
-    progress_label: str | None = None,
-    return_details: bool = False,
-) -> float | Tuple[float, Dict[str, Any]]:
-    r"""Estimate a conservative enriched fraction directly from a score track."""
-    scores = np.asarray(score_track, dtype=np.float64)
+def estimateStationaryBootstrapBudget(
+    scoreTrack: np.ndarray,
+    bootstrapBlockLength: int,
+    *,
+    stepBP: int = 50,
+    thresholdZ: float = 2.0,
+    numBootstrap: int = 64,
+    randomSeed: int = 42,
+    useLocalBootstrapRadius: bool = True,
+    returnDetails: bool = False,
+) -> float | tuple[float, dict[str, Any]]:
+    scores = np.asarray(scoreTrack, dtype=np.float64)
     if scores.ndim != 1:
-        raise ValueError("`score_track` must be one-dimensional")
+        raise ValueError("`scoreTrack` must be one-dimensional")
     if scores.size == 0:
-        raise ValueError("`score_track` must contain at least one locus")
-    null_meta = _estimate_wild_bootstrap_direct_score_null(
-        scores,
-        correlation_length=correlation_length,
-        step_bp=step_bp,
-        num_null_draws=num_null_draws,
-        random_seed=random_seed,
-        progress_label=progress_label,
-    )
-    observed_scores = np.asarray(null_meta["observed_scores"], dtype=np.float64)
-    null_center = float(null_meta["null_center"])
-    null_scale = float(null_meta["null_scale"])
-    null_soft_scale = float(max(null_scale, 1.0e-6))
-    residual_scores = observed_scores - null_center
-    observed_excess = np.clip(residual_scores, 0.0, None)
-    observed_negative = np.clip(-residual_scores, 0.0, None)
-    observed_soft_counts = observed_excess / null_soft_scale
-    observed_positive_fraction = float(np.mean(observed_excess > 0.0))
-    observed_negative_fraction = float(np.mean(observed_negative > 0.0))
-    observed_excess_mass = float(np.mean(observed_excess))
-    observed_excess_units = float(np.mean(observed_soft_counts))
-    null_excess_mass = float(null_meta["null_positive_mass"])
-    null_excess_units = float(null_meta["null_positive_units"])
-    null_excess_units_sd = float(null_meta["null_positive_units_sd"])
-    null_threshold = float(null_meta["null_threshold"])
-    observed_tail_occupancy = float(np.mean(observed_scores > null_threshold))
-    null_tail_occupancy = float(null_meta["null_tail_occupancy"])
-    null_tail_occupancy_sd = float(null_meta["null_tail_occupancy_sd"])
-    ess_max_lag = _resolve_budget_ess_max_lag(
-        scores.size,
-        correlation_length=int(null_meta["correlation_length_intervals"]),
-    )
-    effective_total_count, tau_int, ess_lags_used = _estimate_effective_sample_size(
-        observed_soft_counts,
-        max_lag=ess_max_lag,
-    )
-    nonnull_fraction = float(
-        np.clip(
-            observed_tail_occupancy
-            - null_tail_occupancy,  # removed silly `null_tail_occupancy_sd` subtraction here
-            0.0,
-            1.0,
-        )
-    )
-    if (
-        not np.isfinite(nonnull_fraction)
-        or not np.isfinite(effective_total_count)
-        or not np.isfinite(tau_int)
+        raise ValueError("`scoreTrack` must be non-empty")
+    if np.any(~np.isfinite(scores)):
+        raise ValueError("`scoreTrack` values must be finite")
+    if isinstance(bootstrapBlockLength, (bool, np.bool_)) or not isinstance(
+        bootstrapBlockLength,
+        (int, np.integer),
     ):
-        raise ValueError(
-            "Direct-score budget initialization produced non-finite values"
-        )
+        raise ValueError("`bootstrapBlockLength` must be a positive integer")
+    blockLength = int(bootstrapBlockLength)
+    if blockLength <= 0:
+        raise ValueError("`bootstrapBlockLength` must be a positive integer")
+    if isinstance(stepBP, (bool, np.bool_)) or not isinstance(
+        stepBP,
+        (int, np.integer),
+    ):
+        raise ValueError("`stepBP` must be a positive integer")
+    stepBPValue = int(stepBP)
+    if stepBPValue <= 0:
+        raise ValueError("`stepBP` must be a positive integer")
+    if isinstance(thresholdZ, (bool, np.bool_)):
+        raise ValueError("`thresholdZ` must be finite and non-negative")
+    thresholdZValue = float(thresholdZ)
+    if not np.isfinite(thresholdZValue) or thresholdZValue < 0.0:
+        raise ValueError("`thresholdZ` must be finite and non-negative")
+    if isinstance(numBootstrap, (bool, np.bool_)) or not isinstance(
+        numBootstrap,
+        (int, np.integer),
+    ):
+        raise ValueError("`numBootstrap` must be an integer of at least 8")
+    numBootstrapValue = int(numBootstrap)
+    if numBootstrapValue < 8:
+        raise ValueError("`numBootstrap` must be an integer of at least 8")
+    if isinstance(randomSeed, (bool, np.bool_)) or not isinstance(
+        randomSeed,
+        (int, np.integer),
+    ):
+        raise ValueError("`randomSeed` must be a non-negative integer")
+    randomSeedValue = int(randomSeed)
+    if randomSeedValue < 0:
+        raise ValueError("`randomSeed` must be a non-negative integer")
+    if not isinstance(useLocalBootstrapRadius, (bool, np.bool_)):
+        raise ValueError("`useLocalBootstrapRadius` must be boolean")
+    if not isinstance(returnDetails, (bool, np.bool_)):
+        raise ValueError("`returnDetails` must be boolean")
 
-    details = {
-        "observed_positive_fraction": float(observed_positive_fraction),
-        "observed_negative_fraction": float(observed_negative_fraction),
-        "null_positive_fraction": float(null_meta["null_positive_fraction"]),
-        "observed_excess_mass": float(observed_excess_mass),
-        "null_excess_mass": float(null_excess_mass),
-        "observed_excess_units": float(observed_excess_units),
-        "null_excess_units": float(null_excess_units),
-        "null_excess_units_sd": float(null_excess_units_sd),
-        "null_excess_units_stderr": float(null_meta["null_positive_units_stderr"]),
-        "null_threshold": float(null_threshold),
-        "observed_tail_occupancy": float(observed_tail_occupancy),
-        "null_tail_occupancy": float(null_tail_occupancy),
-        "null_tail_occupancy_sd": float(null_tail_occupancy_sd),
-        "null_tail_occupancy_stderr": float(null_meta["null_tail_occupancy_stderr"]),
-        "null_center": float(null_center),
-        "null_scale": float(null_scale),
-        "nonnull_fraction": float(nonnull_fraction),
-        "effective_count": float(nonnull_fraction * effective_total_count),
-        "effective_total_count": float(effective_total_count),
-        "autocorrelation_time": float(tau_int),
-        "ess_max_lag": float(ess_max_lag),
-        "ess_lags_used": float(ess_lags_used),
-        "num_loci": float(scores.size),
-        "negative_support_size": float(null_meta["negative_support_size"]),
-        "negative_fraction": float(null_meta["negative_fraction"]),
-        "num_null_draws": float(null_meta["num_null_draws"]),
-        "max_null_draws": float(null_meta["max_null_draws"]),
-        "adaptive_stop": bool(null_meta["adaptive_stop"]),
-        "wild_bandwidth": float(null_meta["wild_bandwidth"]),
-        "dwb_bandwidth": float(null_meta["wild_bandwidth"]),
-        "correlation_length_intervals": float(
-            null_meta["correlation_length_intervals"]
-        ),
-        "wild_process": str(null_meta["wild_process"]),
-        "null_method": str(null_meta["null_method"]),
-        "null_reference_mean_positive_consensus": float(
-            null_meta["null_reference_mean_positive_consensus"]
-        ),
-        "null_reference_max_positive_consensus": float(
-            null_meta["null_reference_max_positive_consensus"]
-        ),
+    nullCenter, nullScale = _estimateStationaryNull(scores)
+    template, templateMetadata = _prepareStationaryNullTemplate(
+        scores,
+        nullCenter,
+    )
+    tailAlpha = float(stats.norm.sf(thresholdZValue))
+    thresholdQuantile = float(stats.norm.cdf(thresholdZValue))
+    thresholdOffset = float(
+        max(
+            np.quantile(
+                template,
+                thresholdQuantile,
+                method="interpolated_inverted_cdf",
+            ),
+            0.0,
+        )
+    )
+    threshold = float(nullCenter + thresholdOffset)
+    tailTrack = scores > threshold
+    trackTailOccupancy = float(np.mean(tailTrack))
+
+    useLocalRadius = bool(useLocalBootstrapRadius)
+    maxLocalRadiusIntervals = int(1_000_000 // stepBPValue) if useLocalRadius else -1
+    if useLocalRadius:
+        if blockLength >= scores.size:
+            localRadiusIntervals = int(scores.size - 1)
+        else:
+            localRadiusIntervals = int(
+                min(
+                    np.ceil(np.sqrt(float(blockLength * scores.size))),
+                    scores.size - 1,
+                )
+            )
+        localRadiusIntervals = min(
+            localRadiusIntervals,
+            maxLocalRadiusIntervals,
+        )
+    else:
+        localRadiusIntervals = None
+
+    rng = np.random.default_rng(randomSeedValue)
+    nullOccupancies = np.empty(numBootstrapValue, dtype=np.float64)
+    for drawIndex in range(numBootstrapValue):
+        draw = np.asarray(
+            _wls.stationaryNullBootstrapDraw(
+                template,
+                blockLength,
+                rng,
+                maxLocalRadiusIntervals,
+            ),
+            dtype=np.float64,
+        )
+        nullOccupancies[drawIndex] = float(np.mean(draw > thresholdOffset))
+
+    nullTailOccupancy = float(np.mean(nullOccupancies))
+    nullTailOccupancySD = float(np.std(nullOccupancies, ddof=1))
+    nullTailMCSE = float(nullTailOccupancySD / np.sqrt(float(numBootstrapValue)))
+    signedTailExcess = float(trackTailOccupancy - nullTailOccupancy)
+    budgetFraction = float(max(signedTailExcess, 0.0))
+
+    essMaxLag = int(min(scores.size - 1, blockLength))
+    effectiveTotalCount, autocorrelationTime, essLagsUsed = (
+        _estimate_effective_sample_size(
+            tailTrack.astype(np.float64),
+            max_lag=essMaxLag,
+        )
+    )
+    effectiveCount = float(budgetFraction * effectiveTotalCount)
+
+    if not bool(returnDetails):
+        return budgetFraction
+
+    details: dict[str, Any] = {
+        "bootstrapMethod": "stationary_bootstrap",
+        "bootstrapBlockLength": int(blockLength),
+        "numBootstrap": int(numBootstrapValue),
+        "randomSeed": int(randomSeedValue),
+        "stepBP": int(stepBPValue),
+        "useLocalBootstrapRadius": bool(useLocalRadius),
+        "localRadiusLimitBP": 1_000_000,
+        "maxLocalRadiusIntervals": int(maxLocalRadiusIntervals),
+        "localRadiusIntervals": localRadiusIntervals,
+        "nullCenter": float(nullCenter),
+        "nullScale": float(nullScale),
+        **templateMetadata,
+        "thresholdZ": float(thresholdZValue),
+        "tailAlpha": float(tailAlpha),
+        "thresholdOffset": float(thresholdOffset),
+        "threshold": float(threshold),
+        "trackTailOccupancy": float(trackTailOccupancy),
+        "nullTailOccupancy": float(nullTailOccupancy),
+        "nullTailOccupancySD": float(nullTailOccupancySD),
+        "nullTailMCSE": float(nullTailMCSE),
+        "signedTailExcess": float(signedTailExcess),
+        "budgetFraction": float(budgetFraction),
+        "effectiveCount": float(effectiveCount),
+        "effectiveTotalCount": float(effectiveTotalCount),
+        "autocorrelationTime": float(autocorrelationTime),
+        "essMaxLag": int(essMaxLag),
+        "essLagsUsed": int(essLagsUsed),
+        "numLoci": int(scores.size),
     }
-    if return_details:
-        return nonnull_fraction, details
-    return nonnull_fraction
+    return budgetFraction, details
 
 
 def fit_beta_prior_mle(
@@ -1433,16 +766,18 @@ def estimate_empirical_bayes_budgets(
         return shrunk, {
             "alpha": float(alpha0),
             "beta": float(beta0),
-            "genome_wide_budget": float(init_center),
-            "prior_strength": float(init_strength),
-            "prior_dispersion": float(1.0 / (1.0 + alpha0 + beta0)),
-            "min_prior_dispersion": 0.0,
-            "observed_raw_budget_var": float(observed_raw_budget_var),
-            "theoretical_min_raw_budget_var": float(theoretical_min_raw_budget_var),
-            "prior_dispersion_at_floor": bool(False),
-            "posterior_summary": "beta_quantile",
-            "posterior_quantile": float(posterior_quantile_),
-            "prior_fit_method": "single_chrom_default",
+            "genomeWideBudgetFraction": float(init_center),
+            "priorStrength": float(init_strength),
+            "priorDispersion": float(1.0 / (1.0 + alpha0 + beta0)),
+            "minimumPriorDispersion": 0.0,
+            "observedRawBudgetVariance": float(observed_raw_budget_var),
+            "theoreticalMinimumRawBudgetVariance": float(
+                theoretical_min_raw_budget_var
+            ),
+            "priorDispersionAtFloor": bool(False),
+            "posteriorSummary": "beta_quantile",
+            "posteriorQuantile": float(posterior_quantile_),
+            "priorFitMethod": "single_chrom_default",
         }
 
     if len(chroms) <= 3:
@@ -1464,18 +799,20 @@ def estimate_empirical_bayes_budgets(
         return shrunk, {
             "alpha": float(alpha_hat),
             "beta": float(beta_hat),
-            "genome_wide_budget": float(pooled_rate),
-            "prior_strength": float(prior_strength),
-            "prior_dispersion": float(max(0.0, 1.0 / (1.0 + prior_strength))),
-            "min_prior_dispersion": 0.0,
-            "observed_raw_budget_var": float(observed_raw_budget_var),
-            "theoretical_min_raw_budget_var": float(theoretical_min_raw_budget_var),
-            "prior_dispersion_at_floor": bool(
+            "genomeWideBudgetFraction": float(pooled_rate),
+            "priorStrength": float(prior_strength),
+            "priorDispersion": float(max(0.0, 1.0 / (1.0 + prior_strength))),
+            "minimumPriorDispersion": 0.0,
+            "observedRawBudgetVariance": float(observed_raw_budget_var),
+            "theoreticalMinimumRawBudgetVariance": float(
+                theoretical_min_raw_budget_var
+            ),
+            "priorDispersionAtFloor": bool(
                 observed_raw_budget_var <= theoretical_min_raw_budget_var + 1.0e-12
             ),
-            "posterior_summary": "beta_quantile",
-            "posterior_quantile": float(posterior_quantile_),
-            "prior_fit_method": "weak_pooled_prior",
+            "posteriorSummary": "beta_quantile",
+            "posteriorQuantile": float(posterior_quantile_),
+            "priorFitMethod": "weak_pooled_prior",
         }
 
     alpha_hat, beta_hat = fit_beta_prior_mle(
@@ -1501,14 +838,16 @@ def estimate_empirical_bayes_budgets(
     return shrunk, {
         "alpha": float(alpha_hat),
         "beta": float(beta_hat),
-        "genome_wide_budget": float(alpha_hat / (alpha_hat + beta_hat)),
-        "prior_strength": float(prior_strength),
-        "prior_dispersion": float(prior_dispersion),
-        "min_prior_dispersion": 0.0,
-        "observed_raw_budget_var": float(observed_raw_budget_var),
-        "theoretical_min_raw_budget_var": float(theoretical_min_raw_budget_var),
-        "prior_dispersion_at_floor": bool(dispersion_at_floor),
-        "posterior_summary": "beta_quantile",
-        "posterior_quantile": float(posterior_quantile_),
-        "prior_fit_method": "beta_binomial_mle",
+        "genomeWideBudgetFraction": float(alpha_hat / (alpha_hat + beta_hat)),
+        "priorStrength": float(prior_strength),
+        "priorDispersion": float(prior_dispersion),
+        "minimumPriorDispersion": 0.0,
+        "observedRawBudgetVariance": float(observed_raw_budget_var),
+        "theoreticalMinimumRawBudgetVariance": float(
+            theoretical_min_raw_budget_var
+        ),
+        "priorDispersionAtFloor": bool(dispersion_at_floor),
+        "posteriorSummary": "beta_quantile",
+        "posteriorQuantile": float(posterior_quantile_),
+        "priorFitMethod": "beta_binomial_mle",
     }

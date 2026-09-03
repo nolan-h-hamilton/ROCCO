@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pysam
 import pytest
+from scipy import signal
 
 try:
     import pyBigWig
@@ -180,6 +181,15 @@ def _load_bed_records(bed_file: str) -> list[tuple[str, int, int]]:
     return records
 
 
+def _stationaryBlockMeta(numLoci, blockLength, kwargs):
+    return dict(budgetFraction=0.05, effectiveCount=0.05 * numLoci,
+        effectiveTotalCount=float(numLoci), numLoci=numLoci,
+        bootstrapMethod="stationary_bootstrap", bootstrapBlockLength=blockLength,
+        numBootstrap=kwargs["numBootstrap"], randomSeed=kwargs["randomSeed"],
+        thresholdZ=kwargs["thresholdZ"], useLocalBootstrapRadius=kwargs["useLocalBootstrapRadius"],
+        localRadiusIntervals=min(numLoci - 1, blockLength))
+
+
 def _interval_jaccard(
     left_records: list[tuple[str, int, int]],
     right_records: list[tuple[str, int, int]],
@@ -325,8 +335,8 @@ def test_write_narrowpeak_summit_offsets_uses_wls_mean_centers(tmp_path):
         mean=np.array([1.0, 5.0, 2.0], dtype=np.float32),
     )
     chrom_cache = {
-        "chr1": {"summit_track_file": str(summit_track_file)},
-        "chr2": {"summit_track_file": None},
+        "chr1": {"summitTrackFile": str(summit_track_file)},
+        "chr2": {"summitTrackFile": None},
     }
     output_file = tmp_path / "pointsource.tsv"
     ROCCO_IMPL._write_narrowpeak_summit_offsets(
@@ -343,8 +353,6 @@ def test_write_narrowpeak_summit_offsets_uses_wls_mean_centers(tmp_path):
 
 @pytest.mark.correctness
 def test_native_wls_scores_tied_large_matrix():
-    if ROCCO_INFERENCE._wls_native is None:
-        pytest.skip("native _wls backend is not built in this environment")
     centered = np.zeros((3, 250000), dtype=np.float64)
     scores, details = ROCCO_INFERENCE._score_centered_wls_matrix(
         centered,
@@ -361,8 +369,6 @@ def test_native_wls_scores_tied_large_matrix():
 
 @pytest.mark.correctness
 def test_native_wls_downweights_noisy_track_locally():
-    if ROCCO_INFERENCE._wls_native is None:
-        pytest.skip("native _wls backend is not built in this environment")
     x = np.linspace(-4.0, 4.0, 513, dtype=np.float64)
     smooth = 0.9 * np.sin(x) + 0.15 * np.cos(2.0 * x)
     noisy = smooth.copy()
@@ -557,77 +563,133 @@ def test_empirical_bayes_budget_shrinkage():
         chrom: candidate_counts[chrom] / total_counts[chrom]
         for chrom in candidate_counts
     }
-    assert meta["prior_strength"] > 0
-    assert meta["prior_dispersion"] >= meta["min_prior_dispersion"]
-    assert meta["posterior_summary"] == "beta_quantile"
-    assert np.isclose(meta["posterior_quantile"], 0.01)
+    assert meta["priorStrength"] > 0
+    assert meta["priorDispersion"] >= meta["minimumPriorDispersion"]
+    assert meta["posteriorSummary"] == "beta_quantile"
+    assert np.isclose(meta["posteriorQuantile"], 0.01)
     assert budgets["chr1"] < raw["chr1"]
     assert budgets["chr2"] < raw["chr2"]
     assert budgets["chr1"] < budgets["chr3"] < budgets["chr2"]
 
 
 @pytest.mark.correctness
-def test_budget_nonnull_fraction_from_wild_bootstrap_reports_soft_count_metadata():
-    x = np.arange(512, dtype=np.float64)
-    peak1 = 6.0 * np.exp(-0.5 * ((x - 120.0) / 15.0) ** 2)
-    peak2 = 5.5 * np.exp(-0.5 * ((x - 320.0) / 15.0) ** 2)
-    chrom_matrix = np.vstack(
-        [
-            0.25 + peak1 + peak2 + 0.05 * np.sin(x / 13.0),
-            0.20 + 0.95 * peak1 + 1.05 * peak2 + 0.04 * np.cos(x / 15.0),
-            0.22 + 1.1 * peak1 + 0.9 * peak2 + 0.05 * np.sin(x / 17.0),
-        ]
-    )
-    scores, details = score_loci_wls(
-        chrom_matrix,
-        interval_bp=50,
-        return_details=True,
-    )
-    fraction, meta = estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
-        details["centered_matrix"],
-        observed_scores=scores,
-        correlation_length=16,
-        num_null_draws=6,
-        return_details=True,
-    )
-    assert 0.0 <= fraction <= 1.0
-    assert np.isclose(fraction, meta["nonnull_fraction"])
-    assert 0.0 <= meta["observed_positive_fraction"] <= 1.0
-    assert 0.0 <= meta["null_positive_fraction"] <= 1.0
-    assert meta["observed_excess_mass"] > 0.0
-    assert meta["null_excess_mass"] > 0.0
-    assert meta["observed_excess_units"] > 0.0
-    assert meta["null_excess_units"] > 0.0
-    assert meta["effective_count"] >= 0.0
-    if meta["observed_excess_mass"] <= meta["null_excess_mass"]:
-        assert fraction == 0.0
-    assert 1.0 <= meta["effective_total_count"] <= meta["num_loci"]
-    assert meta["autocorrelation_time"] >= 1.0
-    assert meta["ess_max_lag"] == 16.0
-    assert meta["null_method"] == "dependent_wild_residual_bootstrap"
-    assert meta["num_null_draws"] == 6.0
-    assert meta["max_null_draws"] == 6.0
-    assert not meta["adaptive_stop"]
-    assert meta["wild_bandwidth"] == 16.0
-    assert meta["dwb_bandwidth"] == 16.0
-    assert meta["correlation_length_intervals"] == 16.0
-    assert meta["null_excess_units_sd"] > 0.0
-    assert meta["null_reference_mean_positive_consensus"] >= 0.0
-    assert meta["negative_support_size"] > 0.0
-    assert 0.0 < meta["negative_fraction"] <= 1.0
+def test_stationary_bootstrap_native_contract():
+    native_draw = ROCCO_INFERENCE._wls.stationaryNullBootstrapDraw
+    template = np.arange(20, dtype=np.float64)
+    expected_sources = {
+        7: [7, 5, 1, 2, 3, 4, 5, 6, 7, 9, 6, 13, 14, 15, 10, 11, 12, 13, 19, 0],
+        2: [2, 0, 1, 2, 3, 4, 5, 6, 7, 9, 11, 13, 14, 13, 16, 17, 18, 19, 18, 19],
+        -1: [11, 4, 11, 12, 13, 14, 15, 16, 17, 12, 13, 14, 15, 17, 4, 5, 6, 7, 18, 19],
+    }
+    restart_indices = np.array([0, 1, 2, 9, 10, 11, 13, 14, 18])
+    for radius, source in expected_sources.items():
+        source = np.asarray(source, dtype=np.float64)
+        rng = np.random.Generator(np.random.PCG64(0))
+        draw = native_draw(template, 2, rng, radius)
+        np.testing.assert_array_equal(draw, source - np.mean(source))
+        assert draw.dtype == np.float64 and draw.flags.c_contiguous
+        assert np.mean(draw) == pytest.approx(0.0, abs=1.0e-15)
+        assert rng.bit_generator.random_raw() == 12646017539498340653
+        if radius >= 0:
+            assert np.all(np.abs(source[restart_indices] - restart_indices) <= radius)
+    source = expected_sources[7]
+    np.testing.assert_array_equal(np.diff(source[2:9]), np.ones(6))
+    np.testing.assert_array_equal(source[18:20], np.array([19.0, 0.0]))
+
+    invalid_calls = ((np.empty(0), 2, np.random.default_rng(0), -1),
+        (np.zeros((2, 2)), 2, np.random.default_rng(0), -1),
+        (np.array([0.0, np.nan]), 2, np.random.default_rng(0), -1),
+        (template, 0, np.random.default_rng(0), -1),
+        (template, 2, np.random.default_rng(0), -2), (template, 2, object(), -1))
+    for call in invalid_calls:
+        with pytest.raises((TypeError, ValueError)):
+            native_draw(*call)
 
 
 @pytest.mark.correctness
-def test_dwb_null_adaptive_stop_uses_stricter_minimum_draws():
-    meta = ROCCO_INFERENCE._estimate_wild_bootstrap_direct_score_null(
-        np.zeros(128, dtype=np.float64),
-        correlation_length=4,
-        num_null_draws=20,
+def test_stationary_budget_estimator_contract(monkeypatch):
+    negative = -np.linspace(0.1, 10.0, 1_000)
+    positive = np.linspace(0.05, 25.0, 1_000)
+    positive[::100] = 5.0
+    scores = np.empty(2_000)
+    scores[0::2], scores[1::2] = negative, positive
+    template, meta = ROCCO_INFERENCE._prepareStationaryNullTemplate(scores, 0.0)
+    positive_mask = scores > 0.0
+    ranks = ROCCO_INFERENCE.stats.rankdata(scores[positive_mask], method="average")
+    reflected = scores.copy()
+    reflected[positive_mask] = np.quantile(
+        -scores[scores < 0.0], (ranks - 0.5) / ranks.size,
+        method="interpolated_inverted_cdf")
+    caps = np.quantile(reflected, (0.001, 0.999), method="interpolated_inverted_cdf")
+    expected = np.clip(reflected, *caps)
+    expected -= np.mean(expected)
+    lower_scale = np.median(-scores[scores < 0.0]) / ROCCO_INFERENCE.stats.norm.ppf(0.75)
+    expected *= lower_scale / np.sqrt(np.mean(expected**2))
+    np.testing.assert_allclose(template, expected)
+    assert set(meta) == {"templateLowerSize", "templateClipLower", "templateClipUpper"}
+    assert (meta["templateClipLower"], meta["templateClipUpper"]) == pytest.approx(caps)
+    counts = np.arange(1, 9)
+    draw_index = [0]
+    radius_calls = []
+    def fake_draw(template, block_length, rng, radius):
+        radius_calls.append(radius)
+        draw = np.full(8, -2.0)
+        draw[-counts[draw_index[0]] :] = 2.0
+        draw_index[0] += 1
+        return draw
+    with monkeypatch.context() as patch:
+        patch.setattr(ROCCO_INFERENCE, "_estimateStationaryNull", lambda _: (0.0, 1.0))
+        patch.setattr(
+            ROCCO_INFERENCE,
+            "_prepareStationaryNullTemplate",
+            lambda *_: (np.array([-2, -1, 0, 0, 0, 0, 1, 2], dtype=float), {}),
+        )
+        patch.setattr(ROCCO_INFERENCE._wls, "stationaryNullBootstrapDraw", fake_draw)
+        budget, strict_meta = estimateStationaryBootstrapBudget(
+            np.array([-5, -4, -3, -2, 0, 0, 0, 1], dtype=float),
+            3,
+            thresholdZ=0.0,
+            numBootstrap=8,
+            returnDetails=True,
+        )
+    null_occupancies = counts / 8.0
+    null_sd = np.std(null_occupancies, ddof=1)
+    assert strict_meta["trackTailOccupancy"] == 1.0 / 8.0
+    assert strict_meta["nullTailOccupancy"] == pytest.approx(np.mean(null_occupancies))
+    assert strict_meta["nullTailOccupancySD"] == pytest.approx(null_sd)
+    assert strict_meta["nullTailMCSE"] == pytest.approx(null_sd / np.sqrt(8.0))
+    assert budget == strict_meta["budgetFraction"] == max(strict_meta["signedTailExcess"], 0.0)
+    assert strict_meta["localRadiusIntervals"] == 5 and radius_calls == [20_000] * 8
+    rng = np.random.default_rng(20260831)
+    size, rho = 8_192, 0.75
+    null_tracks = (
+        rng.normal(size=size),
+        signal.lfilter(
+            [np.sqrt(1.0 - rho**2)], [1.0, -rho], rng.normal(size=size)
+        ),
     )
+    for null_track in null_tracks:
+        medians = []
+        for dose in (0.0, 0.01, 0.04):
+            planted = null_track.copy()
+            planted[: int(dose * size)] += 7.0
+            values = [
+                estimateStationaryBootstrapBudget(planted, 32, numBootstrap=64,
+                    randomSeed=seed, returnDetails=True)[1]["signedTailExcess"]
+                for seed in (17, 31, 59)
+            ]
+            replay = estimateStationaryBootstrapBudget(planted, 32, numBootstrap=64,
+                randomSeed=17, returnDetails=True)[1]["signedTailExcess"]
+            assert replay == values[0]
+            medians.append(float(np.median(values)))
+        assert abs(medians[0]) <= 0.005
+        assert medians[0] <= medians[1] <= medians[2]
+        assert medians[2] - medians[0] >= 0.025
 
-    assert meta["num_null_draws"] == 12
-    assert meta["max_null_draws"] == 20
-    assert meta["adaptive_stop"]
+    invalid_calls = (([], 2), (np.zeros((2, 2)), 2), ([0.0, np.inf], 2), (scores, 0))
+    for call in invalid_calls:
+        with pytest.raises(ValueError):
+            estimateStationaryBootstrapBudget(*call)
 
 
 @pytest.mark.correctness
@@ -636,10 +698,10 @@ def test_empirical_bayes_budget_single_chrom_uses_default_center():
         {"chr1": 0},
         {"chr1": 0},
     )
-    assert np.isclose(meta["genome_wide_budget"], 0.05)
-    assert meta["posterior_summary"] == "beta_quantile"
-    assert np.isclose(meta["posterior_quantile"], 0.01)
-    assert 0.0 < budgets["chr1"] < meta["genome_wide_budget"]
+    assert np.isclose(meta["genomeWideBudgetFraction"], 0.05)
+    assert meta["posteriorSummary"] == "beta_quantile"
+    assert np.isclose(meta["posteriorQuantile"], 0.01)
+    assert 0.0 < budgets["chr1"] < meta["genomeWideBudgetFraction"]
 
 
 @pytest.mark.correctness
@@ -663,10 +725,19 @@ def test_empirical_bayes_budget_lower_quantile_is_more_conservative():
 @pytest.mark.correctness
 def test_resolve_budgets_clips_final_budgets_to_fixed_range():
     chrom_cache = {
-        "chr1": {"budget_count_hat": 0.0, "total_count": 1000.0},
-        "chr2": {"budget_count_hat": 2.0, "total_count": 1000.0},
-        "chr3": {"budget_count_hat": 120.0, "total_count": 1000.0},
-        "chr4": {"budget_count_hat": 400.0, "total_count": 1000.0},
+        chrom: {
+            "budgetMetadata": {
+                "budgetBlocks": [{
+                    "blockID": 0,
+                    "numLoci": 1000,
+                    "budgetFraction": count / 1000.0,
+                    "effectiveCount": count,
+                    "effectiveTotalCount": 1000.0,
+                }]
+            }
+        }
+        for chrom, count in {"chr1": 0.0, "chr2": 2.0, "chr3": 120.0,
+                             "chr4": 400.0}.items()
     }
     budgets, meta = ROCCO_IMPL._resolve_budgets(
         chrom_cache,
@@ -676,71 +747,40 @@ def test_resolve_budgets_clips_final_budgets_to_fixed_range():
             "scale_chrom_budgets": 1.0,
         },
     )
-    assert meta["posterior_summary"] == "beta_quantile"
+    assert meta["posteriorSummary"] == "beta_quantile"
     for chrom in chrom_cache:
-        assert 0.001 <= budgets[chrom] <= 0.25
+        assert 0.001 <= budgets[chrom]["posteriorBudgetFraction"] <= 0.25
 
 
 @pytest.mark.correctness
 def test_resolve_budgets_pools_chrom_block_units(monkeypatch):
+    def blockMetadata(blockID, startIndex, stopIndex, effectiveCount):
+        return {
+            "blockID": blockID,
+            "startIndex": startIndex,
+            "stopIndex": stopIndex,
+            "startBP": 50 * startIndex,
+            "stopBP": 50 * stopIndex,
+            "numLoci": stopIndex - startIndex,
+            "budgetFraction": effectiveCount / 10.0,
+            "effectiveCount": effectiveCount,
+            "effectiveTotalCount": 10.0,
+        }
+
     chrom_cache = {
         "chr1": {
-            "budget_count_hat": 3.0,
-            "total_count": 20.0,
-            "budget_rate_meta": {
-                "budget_blocks": [
-                    {
-                        "block_id": 0,
-                        "start_idx": 0,
-                        "stop_idx": 5,
-                        "start_bp": 0,
-                        "stop_bp": 250,
-                        "num_loci": 5,
-                        "budget_fraction_hat": 0.1,
-                        "budget_count_hat": 1.0,
-                        "total_count": 10.0,
-                    },
-                    {
-                        "block_id": 1,
-                        "start_idx": 5,
-                        "stop_idx": 10,
-                        "start_bp": 250,
-                        "stop_bp": 500,
-                        "num_loci": 5,
-                        "budget_fraction_hat": 0.2,
-                        "budget_count_hat": 2.0,
-                        "total_count": 10.0,
-                    },
+            "budgetMetadata": {
+                "budgetBlocks": [
+                    blockMetadata(0, 0, 5, 1.0),
+                    blockMetadata(1, 5, 10, 2.0),
                 ]
             },
         },
         "chr2": {
-            "budget_count_hat": 7.0,
-            "total_count": 20.0,
-            "budget_rate_meta": {
-                "budget_blocks": [
-                    {
-                        "block_id": 0,
-                        "start_idx": 0,
-                        "stop_idx": 4,
-                        "start_bp": 0,
-                        "stop_bp": 200,
-                        "num_loci": 4,
-                        "budget_fraction_hat": 0.3,
-                        "budget_count_hat": 3.0,
-                        "total_count": 10.0,
-                    },
-                    {
-                        "block_id": 1,
-                        "start_idx": 4,
-                        "stop_idx": 8,
-                        "start_bp": 200,
-                        "stop_bp": 400,
-                        "num_loci": 4,
-                        "budget_fraction_hat": 0.4,
-                        "budget_count_hat": 4.0,
-                        "total_count": 10.0,
-                    },
+            "budgetMetadata": {
+                "budgetBlocks": [
+                    blockMetadata(0, 0, 4, 3.0),
+                    blockMetadata(1, 4, 8, 4.0),
                 ]
             },
         },
@@ -756,7 +796,7 @@ def test_resolve_budgets_pools_chrom_block_units(monkeypatch):
         captured["total_counts"] = dict(total_counts)
         return (
             {key: 0.01 * (idx + 1) for idx, key in enumerate(candidate_counts)},
-            {"genome_wide_budget": 0.1, "posterior_summary": "fake"},
+            {"genomeWideBudgetFraction": 0.1, "posteriorSummary": "fake"},
         )
 
     monkeypatch.setattr(
@@ -782,19 +822,15 @@ def test_resolve_budgets_pools_chrom_block_units(monkeypatch):
     ]
     assert list(captured["candidate_counts"].values()) == [1.0, 2.0, 3.0, 4.0]
     assert list(captured["total_counts"].values()) == [10.0, 10.0, 10.0, 10.0]
-    assert budgets["chr1"]["mode"] == "block"
-    assert budgets["chr1"]["budget"] == pytest.approx(0.015)
-    assert np.allclose(
-        budgets["chr1"]["block_bounds"],
-        np.array([[0.0, 5.0], [5.0, 10.0]]),
-    )
-    assert np.allclose(budgets["chr2"]["block_budgets"], np.array([0.03, 0.04]))
+    assert budgets["chr1"]["posteriorBudgetFraction"] == pytest.approx(0.015)
+    assert [block["posteriorBudgetFraction"]
+            for block in budgets["chr2"]["budgetBlocks"]] == [0.03, 0.04]
     assert np.allclose(
         ROCCO_IMPL._solver_budget_blocks(budgets["chr1"]),
         np.array([[0.0, 5.0, 0.01], [5.0, 10.0, 0.02]]),
     )
-    assert budgets["chr2"]["blocks"][1]["budget"] == pytest.approx(0.04)
-    assert meta["budget_unit_count"] == 4
+    assert budgets["chr2"]["budgetBlocks"][1]["budgetFraction"] == pytest.approx(0.4)
+    assert meta["pooledBudgetBlockCount"] == 4
 
 
 @pytest.mark.correctness
@@ -846,10 +882,13 @@ def test_solve_cached_chromosome_passes_block_budgets(monkeypatch, tmp_path):
         },
         "chrom_budgets": {
             "chr1": {
-                "mode": "block",
-                "budget": 0.15,
-                "block_bounds": np.array([[0.0, 2.0], [2.0, 4.0]]),
-                "block_budgets": np.array([0.1, 0.2]),
+                "posteriorBudgetFraction": 0.15,
+                "budgetBlocks": [
+                    {"startIndex": 0, "stopIndex": 2,
+                     "posteriorBudgetFraction": 0.1},
+                    {"startIndex": 2, "stopIndex": 4,
+                     "posteriorBudgetFraction": 0.2},
+                ],
             }
         },
         "selection_penalty": None,
@@ -888,7 +927,7 @@ def test_length_bins_do_not_get_finer_than_100bp():
 
 
 @pytest.mark.correctness
-def test_build_chrom_cache_bam_shares_centered_matrix_and_working_span(monkeypatch):
+def test_build_chrom_cache_bam_uses_one_score_estimator_path(monkeypatch):
     chrom_lengths = {"chr1": 8, "chr2": 12}
     score_calls = []
     dependence_calls = []
@@ -941,22 +980,11 @@ def test_build_chrom_cache_bam_shares_centered_matrix_and_working_span(monkeypat
             },
         )
 
-    def fake_budget_estimator(centered_matrix, observed_scores, **kwargs):
-        observed_scores_ = np.asarray(observed_scores, dtype=float)
-        observed_len = int(observed_scores_.shape[0])
-        budget_calls.append(
-            {
-                "centered_matrix": np.asarray(centered_matrix).copy(),
-                "observed_scores": observed_scores_.copy(),
-                "kwargs": kwargs,
-            }
-        )
-        return 0.05, {
-            "budget_count_hat": 0.05 * float(observed_len),
-            "effective_total_count": float(observed_len),
-            "dwb_bandwidth": float(kwargs["correlation_length"]),
-            "num_null_draws": float(kwargs["num_null_draws"]),
-        }
+    def fake_budget_estimator(score_track, block_length, **kwargs):
+        scores = np.asarray(score_track, dtype=float)
+        observed_len = int(scores.size)
+        budget_calls.append((scores.copy(), block_length, kwargs.copy()))
+        return 0.05, _stationaryBlockMeta(observed_len, block_length, kwargs)
 
     monkeypatch.setattr(ROCCO_IMPL, "generate_chrom_matrix", fake_generate_chrom_matrix)
     monkeypatch.setattr(ROCCO_IMPL, "score_loci_wls", fake_score_loci_wls)
@@ -965,7 +993,7 @@ def test_build_chrom_cache_bam_shares_centered_matrix_and_working_span(monkeypat
     )
     monkeypatch.setattr(
         ROCCO_IMPL,
-        "estimate_budget_nonnull_fraction_from_wild_bootstrap_null",
+        "estimateStationaryBootstrapBudget",
         fake_budget_estimator,
     )
 
@@ -988,7 +1016,10 @@ def test_build_chrom_cache_bam_shares_centered_matrix_and_working_span(monkeypat
         "score_prior_df": 5.0,
         "score_min_effect": None,
         "score_precision_floor_ratio": 0.01,
-        "budget_null_draws": 4,
+        "budget_bootstrap_draws": 8,
+        "budget_threshold_z": 2.0,
+        "budget_bootstrap_seed": 42,
+        "no_local_bootstrap_radius": False,
         "num_null_blocks": 4,
         "gamma": 2.5,
         "peak_mode": None,
@@ -996,8 +1027,6 @@ def test_build_chrom_cache_bam_shares_centered_matrix_and_working_span(monkeypat
         "window_count": 256,
         "working_quantile": 0.9,
         "bootstrap_draws": 500,
-        "insufficient_data_policy": "error",
-        "prior_radius_bp": None,
     }
 
     chrom_cache = ROCCO_IMPL._build_chrom_cache(
@@ -1018,27 +1047,27 @@ def test_build_chrom_cache_bam_shares_centered_matrix_and_working_span(monkeypat
         )
         chromosome_budget_calls = budget_calls[:4]
         budget_calls = budget_calls[4:]
-        assert np.array_equal(
-            np.concatenate(
-                [call["centered_matrix"] for call in chromosome_budget_calls], axis=1
-            ),
-            expected_centered,
+        assert np.allclose(
+            np.concatenate([call[0] for call in chromosome_budget_calls]),
+            np.linspace(0.0, 3.0, n_loci),
         )
-        assert [
-            call["kwargs"]["correlation_length"] for call in chromosome_budget_calls
-        ] == [11] * 4
-        assert chrom_cache[chromosome]["correlation_radius_intervals"] == 3
-        assert chrom_cache[chromosome]["correlation_radius_bp"] == 150.0
-        assert chrom_cache[chromosome]["working_span_intervals"] == 11
-        assert chrom_cache[chromosome]["working_span_bp"] == 550.0
-        assert chrom_cache[chromosome]["dwb_bandwidth"] == 11
+        assert [call[1] for call in chromosome_budget_calls] == [11] * 4
+        assert [call[2]["numBootstrap"] for call in chromosome_budget_calls] == [8] * 4
+        diagnostics = chrom_cache[chromosome]["dependenceDiagnostics"]
+        assert diagnostics["estimateBP"] == 150.0
+        assert diagnostics["workingSpanIntervals"] == 11
+        assert diagnostics["workingSpanBP"] == 550.0
         assert chrom_cache[chromosome]["gamma"] == 2.5
-    all_budget_calls = [
+    all_budget_blocks = [
         block
         for chromosome in chrom_cache.values()
-        for block in chromosome["budget_rate_meta"]["budget_blocks"]
+        for block in chromosome["budgetMetadata"]["budgetBlocks"]
     ]
-    assert [block["working_span_intervals"] for block in all_budget_calls] == [11] * 8
+    assert [block["bootstrapBlockLength"] for block in all_budget_blocks] == [11] * 8
+    assert all({"blockID", "startIndex", "stopIndex", "startBP", "stopBP",
+                "numLoci", "budgetFraction", "effectiveCount",
+                "effectiveTotalCount"} <= set(block) for block in all_budget_blocks)
+    assert all(not any("_" in key for key in block) for block in all_budget_blocks)
 
 
 @pytest.mark.correctness
@@ -1077,14 +1106,9 @@ def test_build_chrom_cache_peak_modes(monkeypatch, peak_mode, expected_summit_ca
             },
         )
 
-    def fake_budget_estimator(centered_matrix, observed_scores, **kwargs):
-        observed_len = int(np.asarray(observed_scores).shape[0])
-        return 0.05, {
-            "budget_count_hat": 0.05 * float(observed_len),
-            "effective_total_count": float(observed_len),
-            "dwb_bandwidth": 5.0,
-            "num_null_draws": float(kwargs["num_null_draws"]),
-        }
+    def fake_budget_estimator(score_track, block_length, **kwargs):
+        observed_len = int(np.asarray(score_track).size)
+        return 0.05, _stationaryBlockMeta(observed_len, block_length, kwargs)
 
     def fake_summit_track(chrom, intervals, effect_mean):
         summit_calls.append((chrom, intervals.copy(), effect_mean.copy()))
@@ -1097,7 +1121,7 @@ def test_build_chrom_cache_peak_modes(monkeypatch, peak_mode, expected_summit_ca
     )
     monkeypatch.setattr(
         ROCCO_IMPL,
-        "estimate_budget_nonnull_fraction_from_wild_bootstrap_null",
+        "estimateStationaryBootstrapBudget",
         fake_budget_estimator,
     )
     monkeypatch.setattr(ROCCO_IMPL, "_cpy_narrowpeak_summit_track", fake_summit_track)
@@ -1121,7 +1145,10 @@ def test_build_chrom_cache_peak_modes(monkeypatch, peak_mode, expected_summit_ca
         "score_prior_df": 5.0,
         "score_min_effect": None,
         "score_precision_floor_ratio": 0.01,
-        "budget_null_draws": 4,
+        "budget_bootstrap_draws": 8,
+        "budget_threshold_z": 2.0,
+        "budget_bootstrap_seed": 42,
+        "no_local_bootstrap_radius": False,
         "num_null_blocks": 4,
         "gamma": 0.25,
         "peak_mode": peak_mode,
@@ -1129,8 +1156,6 @@ def test_build_chrom_cache_peak_modes(monkeypatch, peak_mode, expected_summit_ca
         "window_count": 256,
         "working_quantile": 0.9,
         "bootstrap_draws": 500,
-        "insufficient_data_policy": "error",
-        "prior_radius_bp": None,
     }
 
     chrom_cache = ROCCO_IMPL._build_chrom_cache(
@@ -1140,9 +1165,9 @@ def test_build_chrom_cache_peak_modes(monkeypatch, peak_mode, expected_summit_ca
     )
 
     assert len(summit_calls) == expected_summit_calls
-    assert "effect_mean" not in chrom_cache["chr1"]
+    assert "effectMean" not in chrom_cache["chr1"]
     assert chrom_cache["chr1"]["gamma"] == pytest.approx(0.25)
-    assert chrom_cache["chr1"]["correlation_radius_intervals"] == 5
+    assert chrom_cache["chr1"]["dependenceDiagnostics"]["estimateBP"] == 250.0
 
 
 @pytest.mark.correctness
@@ -1166,16 +1191,15 @@ def test_broad_parent_merging_uses_working_span_not_median_radius(monkeypatch):
         "chr1": {
             "solution": np.array([1, 0, 0, 0, 0, 0, 1, 0], dtype=np.uint8),
             "intervals": intervals,
-            "z_scores": np.ones(8),
+            "zScores": np.ones(8),
             "gamma": 1.0,
-            "interval_bp": 50,
-            "correlation_radius_intervals": 1,
-            "working_span_intervals": 3,
+            "intervalBP": 50,
+            "dependenceDiagnostics": {"workingSpanIntervals": 3},
         }
     }
     records, block_map = ROCCO_IMPL._build_broad_parent_records(
         chrom_cache,
-        {"chr1": 0.05},
+        {"chr1": {"posteriorBudgetFraction": 0.05}},
         {
             "broad_score_lower_bound_z": 0.0,
             "broad_max_gap_bp": None,
@@ -1456,8 +1480,7 @@ def test_get_ecdf_counts_sampled_intervals_in_native_batches(monkeypatch, tmp_pa
         assert ends == [110, 120]
         assert kwargs["one_read_per_bin"] == 1
         assert kwargs["thread_count"] == 3
-        assert kwargs["flag_exclude"] == 0x4
-        assert kwargs["min_mapping_quality"] == 10
+        assert (kwargs["min_mapping_quality"], kwargs["flag_exclude"]) == (20, 3844)
         assert kwargs["count_mode"] == "coverage"
 
 
@@ -1581,7 +1604,9 @@ def test_score_peaks_regenerates_stale_count_matrix(monkeypatch, tmp_path):
 
     assert len(regenerate_calls) == 1
     assert scores.shape == (2,)
-    assert len(output_path.read_text(encoding="utf-8").splitlines()) == 2
+    output_rows = output_path.read_text(encoding="utf-8").splitlines()
+    assert len(output_rows) == 2
+    assert all(row.split("\t")[8] == "-1" for row in output_rows)
 
 
 @pytest.mark.correctness
@@ -1619,15 +1644,10 @@ def test_build_chrom_cache_preserves_bigwig_rows_and_bypasses_wls(monkeypatch):
             },
         )
 
-    def fake_budget_estimator(scores, **kwargs):
+    def fake_budget_estimator(scores, block_length, **kwargs):
         scores_ = np.asarray(scores, dtype=float)
-        direct_budget_calls.append((scores_, kwargs))
-        return 0.05, {
-            "budget_count_hat": 0.05 * float(scores_.shape[0]),
-            "effective_total_count": float(scores_.shape[0]),
-            "dwb_bandwidth": float(kwargs["correlation_length"]),
-            "num_null_draws": float(kwargs["num_null_draws"]),
-        }
+        direct_budget_calls.append((scores_, block_length, kwargs))
+        return 0.05, _stationaryBlockMeta(scores_.size, block_length, kwargs)
 
     monkeypatch.setattr(ROCCO_IMPL, "generate_chrom_matrix", fake_generate_chrom_matrix)
     monkeypatch.setattr(ROCCO_IMPL, "score_loci_wls", fail_score_loci_wls)
@@ -1636,7 +1656,7 @@ def test_build_chrom_cache_preserves_bigwig_rows_and_bypasses_wls(monkeypatch):
     )
     monkeypatch.setattr(
         ROCCO_IMPL,
-        "estimate_budget_nonnull_fraction_from_score_track",
+        "estimateStationaryBootstrapBudget",
         fake_budget_estimator,
     )
     monkeypatch.setattr(
@@ -1677,7 +1697,10 @@ def test_build_chrom_cache_preserves_bigwig_rows_and_bypasses_wls(monkeypatch):
             "score_prior_df": 5.0,
             "score_min_effect": None,
             "score_precision_floor_ratio": 0.01,
-            "budget_null_draws": 4,
+            "budget_bootstrap_draws": 8,
+            "budget_threshold_z": 2.0,
+            "budget_bootstrap_seed": 42,
+            "no_local_bootstrap_radius": False,
             "num_null_blocks": 4,
             "gamma": 3.0,
             "peak_mode": None,
@@ -1685,8 +1708,6 @@ def test_build_chrom_cache_preserves_bigwig_rows_and_bypasses_wls(monkeypatch):
             "window_count": 256,
             "working_quantile": 0.9,
             "bootstrap_draws": 500,
-            "insufficient_data_policy": "error",
-            "prior_radius_bp": None,
         }
         budget_start = len(direct_budget_calls)
         chrom_cache = ROCCO_IMPL._build_chrom_cache(["chr1"], input_files, args)
@@ -1703,13 +1724,15 @@ def test_build_chrom_cache_preserves_bigwig_rows_and_bypasses_wls(monkeypatch):
         assert np.allclose(
             np.concatenate([call[0] for call in case_budget_calls]), expected_scores
         )
-        assert [call[1]["correlation_length"] for call in case_budget_calls] == [11] * 4
-        assert chrom_cache["chr1"]["correlation_radius_intervals"] == 3
-        assert chrom_cache["chr1"]["working_span_intervals"] == 11
+        assert [call[1] for call in case_budget_calls] == [11] * 4
+        assert [call[2]["numBootstrap"] for call in case_budget_calls] == [8] * 4
+        diagnostics = chrom_cache["chr1"]["dependenceDiagnostics"]
+        assert diagnostics["estimateBP"] == 150.0
+        assert diagnostics["workingSpanIntervals"] == 11
 
 
 @pytest.mark.correctness
-def test_prepare_args_low_memory_uses_conservative_defaults(monkeypatch):
+def test_prepare_args_low_memory_preserves_bootstrap_draws(monkeypatch):
     parser = ROCCO_IMPL._build_parser()
     monkeypatch.setattr(
         sys,
@@ -1723,14 +1746,34 @@ def test_prepare_args_low_memory_uses_conservative_defaults(monkeypatch):
             "--norm_method",
             "CPM",
             "--low_memory",
+            "--no_local_bootstrap_radius",
         ],
     )
     args = ROCCO_IMPL._prepare_args(parser)
     assert args["low_memory"] is True
     assert 1 <= int(args["threads"]) <= 4
-    assert int(args["budget_null_draws"]) == 16
+    assert int(args["budget_bootstrap_draws"]) == 64
+    assert args["budget_threshold_z"] == pytest.approx(2.0)
+    assert int(args["budget_bootstrap_seed"]) == 42
+    assert args["no_local_bootstrap_radius"] is True
     assert int(args["num_null_blocks"]) == 4
     assert args["working_quantile"] == pytest.approx(0.95)
+
+
+@pytest.mark.correctness
+def test_ignore_for_norm_distinguishes_default_empty_and_values(tmp_path):
+    bamFile = tmp_path / "fake.bam"
+    bamFile.touch()
+    parser = ROCCO_IMPL._build_parser()
+    for extraArgs, expected in (
+        ([], ["chrX", "chrY", "chrM"]),
+        (["--ignore_for_norm"], []),
+        (["--ignore_for_norm", "chrM"], ["chrM"]),
+    ):
+        args = vars(parser.parse_args(["-i", str(bamFile), *extraArgs]))
+        args["input_track_type"] = "bam"
+        ROCCO_IMPL._prepare_inputs(args)
+        assert args["ignore_for_norm"] == expected
 
 
 @pytest.mark.correctness
@@ -1750,7 +1793,6 @@ def test_prepare_args_low_memory_uses_conservative_defaults(monkeypatch):
             "cannot exceed",
         ),
         (["--num_null_blocks", "0"], "num_null_blocks"),
-        (["--prior_radius_bp", "2499"], "at least 2500"),
         (
             [
                 "-i",
@@ -1791,18 +1833,15 @@ def test_small_end_to_end_subset(test_setup):
         return_details=True,
     )
     assert scores.shape == (5000,)
-    budget_fraction, budget_meta = (
-        estimate_budget_nonnull_fraction_from_wild_bootstrap_null(
-            details["centered_matrix"],
-            observed_scores=scores,
-            correlation_length=101,
-            num_null_draws=6,
-            return_details=True,
-        )
+    budget_fraction, budget_meta = estimateStationaryBootstrapBudget(
+        scores,
+        101,
+        numBootstrap=8,
+        returnDetails=True,
     )
     assert 0.0 <= budget_fraction <= 1.0
-    assert budget_meta["effective_count"] >= 0.0
-    assert 1.0 <= budget_meta["effective_total_count"] <= budget_meta["num_loci"]
+    assert budget_meta["effectiveCount"] >= 0.0
+    assert 1.0 <= budget_meta["effectiveTotalCount"] <= budget_meta["numLoci"]
     candidate_mask = candidate_mask_from_wls(details["z_scores"], tail_z=2.0)
     assert candidate_mask.shape == (5000,)
 

@@ -177,18 +177,9 @@ def test_window_estimator_rejects_invalid_inputs(values, kwargs, message):
 
 
 @pytest.mark.correctness
-def test_choose_dependence_span_rejects_insufficient_support_or_uses_prior():
+def test_choose_dependence_span_uses_prior_for_insufficient_support():
     matrices = {"chr1": _gaussian_window(9)[None, :]}
     coordinates = {"chr1": STEP_BP * np.arange(WINDOW_BINS)}
-
-    with pytest.raises(ValueError, match="at least 20 eligible windows"):
-        choose_dependence_span(
-            matrices,
-            coordinates,
-            STEP_BP,
-            window_count=20,
-            bootstrap_draws=20,
-        )
 
     estimate, lower, upper, diagnostics = choose_dependence_span(
         matrices,
@@ -196,12 +187,10 @@ def test_choose_dependence_span_rejects_insufficient_support_or_uses_prior():
         STEP_BP,
         window_count=20,
         bootstrap_draws=20,
-        insufficient_data_policy="priorOnly",
-        prior_radius_bp=2500.0,
     )
-    assert (estimate, lower, upper) == (50, 50, 50)
+    assert (estimate, lower, upper) == (100, 100, 100)
     assert diagnostics["usedPrior"] is True
-    assert diagnostics["workingSpanIntervals"] == 50
+    assert diagnostics["workingSpanIntervals"] == 100
 
 
 @pytest.mark.correctness
@@ -232,12 +221,6 @@ def test_choose_dependence_span_rejects_insufficient_support_or_uses_prior():
             {"chr1": STEP_BP * np.arange(WINDOW_BINS)},
             {"bootstrap_draws": 19},
             "at least 20",
-        ),
-        (
-            {"chr1": np.ones((1, WINDOW_BINS))},
-            {"chr1": STEP_BP * np.arange(WINDOW_BINS)},
-            {"prior_radius_bp": 2499.0},
-            "at least 2500",
         ),
     ],
 )
