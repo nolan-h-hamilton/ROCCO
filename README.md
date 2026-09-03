@@ -9,12 +9,17 @@ ROCCO is an efficient algorithm for detection of "consensus peaks" in large data
 
 ### Input/Output
 
-* *Input*: Samples' `.bam` alignments (`-i`) or one `.bw` bigWig file, and a reference genome assembly (`-g`) for chromosome sizes and annotation of blacklisted regions (if available)
-* *Output*: BED file of consensus peak regions (Default format is BED3: `chrom,start,end`). Use `--peak_mode both` to obtain both narrow and broad peak calls.
+* *Input*: Samples' `.bam` alignments (`-i`) and a reference genome assembly (`-g`) for chromosome sizes
+* *Output*: BED file of consensus peak regions (Default format is BED3: `chrom,start,end`). narrowPeak and gappedPeak outputs are supported for BAM inputs. Use `--peak_mode both`.
 
 ## How
 
-ROCCO models consensus peak calling as a constrained optimization problem with constraints/penalties for the total proportion of the genome selected as enriched and a fragmentation penalty (TV) to promote spatial consistency in active regions and sparsity elsewhere.
+ROCCO models consensus peak calling as an optimization problem: select the most enriched genomic regions as peaks while controlling total genomic coverage and discouraging fragmented calls.
+
+* Enrichment is measured by a read density score in the selected genomic regions
+* Budget proportions calibrate selection penalties that control total genomic coverage
+* Fragmentation is controlled via a total variation penalty, multiplied by a penalty parameter $\gamma$ ($\gamma \sum_i |x_{i+1} - x_i|$).
+
 
 ## Why
 
@@ -24,20 +29,56 @@ ROCCO models consensus peak calling as a constrained optimization problem with c
 4. **Less rigid thresholds** with respect to the minimum number/width of supporting samples/replicates.
 5. **Mathematically tractable model** permitting worst-case analysis of runtime and performance
 
-## Usage
+## Basic Usage
 
-  ```shell
-  rocco -i <.bam files, or a single aggregate .bw file> -g <hg38, hg19, mm10, mm39, dm6, ...> -o <output_file.bed> [--peak_mode both]
-  ```
+Run `rocco --help` for the complete command-line reference.
 
-for example:
+ROCCO accepts either one or more BAM files, separated by spaces.
 
-  ```shell
-  rocco -i sample1.bam sample2.bam sample3.bam -g hg38 -o consensus_peaks.bed --peak_mode both
-  ```
+```shell
+rocco -i <BAM> [<BAM> ...] \
+  -g <GENOME> \
+  -o <OUTPUT.bed>
+```
+Genome assemblies `hg38`, `hg19`, `mm10`, `mm39`, and `dm6` can be used with `-g`, to supply a built-in chromosome sizes file (canonical chromosomes only) and effective genome size.
 
-See `rocco --help` for more options and details.
+If using ROCCO with another assembly, just provide the chromosome sizes file and effective genome size as described explicitly:
 
+* `-s, --chrom_sizes_file <FILE>`: chromosome names and sizes.
+* `--effective_genome_size <BASES>`: [effective genome size](https://deeptools.readthedocs.io/en/latest/content/feature/effectiveGenomeSize.html), only required if using RPGC normalization.
+
+For example:
+
+```shell
+rocco \
+  -i sample1.bam sample2.bam sample3.bam \
+  -s assemblyName.chrom.sizes \
+  --effective_genome_size <BASES> \
+  -o consensus_peaks.bed
+```
+
+When troubleshooting, consider processing a subset of
+the genome for faster evaluation:
+
+```shell
+rocco \
+  -i sample1.bam sample2.bam sample3.bam \
+  -g hg38 \
+  -o consensus_peaks.bed \
+  --chroms chr11 chr20 chr21 chr22 # at least four chroms
+```
+
+### Example
+
+Call consensus peaks from three BAM files and generate both narrowPeak and gappedPeak outputs:
+
+```shell
+rocco \
+  -i sample1.bam sample2.bam sample3.bam \
+  -g hg38 \
+  -o consensus_peaks.bed \
+  --peak_mode both
+```
 
 ## Paper/Citation
 
@@ -66,7 +107,7 @@ If preferred, ROCCO can easily be built from source:
 * Clone or download this repository
 
   ```shell
-  git clone https://github.com/nolan-h-hamilton/ROCCO.
+  git clone https://github.com/nolan-h-hamilton/ROCCO.git
   cd ROCCO
   python setup.py sdist bdist_wheel
   python -m pip install -e .

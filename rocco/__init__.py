@@ -14,8 +14,7 @@ from .dependence import (
 )
 from .inference import (
     candidate_mask_from_wls,
-    estimate_budget_nonnull_fraction_from_score_track,
-    estimate_budget_nonnull_fraction_from_wild_bootstrap_null,
+    estimateStationaryBootstrapBudget,
     estimate_empirical_bayes_budgets,
     fit_beta_prior_mle,
     score_loci_wls,
@@ -67,8 +66,7 @@ __all__ = [
     "choose_dependence_span",
     "combine_chrom_results",
     "cscores_quantiles",
-    "estimate_budget_nonnull_fraction_from_score_track",
-    "estimate_budget_nonnull_fraction_from_wild_bootstrap_null",
+    "estimateStationaryBootstrapBudget",
     "estimate_dependence_radius_for_window",
     "estimate_empirical_bayes_budgets",
     "fit_beta_prior_mle",

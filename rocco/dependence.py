@@ -13,6 +13,7 @@ _MIN_WINDOWS = 20
 _MIN_AUTOSOMES = 4
 _MAX_LAG_BP = 50000
 MIN_CORRELATION_RADIUS_BP = 2500
+_PRIOR_RADIUS_BP = 5000
 _ACF_THRESHOLD = 0.1
 _ACF_REQUIRED_CROSSINGS = 5
 _CLIP_QUANTILES = (0.005, 0.995)
@@ -422,26 +423,23 @@ def _candidate_windows(
 
 def _prior_result(
     reason: str,
-    prior_radius_bp: float | None,
     step_bp: int,
     diagnostics: dict[str, Any],
 ) -> tuple[int, int, int, dict[str, Any]]:
-    if prior_radius_bp is None:
-        raise ValueError(f"{reason}. `prior_radius_bp` is required for `priorOnly`")
-    intervals = int(math.ceil(prior_radius_bp / float(step_bp)))
+    intervals = int(math.ceil(_PRIOR_RADIUS_BP / float(step_bp)))
     diagnostics.update(
         {
             "usedPrior": True,
-            "status": "priorOnly",
+            "status": "prior",
             "reason": reason,
             "insufficientDataReason": reason,
-            "estimateBP": float(prior_radius_bp),
-            "lowerBP": float(prior_radius_bp),
-            "upperBP": float(prior_radius_bp),
+            "estimateBP": float(_PRIOR_RADIUS_BP),
+            "lowerBP": float(_PRIOR_RADIUS_BP),
+            "upperBP": float(_PRIOR_RADIUS_BP),
             "estimateIntervals": intervals,
             "lowerIntervals": intervals,
             "upperIntervals": intervals,
-            "workingSpanBP": float(prior_radius_bp),
+            "workingSpanBP": float(_PRIOR_RADIUS_BP),
             "workingSpanIntervals": intervals,
             "minimumCorrelationRadiusBP": MIN_CORRELATION_RADIUS_BP,
             "minimumCorrelationRadiusApplied": False,
@@ -459,8 +457,6 @@ def choose_dependence_span(
     window_count: int = 256,
     working_quantile: float = 0.95,
     bootstrap_draws: int = 500,
-    insufficient_data_policy: str = "error",
-    prior_radius_bp: float | None = None,
     random_seed: int = 1729,
 ) -> tuple[int, int, int, dict[str, Any]]:
     step = _positive_int(step_bp, "step_bp")
@@ -477,20 +473,6 @@ def choose_dependence_span(
         raise ValueError("`bootstrap_draws` must be at least 20")
     if window_size % step != 0:
         raise ValueError("`window_bp` must be divisible by `step_bp`")
-    if insufficient_data_policy not in {"error", "priorOnly"}:
-        raise ValueError("`insufficient_data_policy` must be `error` or `priorOnly`")
-    if prior_radius_bp is not None:
-        if (
-            isinstance(prior_radius_bp, bool)
-            or not isinstance(prior_radius_bp, Real)
-            or not math.isfinite(float(prior_radius_bp))
-            or float(prior_radius_bp) < MIN_CORRELATION_RADIUS_BP
-        ):
-            raise ValueError(
-                "`prior_radius_bp` must be finite and at least "
-                f"{MIN_CORRELATION_RADIUS_BP}"
-            )
-        prior_radius_bp = float(prior_radius_bp)
     if not isinstance(chromosome_matrices, Mapping) or not isinstance(
         chromosome_coordinates, Mapping
     ):
@@ -579,9 +561,7 @@ def choose_dependence_span(
     diagnostics["eligibleWindowCount"] = eligible_window_count
     if eligible_window_count < _MIN_WINDOWS:
         reason = f"Dependence estimation needs at least {_MIN_WINDOWS} eligible windows"
-        if insufficient_data_policy == "priorOnly":
-            return _prior_result(reason, prior_radius_bp, step, diagnostics)
-        raise ValueError(reason)
+        return _prior_result(reason, step, diagnostics)
 
     selected_slots: list[dict[str, Any] | None] = [None] * len(candidates)
     candidate_indices_by_chromosome = {
@@ -647,9 +627,7 @@ def choose_dependence_span(
             f"Dependence estimation needs at least {_MIN_WINDOWS} usable windows "
             f"from at least {_MIN_AUTOSOMES} autosomes"
         )
-        if insufficient_data_policy == "priorOnly":
-            return _prior_result(reason, prior_radius_bp, step, diagnostics)
-        raise ValueError(reason)
+        return _prior_result(reason, step, diagnostics)
 
     selected_coordinates = []
     window_estimates = []
@@ -696,10 +674,11 @@ def choose_dependence_span(
         point_durations, point_censored, working_q
     )
     if point_median_bp is None or point_working_bp is None:
-        reason = "Window radius median or working quantile is unidentified"
-        if insufficient_data_policy == "priorOnly":
-            return _prior_result(reason, prior_radius_bp, step, diagnostics)
-        raise ValueError(reason)
+        return _prior_result(
+            "Window radius median or working quantile is unidentified",
+            step,
+            diagnostics,
+        )
 
     acf_cube = np.stack([record["trackACFs"] for record in selected], axis=0)
     indices_by_chromosome = {
@@ -762,10 +741,11 @@ def choose_dependence_span(
 
     minimum_valid_draws = max(20, int(math.ceil(0.8 * draws)))
     if len(bootstrap_estimate_values) < minimum_valid_draws:
-        reason = "Too few bootstrap draws have identified radius quantiles"
-        if insufficient_data_policy == "priorOnly":
-            return _prior_result(reason, prior_radius_bp, step, diagnostics)
-        raise ValueError(reason)
+        return _prior_result(
+            "Too few bootstrap draws have identified radius quantiles",
+            step,
+            diagnostics,
+        )
     unconstrained_bootstrap_estimates = np.asarray(
         bootstrap_estimate_values,
         dtype=np.float64,
