@@ -16,9 +16,9 @@ ROCCO is an efficient algorithm for detection of "consensus peaks" in large data
 
 ROCCO models consensus peak calling as an optimization problem: select the most enriched genomic regions as peaks while controlling total genomic coverage and discouraging fragmented calls.
 
-* Enrichment is measured by a read density score in the selected genomic regions
-* Budget proportions calibrate selection penalties that control total genomic coverage
-* Fragmentation is controlled via a total variation penalty, multiplied by a penalty parameter $\gamma$ ($\gamma \sum_i |x_{i+1} - x_i|$).
+* enrichment is scored: increasing with read density and decreasing with dispersion
+* budget proportions calibrate selection penalties that control total genomic coverage
+* (excessive) fragmentation is controlled via a total variation penalty, multiplied by a penalty parameter ($\gamma \sum_i |x_{i+1} - x_i|$).
 
 
 ## Why
